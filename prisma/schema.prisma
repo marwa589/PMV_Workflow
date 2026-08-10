@@ -1,0 +1,150 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  CLERK
+  APPROVER_1
+  APPROVER_2
+  APPROVER_3
+  ADMIN
+}
+
+enum DocumentStatus {
+  PENDING_APPROVER_1
+  PENDING_APPROVER_2
+  PENDING_APPROVER_3
+  APPROVED
+  REJECTED
+  REVISION_REQUIRED
+  ARCHIVED
+}
+
+enum ApprovalActionType {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  REQUESTED_REVISION
+}
+
+enum DocumentType {
+  COMPARISON
+  MATERIAL_REQUISITION
+}
+
+enum MrType {
+  CASH
+  CREDIT
+}
+
+enum NotificationType {
+  PENDING_APPROVAL
+  DOCUMENT_APPROVED
+  DOCUMENT_REJECTED
+  DOCUMENT_REVISED
+}
+
+model User {
+  id                String            @id @default(cuid())
+  name              String
+  email             String            @unique
+  passwordHash      String
+  role              UserRole
+  createdDocuments  Document[]        @relation("DocumentsCreatedBy")
+  uploadedVersions  DocumentVersion[] @relation("VersionsUploadedBy")
+  approvalHistory   ApprovalHistory[] @relation("ApprovalsPerformedBy")
+  assignedDocuments Document[]        @relation("CurrentApprover")
+  notifications     Notification[]    @relation("NotificationsForUser")
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+}
+
+model Document {
+  id                        String            @id @default(cuid())
+  documentNumber            String            @unique
+  title                     String
+  description               String?
+  status                    DocumentStatus
+  documentType              DocumentType      @default(COMPARISON)
+  mrType                    MrType?
+  mrNumber                  String?
+  relatedComparisonId       String?
+  currentVersion            Int               @default(1)
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
+  createdById               String
+  createdBy                 User              @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
+  currentApproverId         String?
+  currentApprover           User?             @relation("CurrentApprover", fields: [currentApproverId], references: [id], onDelete: SetNull)
+  currentApproverAssignedAt DateTime?
+  relatedComparison         Document?         @relation("MRToComparison", fields: [relatedComparisonId], references: [id], onDelete: SetNull)
+  linkedMRs                 Document[]        @relation("MRToComparison")
+  versions                  DocumentVersion[]
+  approvals                 ApprovalHistory[]
+
+  @@index([createdById])
+  @@index([currentApproverId])
+  @@index([relatedComparisonId])
+  @@index([status])
+}
+
+model DocumentVersion {
+  id            String   @id @default(cuid())
+  documentId    String
+  versionNumber Int
+  filePath      String
+  originalName  String
+  extension     String?
+  mimeType      String
+  fileSize      Int
+  uploadedAt    DateTime @default(now())
+  uploadedById  String
+  uploadedBy    User     @relation("VersionsUploadedBy", fields: [uploadedById], references: [id])
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  approvalEvents ApprovalHistory[]
+
+  @@unique([documentId, versionNumber])
+  @@index([documentId])
+  @@index([uploadedById])
+}
+
+model ApprovalHistory {
+  id            String             @id @default(cuid())
+  documentId    String
+  versionId     String?
+  action        ApprovalActionType
+  comments      String?
+  performedAt   DateTime           @default(now())
+  performedById String
+  performedBy   User               @relation("ApprovalsPerformedBy", fields: [performedById], references: [id])
+  document      Document           @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version       DocumentVersion?   @relation(fields: [versionId], references: [id], onDelete: SetNull)
+
+  @@index([documentId, performedAt])
+  @@index([performedById])
+  @@index([versionId])
+}
+
+model Notification {
+  id            String            @id @default(cuid())
+  userId        String
+  user          User              @relation("NotificationsForUser", fields: [userId], references: [id], onDelete: Cascade)
+  type          NotificationType
+  title         String
+  message       String
+  documentId    String?
+  isRead        Boolean           @default(false)
+  createdAt     DateTime          @default(now())
+
+  @@index([userId, createdAt])
+  @@index([isRead])
+}
