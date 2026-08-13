@@ -36,6 +36,12 @@ enum ApprovalActionType {
   REQUESTED_REVISION
 }
 
+enum DeletionRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum DocumentType {
   COMPARISON
   MATERIAL_REQUISITION
@@ -51,21 +57,26 @@ enum NotificationType {
   DOCUMENT_APPROVED
   DOCUMENT_REJECTED
   DOCUMENT_REVISED
+  DOCUMENT_DELETED
 }
 
 model User {
-  id                String            @id @default(cuid())
-  name              String
-  email             String            @unique
-  passwordHash      String
-  role              UserRole
-  createdDocuments  Document[]        @relation("DocumentsCreatedBy")
-  uploadedVersions  DocumentVersion[] @relation("VersionsUploadedBy")
-  approvalHistory   ApprovalHistory[] @relation("ApprovalsPerformedBy")
-  assignedDocuments Document[]        @relation("CurrentApprover")
-  notifications     Notification[]    @relation("NotificationsForUser")
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  id                        String            @id @default(cuid())
+  name                      String
+  email                     String            @unique
+  passwordHash              String
+  role                      UserRole
+  sessionVersion            Int               @default(0)
+  createdDocuments          Document[]        @relation("DocumentsCreatedBy")
+  uploadedVersions          DocumentVersion[] @relation("VersionsUploadedBy")
+  approvalHistory           ApprovalHistory[] @relation("ApprovalsPerformedBy")
+  assignedDocuments         Document[]        @relation("CurrentApprover")
+  notifications             Notification[]    @relation("NotificationsForUser")
+  deletionRequestsRequested DeletionRequest[] @relation("DeletionRequestsRequestedBy")
+  deletionRequestsApproved  DeletionRequest[] @relation("DeletionRequestsApprovedBy")
+  auditLogsPerformed        AuditLog[]        @relation("AuditLogsPerformedBy")
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
 }
 
 model Document {
@@ -86,10 +97,12 @@ model Document {
   currentApproverId         String?
   currentApprover           User?             @relation("CurrentApprover", fields: [currentApproverId], references: [id], onDelete: SetNull)
   currentApproverAssignedAt DateTime?
+  lastActiveStage           DocumentStatus?
   relatedComparison         Document?         @relation("MRToComparison", fields: [relatedComparisonId], references: [id], onDelete: SetNull)
   linkedMRs                 Document[]        @relation("MRToComparison")
   versions                  DocumentVersion[]
   approvals                 ApprovalHistory[]
+  deletionRequests          DeletionRequest[]    @relation("DeletionRequests")
 
   @@index([createdById])
   @@index([currentApproverId])
@@ -134,6 +147,25 @@ model ApprovalHistory {
   @@index([versionId])
 }
 
+model DeletionRequest {
+  id             String               @id @default(cuid())
+  documentId     String
+  document       Document             @relation("DeletionRequests", fields: [documentId], references: [id], onDelete: Cascade)
+  requestedById  String
+  requestedBy    User                 @relation("DeletionRequestsRequestedBy", fields: [requestedById], references: [id])
+  approver3Id    String?
+  approver3      User?                @relation("DeletionRequestsApprovedBy", fields: [approver3Id], references: [id], onDelete: SetNull)
+  status         DeletionRequestStatus @default(PENDING)
+  reason         String?
+  createdAt      DateTime             @default(now())
+  reviewedAt     DateTime?
+
+  @@unique([documentId, status])
+  @@index([requestedById])
+  @@index([approver3Id])
+  @@index([status])
+}
+
 model Notification {
   id            String            @id @default(cuid())
   userId        String
@@ -147,4 +179,17 @@ model Notification {
 
   @@index([userId, createdAt])
   @@index([isRead])
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  documentId    String?
+  performedById String
+  performedBy   User     @relation("AuditLogsPerformedBy", fields: [performedById], references: [id])
+  action        String
+  details       String?
+  createdAt     DateTime @default(now())
+
+  @@index([documentId, createdAt])
+  @@index([performedById, createdAt])
 }

@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 
-export type NotificationKind = "PENDING_APPROVAL" | "DOCUMENT_APPROVED" | "DOCUMENT_REJECTED" | "DOCUMENT_REVISED";
+export type NotificationKind = "PENDING_APPROVAL" | "DOCUMENT_APPROVED" | "DOCUMENT_REJECTED" | "DOCUMENT_REVISED" | "DOCUMENT_DELETED";
 
 type NotificationRecord = {
   id: string;

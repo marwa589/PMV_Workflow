@@ -62,17 +62,35 @@ export async function getDocumentsForClerk(userId: string) {
 }
 
 export async function getDocumentsForApprover(userId: string, role: UserRole) {
-  const [pendingDocuments, approvedDocuments, rejectedDocuments, myDocuments, recentActivity] = await Promise.all([
+  const [pendingDocuments, revisionRequiredDocuments, approvedDocuments, rejectedDocuments, myDocuments, recentActivity] = await Promise.all([
     prisma.document.findMany({
-      where: { currentApproverId: userId },
+      where: {
+        currentApproverId: userId,
+        status: { in: [DocumentStatus.PENDING_APPROVER_1, DocumentStatus.PENDING_APPROVER_2, DocumentStatus.PENDING_APPROVER_3] },
+      },
       include: {
         currentApprover: { select: { name: true } },
         relatedComparison: { select: { documentNumber: true, title: true } },
         approvals: {
-          where: { action: ApprovalActionType.REJECTED },
           orderBy: { performedAt: "desc" },
           take: 1,
-          include: { performedBy: { select: { name: true } } },
+          select: { comments: true, action: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.document.findMany({
+      where: {
+        currentApproverId: userId,
+        status: DocumentStatus.REVISION_REQUIRED,
+      },
+      include: {
+        currentApprover: { select: { name: true } },
+        relatedComparison: { select: { documentNumber: true, title: true } },
+        approvals: {
+          orderBy: { performedAt: "desc" },
+          take: 1,
+          select: { comments: true, action: true },
         },
       },
       orderBy: { createdAt: "desc" },
@@ -129,7 +147,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole) {
     }),
   ]);
 
-  return { pendingDocuments, approvedDocuments, rejectedDocuments, myDocuments, recentActivity, role };
+  return { pendingDocuments, revisionRequiredDocuments, approvedDocuments, rejectedDocuments, myDocuments, recentActivity, role };
 }
 
 export async function getDocumentsForAdmin() {

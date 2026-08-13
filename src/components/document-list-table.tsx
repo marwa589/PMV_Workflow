@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 // import { DocumentStatus } from "@prisma/client";
 import StatusBadge from "@/components/status-badge";
-import DocumentDeleteButton from "@/components/document-delete-button";
+import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 import { matchesDocumentSearch, parseSearchQuery } from "@/lib/document-search";
 
 type DocumentStatus =
@@ -34,11 +34,11 @@ export type DocumentListItem = {
 type Props = {
   documents: DocumentListItem[];
   emptyMessage: string;
-  showDeleteAction?: boolean;
   showBulkActions?: boolean;
+  allowBulkDelete?: boolean;
 };
 
-export default function DocumentListTable({ documents, emptyMessage, showDeleteAction = false, showBulkActions = false }: Props) {
+export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false }: Props) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const searchParams = useSearchParams();
 
@@ -75,7 +75,7 @@ export default function DocumentListTable({ documents, emptyMessage, showDeleteA
     if (selectedDocuments.length === 0) return;
 
     const confirmed = window.confirm(
-      `Are you sure you want to permanently delete ${selectedDocuments.length} selected document(s) and all related versions and history?`,
+      `Send deletion requests for ${selectedDocuments.length} document(s) to Approver 3 for approval?`,
     );
 
     if (!confirmed) {
@@ -83,24 +83,26 @@ export default function DocumentListTable({ documents, emptyMessage, showDeleteA
     }
 
     try {
-      const response = await fetch("/api/documents/bulk-delete", {
+      const response = await fetch("/api/documents/deletion-requests", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-csrf-token": getCsrfTokenFromBrowser(),
         },
         body: JSON.stringify({ ids: selectedDocuments.map((doc) => doc.id) }),
       });
 
       const result = (await response.json()) as { message?: string };
       if (!response.ok) {
-        window.alert(result.message || "Failed to delete selected documents.");
+        window.alert(result.message || "Failed to request deletion.");
         return;
       }
 
       setSelectedIds([]);
+      window.alert(result.message || "Deletion request sent to Approver 3.");
       window.location.reload();
     } catch {
-      window.alert("Unexpected error while deleting the selected documents.");
+      window.alert("Unexpected error while sending deletion requests.");
     }
   }
 
@@ -139,9 +141,11 @@ export default function DocumentListTable({ documents, emptyMessage, showDeleteA
           <button type="button" onClick={() => handleBulkDownload("selected")} className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700">
             Download selected
           </button>
-          <button type="button" onClick={handleBulkDelete} className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100">
-            Delete selected
-          </button>
+          {allowBulkDelete ? (
+            <button type="button" onClick={handleBulkDelete} className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100">
+              Request deletion
+            </button>
+          ) : null}
         </div>
       ) : null}
       <div className="overflow-x-auto">
@@ -157,13 +161,12 @@ export default function DocumentListTable({ documents, emptyMessage, showDeleteA
             <th className="px-5 py-3 font-semibold">Current Approver</th>
             <th className="px-5 py-3 font-semibold">Last Updated</th>
             <th className="px-5 py-3 font-semibold">Download</th>
-            {showDeleteAction ? <th className="px-5 py-3 font-semibold">Delete</th> : null}
           </tr>
         </thead>
         <tbody>
           {visibleDocuments.length === 0 ? (
             <tr>
-              <td colSpan={(showBulkActions ? 1 : 0) + (showDeleteAction ? 8 : 7)} className="px-5 py-6 text-center text-slate-500">
+              <td colSpan={showBulkActions ? 9 : 8} className="px-5 py-6 text-center text-slate-500">
                 {emptyMessage}
               </td>
             </tr>
@@ -205,11 +208,6 @@ export default function DocumentListTable({ documents, emptyMessage, showDeleteA
                     Download
                   </a>
                 </td>
-                {showDeleteAction ? (
-                  <td className="px-5 py-4">
-                    <DocumentDeleteButton documentId={doc.id} />
-                  </td>
-                ) : null}
               </tr>
             ))
           )}

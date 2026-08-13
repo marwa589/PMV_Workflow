@@ -22,6 +22,7 @@ export default async function ApproverPendingApprovalsPage() {
       <PageSummaryCards
         cards={[
           { label: "Pending", value: String(data.pendingDocuments.length), tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200" },
+          { label: "Revision Required", value: String(data.revisionRequiredDocuments.length), tone: "bg-slate-50 text-slate-900 ring-1 ring-slate-200" },
           { label: "Approved", value: String(data.approvedDocuments.length), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
           { label: "Rejected", value: String(data.rejectedDocuments.length), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
         ]}
@@ -38,6 +39,24 @@ export default async function ApproverPendingApprovalsPage() {
             documentType: doc.documentType,
             mrType: doc.mrType,
             currentVersion: doc.currentVersion,
+            latestComment: doc.approvals[0]?.comments ?? null,
+            uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+          }))} />
+        </div>
+      </section>
+      <section className="mt-6 rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <h3 className="text-base font-semibold text-slate-900">Revision Required</h3>
+        </div>
+        <div className="px-1 py-4">
+          <ApproverPendingTable documents={data.revisionRequiredDocuments.map((doc) => ({
+            id: doc.id,
+            documentNumber: doc.documentNumber,
+            title: doc.title,
+            documentType: doc.documentType,
+            mrType: doc.mrType,
+            currentVersion: doc.currentVersion,
+            latestComment: doc.approvals[0]?.comments ?? null,
             uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
           }))} />
         </div>

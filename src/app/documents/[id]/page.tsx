@@ -1,11 +1,12 @@
 import { DocumentStatus, UserRole } from "@prisma/client";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, Download, FileText, History, UserCircle2 } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
 import StatusBadge from "@/components/status-badge";
 import WorkflowJourneyChart from "@/components/workflow-journey-chart";
 import { requireAuth } from "@/lib/auth/guards";
+import { canAccessDocument } from "@/lib/auth/resource-access";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +32,11 @@ function formatDate(date: Date | null) {
 export default async function DocumentDetailsPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth();
   const { id } = await params;
+
+  const allowed = await canAccessDocument(session, id);
+  if (!allowed) {
+    redirect("/unauthorized");
+  }
 
   const document = await prisma.document.findUnique({
     where: { id },
@@ -160,7 +166,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <WorkflowJourneyChart status={document.status} />
+        <WorkflowJourneyChart status={document.status} lastActiveStage={document.lastActiveStage} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr,0.8fr]">

@@ -1,11 +1,11 @@
 import { ApprovalActionType, DocumentStatus, UserRole } from "@prisma/client";
 import DashboardShell from "@/components/dashboard-shell";
-import DocumentDeleteButton from "@/components/document-delete-button";
 import DocumentListTable from "@/components/document-list-table";
 import StatusBadge from "@/components/status-badge";
 import WorkflowPipelineChart from "@/components/workflow-pipeline-chart";
 import { requireRole } from "@/lib/auth/guards";
 import { formatWaitingTime, getAgeBucket, getWaitingHours } from "@/lib/document-metrics";
+import { sendComparisonMrFollowUpAlerts, sendPendingAgeAlertEmails } from "@/lib/document-aging";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -82,6 +82,8 @@ export default async function AdminDashboardPage() {
   let usersByRole: { role: UserRole; count: number }[] = [];
 
   try {
+    await sendPendingAgeAlertEmails();
+    await sendComparisonMrFollowUpAlerts();
     const [total, pending, approved, rejected, activity, roleGroups, allDocs, pendingDocs, allPendingDocs] = await Promise.all([
       prisma.document.count(),
       prisma.document.count({
@@ -198,12 +200,23 @@ export default async function AdminDashboardPage() {
       { key: "APPROVER_1", label: "Approver 1", status: DocumentStatus.PENDING_APPROVER_1 },
       { key: "APPROVER_2", label: "Approver 2", status: DocumentStatus.PENDING_APPROVER_2 },
       { key: "APPROVER_3", label: "Approver 3", status: DocumentStatus.PENDING_APPROVER_3 },
+      { key: "REVISION_REQUIRED", label: "Revision Required", status: DocumentStatus.REVISION_REQUIRED },
       { key: "APPROVED", label: "Approved", status: DocumentStatus.APPROVED },
     ];
 
     const stageItems = allDocs.map((doc) => {
       const daysPending = doc.currentApproverAssignedAt ? Math.max(0, Math.floor((Date.now() - new Date(doc.currentApproverAssignedAt).getTime()) / (1000 * 60 * 60 * 24))) : 0;
-      const stageKey = doc.status === DocumentStatus.APPROVED ? "APPROVED" : doc.status === DocumentStatus.PENDING_APPROVER_3 ? "APPROVER_3" : doc.status === DocumentStatus.PENDING_APPROVER_2 ? "APPROVER_2" : doc.status === DocumentStatus.PENDING_APPROVER_1 ? "APPROVER_1" : "DRAFT";
+      const stageKey = doc.status === DocumentStatus.APPROVED
+        ? "APPROVED"
+        : doc.status === DocumentStatus.REVISION_REQUIRED
+          ? "REVISION_REQUIRED"
+          : doc.status === DocumentStatus.PENDING_APPROVER_3
+            ? "APPROVER_3"
+            : doc.status === DocumentStatus.PENDING_APPROVER_2
+              ? "APPROVER_2"
+              : doc.status === DocumentStatus.PENDING_APPROVER_1
+                ? "APPROVER_1"
+                : "DRAFT";
 
       return {
         id: doc.id,
@@ -246,29 +259,37 @@ export default async function AdminDashboardPage() {
       mrCredit: allDocs.filter((doc) => doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === "CREDIT").length,
       approvedMrCredit: allDocs.filter((doc) => doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === "CREDIT" && doc.status === DocumentStatus.APPROVED).length,
       avgTurnaroundDays: await (async () => {
-        const pairedMRs = await prisma.document.findMany({
-          where: { documentType: "MATERIAL_REQUISITION", status: DocumentStatus.APPROVED, relatedComparisonId: { not: null } },
+        const comparisonsWithLinkedMR = await prisma.document.findMany({
+          where: {
+            documentType: "COMPARISON",
+            status: DocumentStatus.APPROVED,
+            linkedMRs: { some: {} },
+          },
           select: {
-            createdAt: true,
-            relatedComparison: {
-              select: {
-                approvals: {
-                  where: { action: ApprovalActionType.APPROVED },
-                  orderBy: { performedAt: "desc" },
-                  take: 1,
-                  select: { performedAt: true },
-                },
-              },
+            approvals: {
+              where: { action: ApprovalActionType.APPROVED },
+              orderBy: { performedAt: "desc" },
+              take: 1,
+              select: { performedAt: true },
+            },
+            linkedMRs: {
+              orderBy: { createdAt: "asc" },
+              take: 1,
+              select: { createdAt: true },
             },
           },
         });
-        const turnarounds = pairedMRs
-          .map((mr) => {
-            const compApprovedAt = mr.relatedComparison?.approvals[0]?.performedAt;
-            if (!compApprovedAt) return null;
-            return (mr.createdAt.getTime() - compApprovedAt.getTime()) / (1000 * 60 * 60 * 24);
+
+        const turnarounds = comparisonsWithLinkedMR
+          .map((comparison) => {
+            const compApprovedAt = comparison.approvals[0]?.performedAt;
+            const linkedMrCreatedAt = comparison.linkedMRs[0]?.createdAt;
+            if (!compApprovedAt || !linkedMrCreatedAt) return null;
+            const diffDays = (linkedMrCreatedAt.getTime() - compApprovedAt.getTime()) / (1000 * 60 * 60 * 24);
+            return diffDays >= 0 ? diffDays : null;
           })
-          .filter((d): d is number => d !== null && d >= 0);
+          .filter((d): d is number => d !== null);
+
         return turnarounds.length > 0
           ? Math.round(turnarounds.reduce((a, b) => a + b, 0) / turnarounds.length)
           : null;
@@ -425,7 +446,8 @@ export default async function AdminDashboardPage() {
               dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
             }))}
             emptyMessage="No documents available."
-            showDeleteAction
+            showBulkActions
+            allowBulkDelete
           />
         </section>
 
@@ -464,9 +486,7 @@ export default async function AdminDashboardPage() {
                         <StatusBadge status={doc.status} />
                       </td>
                       <td className="px-5 py-4 text-slate-700">V{doc.currentVersion}</td>
-                      <td className="px-5 py-4">
-                        <DocumentDeleteButton documentId={doc.id} />
-                      </td>
+                      <td className="px-5 py-4 text-slate-500">—</td>
                     </tr>
                   ))
                 )}

@@ -21,6 +21,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 type NavItem = {
   label: string;
@@ -217,7 +218,10 @@ export default function DashboardShell({
     try {
       const response = await fetch("/api/notifications", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": getCsrfTokenFromBrowser(),
+        },
         body: JSON.stringify({ action: "mark-read" }),
       });
 
@@ -237,7 +241,10 @@ export default function DashboardShell({
   async function handleSignOut() {
     setIsSigningOut(true);
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "x-csrf-token": getCsrfTokenFromBrowser() },
+      });
       router.replace("/login");
     } finally {
       setIsSigningOut(false);

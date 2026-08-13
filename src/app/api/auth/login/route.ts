@@ -1,7 +1,7 @@
 import { compare } from "bcryptjs";
 import { NextResponse } from "next/server";
 import { getDefaultRouteForRole } from "@/lib/auth/roles";
-import { attachSessionCookie } from "@/lib/auth/session";
+import { attachSessionCookie, rotateSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
 export async function POST(request: Request) {
@@ -30,6 +30,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "Invalid credentials." }, { status: 401 });
     }
 
+    const rotatedVersion = await rotateSession(user.id);
     const redirectTo = getDefaultRouteForRole(user.role);
     const response = NextResponse.json({
       message: "Login successful.",
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
       email: user.email,
       name: user.name,
       role: user.role,
-    });
+    }, rotatedVersion);
 
     return response;
   } catch {

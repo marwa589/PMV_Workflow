@@ -36,7 +36,7 @@ export default async function AdminRejectedDocumentsPage() {
         <div className="border-b border-slate-200 px-5 py-4">
           <h3 className="text-base font-semibold text-slate-900">Rejected Documents</h3>
         </div>
-        <DocumentListTable documents={documents} emptyMessage="No rejected documents." showDeleteAction />
+        <DocumentListTable documents={documents} emptyMessage="No rejected documents." />
       </section>
     </DashboardShell>
   );

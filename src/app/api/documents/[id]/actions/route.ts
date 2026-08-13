@@ -6,11 +6,14 @@ import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
 import { createNotification } from "@/lib/notifications";
-import { APPROVER_WORKFLOW, isApproverRole } from "@/lib/workflow";
+import { APPROVER_WORKFLOW, getCommentRouting, getWorkflowAuthorizationPolicy, isApproverRole } from "@/lib/workflow";
+import { sendAdminOutcomeEmails, sendPendingAgeAlertEmails } from "@/lib/document-aging";
+import { writeAuditLog } from "@/lib/audit";
+import { runInBackground } from "@/lib/background";
 
 export const runtime = "nodejs";
 
-type Decision = "APPROVE" | "REJECT";
+type Decision = "APPROVE" | "REJECT" | "COMMENT";
 
 export async function POST(
   request: Request,
@@ -31,8 +34,8 @@ export async function POST(
   const comments = String(formData.get("comments") || "").trim();
   const fileValue = formData.get("file");
 
-  if (decision !== "APPROVE" && decision !== "REJECT") {
-    return NextResponse.json({ message: "Decision must be APPROVE or REJECT." }, { status: 400 });
+  if (decision !== "APPROVE" && decision !== "REJECT" && decision !== "COMMENT") {
+    return NextResponse.json({ message: "Decision must be APPROVE, REJECT, or COMMENT." }, { status: 400 });
   }
 
   const workflow = APPROVER_WORKFLOW[session.role];
@@ -63,8 +66,14 @@ export async function POST(
         throw new Error("This document is not assigned to you.");
       }
 
-      if (document.status !== workflow.expectedStatus) {
-        throw new Error("Document is not in your approval step.");
+      const policy = getWorkflowAuthorizationPolicy({
+        role: session.role,
+        currentStatus: document.status,
+        action: decision,
+      });
+
+      if (!policy.allowed) {
+        throw new Error(policy.reason || "Document is not in your approval step.");
       }
 
       const currentVersionRecord = await tx.documentVersion.findUnique({
@@ -97,6 +106,7 @@ export async function POST(
             currentVersion: 0,
             currentApproverId: null,
             currentApproverAssignedAt: null,
+            lastActiveStage: document.status,
           },
         });
 
@@ -110,12 +120,26 @@ export async function POST(
           },
         });
 
-        await createNotification({
-          userId: document.createdById,
-          type: "DOCUMENT_REJECTED",
-          title: "Document rejected",
-          message: `${document.documentNumber} - ${document.title}`,
+        await writeAuditLog({
           documentId: document.id,
+          performedById: session.userId,
+          action: "DOCUMENT_REJECTED",
+          details: JSON.stringify({
+            decision,
+            comments: comments || null,
+            approverRole: session.role,
+            previousStatus: document.status,
+          }),
+        });
+
+        runInBackground(async () => {
+          await createNotification({
+            userId: document.createdById,
+            type: "DOCUMENT_REJECTED",
+            title: "Document rejected",
+            message: `${document.documentNumber} - ${document.title}`,
+            documentId: document.id,
+          });
         });
 
         await tx.documentVersion.deleteMany({
@@ -138,6 +162,105 @@ export async function POST(
         return {
           status: DocumentStatus.REJECTED,
           currentVersion: 0,
+        };
+      }
+
+      if (decision === "COMMENT") {
+        const routing = getCommentRouting(session.role);
+        let assignedApproverId: string | null = document.createdById;
+        let nextVersionNumber = document.currentVersion;
+        let revisionVersionId = currentVersionRecord.id;
+
+        if (routing.targetRole) {
+          const targetApprover = await tx.user.findFirst({
+            where: { role: routing.targetRole },
+            select: { id: true },
+          });
+
+          if (!targetApprover) {
+            throw new Error(`User for ${routing.targetRole} not found.`);
+          }
+
+          assignedApproverId = targetApprover.id;
+        }
+
+        if (fileValue instanceof File) {
+          nextVersionNumber = document.currentVersion + 1;
+          const saved = await saveDocumentVersionFile({
+            documentId: document.id,
+            versionNumber: nextVersionNumber,
+            file: fileValue,
+            documentType: document.documentType === "COMPARISON" ? "COMPARISON" : "MATERIAL_REQUISITION",
+            documentNumber: document.documentNumber,
+            mrNumber: document.mrNumber,
+            hasLinkedComparison: !!document.relatedComparisonId,
+          });
+
+          const newVersion = await tx.documentVersion.create({
+            data: {
+              documentId: document.id,
+              versionNumber: nextVersionNumber,
+              filePath: saved.relativePath,
+              originalName: fileValue.name,
+              extension: saved.extension,
+              mimeType: fileValue.type || "application/octet-stream",
+              fileSize: fileValue.size,
+              uploadedById: session.userId,
+            },
+          });
+
+          revisionVersionId = newVersion.id;
+        }
+
+        await tx.document.update({
+          where: { id: document.id },
+          data: {
+            currentVersion: nextVersionNumber,
+            status: routing.status,
+            currentApproverId: assignedApproverId,
+            currentApproverAssignedAt: new Date(),
+            lastActiveStage: routing.status,
+          },
+        });
+
+        await tx.approvalHistory.create({
+          data: {
+            documentId: document.id,
+            versionId: revisionVersionId,
+            action: ApprovalActionType.REQUESTED_REVISION,
+            comments: comments || null,
+            performedById: session.userId,
+          },
+        });
+
+        await writeAuditLog({
+          documentId: document.id,
+          performedById: session.userId,
+          action: "DOCUMENT_REVISION_REQUESTED",
+          details: JSON.stringify({
+            decision,
+            comments: comments || null,
+            approverRole: session.role,
+            targetRole: routing.targetRole,
+            previousStatus: document.status,
+          }),
+        });
+
+        if (assignedApproverId) {
+          runInBackground(async () => {
+            await createNotification({
+              userId: assignedApproverId,
+              type: "DOCUMENT_REVISED",
+              title: "Revision requested",
+              message: `${document.documentNumber} - ${document.title}`,
+              documentId: document.id,
+            });
+          });
+        }
+
+        return {
+          status: routing.status,
+          currentVersion: nextVersionNumber,
         };
       }
 
@@ -200,6 +323,7 @@ export async function POST(
           status: workflow.nextStatus,
           currentApproverId: nextApproverId,
           currentApproverAssignedAt: nextApproverId ? new Date() : null,
+          lastActiveStage: workflow.nextStatus,
         },
       });
 
@@ -222,6 +346,20 @@ export async function POST(
         },
       });
 
+      await writeAuditLog({
+        documentId: document.id,
+        performedById: session.userId,
+        action: workflow.nextApproverRole ? "DOCUMENT_APPROVED_STAGE" : "DOCUMENT_APPROVED",
+        details: JSON.stringify({
+          decision,
+          comments: comments || null,
+          approverRole: session.role,
+          nextStatus: workflow.nextStatus,
+          previousStatus: document.status,
+          nextApproverRole: workflow.nextApproverRole,
+        }),
+      });
+
       if (workflow.nextApproverRole) {
         const nextApprover = await tx.user.findFirst({
           where: { role: workflow.nextApproverRole },
@@ -229,21 +367,25 @@ export async function POST(
         });
 
         if (nextApprover) {
-          await createNotification({
-            userId: nextApprover.id,
-            type: "PENDING_APPROVAL",
-            title: "Document awaiting your review",
-            message: `${document.documentNumber} - ${document.title}`,
-            documentId: document.id,
+          runInBackground(async () => {
+            await createNotification({
+              userId: nextApprover.id,
+              type: "PENDING_APPROVAL",
+              title: "Document awaiting your review",
+              message: `${document.documentNumber} - ${document.title}`,
+              documentId: document.id,
+            });
           });
         }
       } else {
-        await createNotification({
-          userId: document.createdById,
-          type: "DOCUMENT_APPROVED",
-          title: "Document approved",
-          message: `${document.documentNumber} - ${document.title}`,
-          documentId: document.id,
+        runInBackground(async () => {
+          await createNotification({
+            userId: document.createdById,
+            type: "DOCUMENT_APPROVED",
+            title: "Document approved",
+            message: `${document.documentNumber} - ${document.title}`,
+            documentId: document.id,
+          });
         });
       }
 
@@ -252,6 +394,10 @@ export async function POST(
         currentVersion: nextVersionNumber,
         versionsToDeleteAfterCommit,
       };
+    });
+
+    runInBackground(async () => {
+      await sendPendingAgeAlertEmails();
     });
 
     if (result.status === DocumentStatus.APPROVED) {
@@ -301,8 +447,9 @@ export async function POST(
 
     if (
       documentForEmail?.currentApprover?.email &&
-      result.status !== DocumentStatus.APPROVED &&
-      result.status !== DocumentStatus.REJECTED
+      (result.status === DocumentStatus.PENDING_APPROVER_1 ||
+        result.status === DocumentStatus.PENDING_APPROVER_2 ||
+        result.status === DocumentStatus.PENDING_APPROVER_3)
     ) {
       const pendingSubject = `Document Approval Required - ${documentForEmail.documentNumber}`;
       const pendingHtml = `
@@ -354,10 +501,91 @@ export async function POST(
         </table>
       `;
 
-      await sendEmail({
-        to: documentForEmail.currentApprover.email,
-        subject: pendingSubject,
-        html: pendingHtml,
+      runInBackground(async () => {
+        if (!documentForEmail.currentApprover?.email) return;
+        await sendEmail({
+          to: documentForEmail.currentApprover.email,
+          subject: pendingSubject,
+          html: pendingHtml,
+        });
+      });
+    }
+
+    if (
+      result.status === DocumentStatus.REVISION_REQUIRED &&
+      documentForEmail?.currentApprover?.email
+    ) {
+      const revisionSubject = `Document requires revision - ${documentForEmail.documentNumber}`;
+      const revisionHtml = `
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="font-family: Arial, sans-serif; background-color: #f5f7fb; padding: 24px;">
+          <tr>
+            <td align="center">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="640" style="max-width: 640px; background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden;">
+                <tr>
+                  <td style="background-color: #b45309; padding: 24px 32px; color: #ffffff;">
+                    <h2 style="margin: 0; font-size: 24px;">Revision Required</h2>
+                    <p style="margin: 6px 0 0 0; font-size: 14px;">${documentForEmail.documentNumber}</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 32px; color: #111827;">
+                    <p style="margin: 0 0 12px 0; font-size: 16px;">Dear ${documentForEmail.currentApprover.name || "Approver"},</p>
+                    <p style="margin: 0 0 20px 0; font-size: 15px;">A document has been returned to you for revision review. Please review the comments and take the appropriate action.</p>
+                    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse: collapse; font-size: 14px; margin-bottom: 20px;">
+                      <tr>
+                        <th align="left" style="padding: 10px; border: 1px solid #e6e6e6; background-color: #f5f5f5;">Document Number</th>
+                        <td style="padding: 10px; border: 1px solid #e6e6e6;">${documentForEmail.documentNumber}</td>
+                      </tr>
+                      <tr>
+                        <th align="left" style="padding: 10px; border: 1px solid #e6e6e6; background-color: #f5f5f5;">Document Type</th>
+                        <td style="padding: 10px; border: 1px solid #e6e6e6;">${getDocumentTypeLabel(documentForEmail)}</td>
+                      </tr>
+                      <tr>
+                        <th align="left" style="padding: 10px; border: 1px solid #e6e6e6; background-color: #f5f5f5;">Status</th>
+                        <td style="padding: 10px; border: 1px solid #e6e6e6;">Revision Required</td>
+                      </tr>
+                    </table>
+                    <p style="margin: 0 0 12px 0; font-size: 15px;"><strong>System URL:</strong> <a href="${appUrl}" style="text-decoration: none; color: #464feb;">${appUrl}</a></p>
+                    <p style="margin: 0; font-size: 15px;">Best regards,<br />PMV Workflow System</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      `;
+
+      runInBackground(async () => {
+        if (!documentForEmail.currentApprover?.email) return;
+        await sendEmail({
+          to: documentForEmail.currentApprover.email,
+          subject: revisionSubject,
+          html: revisionHtml,
+        });
+      });
+    }
+
+    if (result.status === DocumentStatus.APPROVED) {
+      runInBackground(async () => {
+        await sendAdminOutcomeEmails({
+          documentNumber: documentForEmail?.documentNumber || documentId,
+          title: documentForEmail?.title || "Document",
+          outcome: "approved",
+        });
+      });
+    }
+
+    if (
+      result.status === DocumentStatus.REJECTED
+    ) {
+      runInBackground(async () => {
+        await sendAdminOutcomeEmails({
+          documentNumber: documentForEmail?.documentNumber || documentId,
+          title: documentForEmail?.title || "Document",
+          outcome: "rejected",
+          clerkEmail: documentForEmail?.createdBy?.email,
+          clerkName: documentForEmail?.createdBy?.name,
+        });
       });
     }
 
@@ -410,10 +638,12 @@ export async function POST(
         </table>
       `;
 
-      await sendEmail({
-        to: documentForEmail.createdBy.email,
-        subject,
-        html,
+      runInBackground(async () => {
+        await sendEmail({
+          to: documentForEmail.createdBy.email,
+          subject,
+          html,
+        });
       });
     }
 

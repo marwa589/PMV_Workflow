@@ -16,53 +16,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Only admin can delete documents." }, { status: 403 });
   }
 
-  let payload: { ids?: unknown };
-  try {
-    payload = await request.json();
-  } catch {
-    return NextResponse.json({ message: "Invalid request body." }, { status: 400 });
-  }
-
-  const ids = Array.isArray(payload.ids)
-    ? payload.ids.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    : [];
-
-  if (ids.length === 0) {
-    return NextResponse.json({ message: "No documents selected." }, { status: 400 });
-  }
-
-  const deletedIds: string[] = [];
-
-  for (const documentId of ids) {
-    const document = await prisma.document.findUnique({
-      where: { id: documentId },
-      select: { id: true },
-    });
-
-    if (!document) {
-      continue;
-    }
-
-    const versions = await prisma.documentVersion.findMany({
-      where: { documentId: document.id },
-      select: { filePath: true },
-    });
-
-    await prisma.$transaction(async (tx) => {
-      await tx.approvalHistory.deleteMany({ where: { documentId: document.id } });
-      await tx.documentVersion.deleteMany({ where: { documentId: document.id } });
-      await tx.document.delete({ where: { id: document.id } });
-    });
-
-    await deleteDocumentFiles({ filePaths: versions.map((v) => v.filePath) });
-    deletedIds.push(document.id);
-  }
-
   return NextResponse.json(
-    {
-      message: `Deleted ${deletedIds.length} document(s).`,
-      deletedCount: deletedIds.length,
-    },
-    { status: 200 },
+    { message: "Deletion requests must be sent to Approver 3 for approval before documents are deleted." },
+    { status: 403 },
   );
 }

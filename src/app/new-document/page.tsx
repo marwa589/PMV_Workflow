@@ -15,7 +15,7 @@ export default async function NewDocumentPage() {
       title="New Document"
       subtitle="Upload and submit a document to start workflow"
     >
-      <NewDocumentForm />
+      <NewDocumentForm defaultRedirectPath={session.role === UserRole.ADMIN ? "/admin" : "/clerk"} />
     </DashboardShell>
   );
 }

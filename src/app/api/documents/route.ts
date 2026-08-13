@@ -5,6 +5,7 @@ import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
 import { createNotification } from "@/lib/notifications";
+import { runInBackground } from "@/lib/background";
 
 export const runtime = "nodejs";
 
@@ -62,12 +63,12 @@ export async function POST(request: Request) {
     select: { id: true, email: true, name: true },
   });
 
-  // temp addition
-  const approver2 = await prisma.user.findFirst({
-    where: { role: UserRole.APPROVER_2 },
-    select: { id: true, email: true, name: true },
-  });
-  // temp addition
+  // edit
+  // const approver2 = await prisma.user.findFirst({
+  //   where: { role: UserRole.APPROVER_2 },
+  //   select: { id: true, email: true, name: true },
+  // });
+  // edit
 
   const admins = await prisma.user.findMany({
     where: { role: UserRole.ADMIN },
@@ -94,11 +95,15 @@ export async function POST(request: Request) {
           title: perFileTitle,
           description: description || null,
           //edit
-          status: DocumentStatus.PENDING_APPROVER_2,
+          // status: DocumentStatus.PENDING_APPROVER_2,
+          status: DocumentStatus.PENDING_APPROVER_1,
           currentVersion: 0,
           createdById: session.userId,
           //edit
-          currentApproverId: approver2!.id,
+          // lastActiveStage: DocumentStatus.PENDING_APPROVER_2,
+          // currentApproverId: approver2!.id,
+          lastActiveStage: DocumentStatus.PENDING_APPROVER_1,
+          currentApproverId: approver1.id,
           currentApproverAssignedAt: new Date(),
           documentType: normalizedDocumentType,
           mrType: normalizedMrType,
@@ -183,54 +188,56 @@ export async function POST(request: Request) {
     ].filter((recipient): recipient is { email: string; name: string; role: "approver" | "admin" } => recipient !== null);
 
     if (recipients.length > 0) {
-      await Promise.all(
-        result.flatMap((document) =>
-          recipients.map(async (recipient) => {
-            const notificationMessage = recipient.role === "admin"
-              ? `A new document is waiting for review.`
-              : `You have a new document to review.`;
+      runInBackground(async () => {
+        await Promise.all(
+          result.flatMap((document) =>
+            recipients.map(async (recipient) => {
+              const notificationMessage = recipient.role === "admin"
+                ? `A new document is waiting for review.`
+                : `You have a new document to review.`;
 
-            await createNotification({
-              userId: recipient.role === "admin" ? admins.find((admin) => admin.email === recipient.email)?.id || "" : approver1.id,
-              type: "PENDING_APPROVAL",
-              title: `New document ready for review`,
-              message: `${document.documentNumber} - ${document.title}`,
-              documentId: document.id,
-            });
-            const subject = recipient.role === "admin"
-              ? `New document uploaded: ${document.documentNumber}`
-              : `New pending approval: ${document.documentNumber}`;
+              await createNotification({
+                userId: recipient.role === "admin" ? admins.find((admin) => admin.email === recipient.email)?.id || "" : approver1.id,
+                type: "PENDING_APPROVAL",
+                title: `New document ready for review`,
+                message: `${document.documentNumber} - ${document.title}`,
+                documentId: document.id,
+              });
+              const subject = recipient.role === "admin"
+                ? `New document uploaded: ${document.documentNumber}`
+                : `New pending approval: ${document.documentNumber}`;
 
-            const html = recipient.role === "admin"
-              ? `
-                <div style="font-family: Arial, sans-serif; line-height: 1.6;">
-                  <p>Hello ${recipient.name},</p>
-                  <p>A clerk has uploaded a new document and it is waiting for review.</p>
-                  <p><strong>Document:</strong> ${document.documentNumber}</p>
-                  <p><strong>Title:</strong> ${document.title}</p>
-                  <p>Please log in to the system to review the document queue.</p>
-                  <p>Regards,<br />DocuFlow 365</p>
-                </div>
-              `
-              : `
-                <div style="font-family: Arial, sans-serif; line-height: 1.6;">
-                  <p>Hello ${recipient.name},</p>
-                  <p>A new document is awaiting your review.</p>
-                  <p><strong>Document:</strong> ${document.documentNumber}</p>
-                  <p><strong>Title:</strong> ${document.title}</p>
-                  <p>Please log in to the system to review it.</p>
-                  <p>Regards,<br />DocuFlow 365</p>
-                </div>
-              `;
+              const html = recipient.role === "admin"
+                ? `
+                  <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+                    <p>Hello ${recipient.name},</p>
+                    <p>A clerk has uploaded a new document and it is waiting for review.</p>
+                    <p><strong>Document:</strong> ${document.documentNumber}</p>
+                    <p><strong>Title:</strong> ${document.title}</p>
+                    <p>Please log in to the system to review the document queue.</p>
+                    <p>Regards,<br />DocuFlow 365</p>
+                  </div>
+                `
+                : `
+                  <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+                    <p>Hello ${recipient.name},</p>
+                    <p>A new document is awaiting your review.</p>
+                    <p><strong>Document:</strong> ${document.documentNumber}</p>
+                    <p><strong>Title:</strong> ${document.title}</p>
+                    <p>Please log in to the system to review it.</p>
+                    <p>Regards,<br />DocuFlow 365</p>
+                  </div>
+                `;
 
-            await sendEmail({
-              to: recipient.email,
-              subject,
-              html,
-            });
-          }),
-        ),
-      );
+              await sendEmail({
+                to: recipient.email,
+                subject,
+                html,
+              });
+            }),
+          ),
+        );
+      });
     }
 
     return NextResponse.json({ message: "Document submitted.", documents: result }, { status: 201 });

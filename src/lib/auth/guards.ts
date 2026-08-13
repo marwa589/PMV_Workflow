@@ -2,8 +2,8 @@ import "server-only";
 
 import { UserRole } from "@prisma/client";
 import { redirect } from "next/navigation";
-import { getDefaultRouteForRole } from "@/lib/auth/roles";
 import { getSession } from "@/lib/auth/session";
+import { hasRequiredRole } from "@/lib/auth/permissions";
 
 export async function requireAuth() {
   const session = await getSession();
@@ -16,8 +16,8 @@ export async function requireAuth() {
 export async function requireRole(allowedRoles: UserRole[]) {
   const session = await requireAuth();
 
-  if (!allowedRoles.includes(session.role)) {
-    redirect(getDefaultRouteForRole(session.role));
+  if (!hasRequiredRole(session.role, allowedRoles)) {
+    redirect("/unauthorized");
   }
 
   return session;

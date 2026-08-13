@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
+import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 type PendingDocument = {
   id: string;
@@ -11,6 +12,7 @@ type PendingDocument = {
   documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | null;
   mrType?: "CASH" | "CREDIT" | null;
   currentVersion: number;
+  latestComment?: string | null;
   uploadedAt: string;
 };
 
@@ -21,7 +23,7 @@ type Props = {
 export default function ApproverPendingTable({ documents }: Props) {
   const router = useRouter();
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
-  const [decision, setDecision] = useState<"APPROVE" | "REJECT">("APPROVE");
+  const [decision, setDecision] = useState<"APPROVE" | "REJECT" | "COMMENT">("APPROVE");
   const [comments, setComments] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +55,7 @@ export default function ApproverPendingTable({ documents }: Props) {
 
       const response = await fetch(`/api/documents/${activeDocument.id}/actions`, {
         method: "POST",
+        headers: { "x-csrf-token": getCsrfTokenFromBrowser() },
         body: formData,
       });
 
@@ -155,22 +158,48 @@ export default function ApproverPendingTable({ documents }: Props) {
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Decision</label>
               <select
                 value={decision}
-                onChange={(e) => setDecision(e.target.value as "APPROVE" | "REJECT")}
+                onChange={(e) => setDecision(e.target.value as "APPROVE" | "REJECT" | "COMMENT")}
                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
               >
                 <option value="APPROVE">Approve</option>
                 <option value="REJECT">Reject</option>
+                <option value="COMMENT">Comment / Revision Required</option>
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Upload Signed/Revised File</label>
-              <input
-                type="file"
-                onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
-              />
+              {decision === "APPROVE" ? (
+                <>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Upload Signed/Revised File</label>
+                  <input
+                    type="file"
+                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                  />
+                </>
+              ) : decision === "COMMENT" ? (
+                <>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Optional Revised File</label>
+                  <input
+                    type="file"
+                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                  />
+                  <p className="mt-2 text-xs text-slate-500">Upload a revised file only if you want to send an updated version with this revision request.</p>
+                </>
+              ) : (
+                <div className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-3 text-sm text-slate-500">
+                  No upload is required for rejections.
+                </div>
+              )}
             </div>
           </div>
+
+          {activeDocument.latestComment ? (
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+              <p className="font-semibold">Latest revision comment</p>
+              <p className="mt-1 whitespace-pre-wrap">{activeDocument.latestComment}</p>
+            </div>
+          ) : null}
 
           <div className="mt-3">
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Comments</label>

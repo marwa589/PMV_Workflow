@@ -1,12 +1,13 @@
 import nodemailer from "nodemailer";
+import { appConfig } from "@/lib/env";
 
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT || 587),
+  host: appConfig.smtpHost(),
+  port: appConfig.smtpPort(),
   secure: false,
   auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    user: appConfig.smtpUser(),
+    pass: appConfig.smtpPass(),
   },
 });
 
@@ -19,13 +20,13 @@ export async function sendEmail({
   subject: string;
   html: string;
 }) {
-  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
+  if (!appConfig.smtpHost() || !appConfig.smtpUser() || !appConfig.smtpPass()) {
     console.warn("SMTP credentials are not configured. Skipping email send.");
     return null;
   }
 
   return transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    from: appConfig.smtpFrom() || appConfig.smtpUser(),
     to,
     subject,
     html,

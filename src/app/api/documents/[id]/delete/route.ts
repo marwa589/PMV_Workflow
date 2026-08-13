@@ -19,38 +19,8 @@ export async function POST(
     return NextResponse.json({ message: "Only admin can delete documents." }, { status: 403 });
   }
 
-  const { id: documentId } = await params;
-
-  try {
-    const document = await prisma.document.findUnique({
-      where: { id: documentId },
-      select: { id: true },
-    });
-
-    if (!document) {
-      return NextResponse.json({ message: "Document not found." }, { status: 404 });
-    }
-
-    const versions = await prisma.documentVersion.findMany({
-      where: { documentId: document.id },
-      select: { filePath: true },
-    });
-
-    await prisma.$transaction(async (tx) => {
-      await tx.approvalHistory.deleteMany({ where: { documentId: document.id } });
-      await tx.documentVersion.deleteMany({ where: { documentId: document.id } });
-      await tx.document.delete({ where: { id: document.id } });
-    });
-
-    await deleteDocumentFiles({ filePaths: versions.map((v) => v.filePath) });
-
-    return NextResponse.json({ message: "Document deleted." }, { status: 200 });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        message: error instanceof Error ? error.message : "Unable to delete document.",
-      },
-      { status: 400 },
-    );
-  }
+  return NextResponse.json(
+    { message: "Deletion must be requested and approved by Approver 3 before any document is deleted." },
+    { status: 403 },
+  );
 }

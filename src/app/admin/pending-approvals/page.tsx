@@ -36,7 +36,7 @@ export default async function AdminPendingApprovalsPage() {
         <div className="border-b border-slate-200 px-5 py-4">
           <h3 className="text-base font-semibold text-slate-900">Pending Approvals</h3>
         </div>
-        <DocumentListTable documents={documents} emptyMessage="No pending approvals." showDeleteAction />
+        <DocumentListTable documents={documents} emptyMessage="No pending approvals." />
       </section>
     </DashboardShell>
   );

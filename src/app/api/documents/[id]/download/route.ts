@@ -2,6 +2,7 @@ import { readFile } from "fs/promises";
 import path from "path";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
+import { canAccessDocument } from "@/lib/auth/resource-access";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -16,6 +17,11 @@ export async function GET(
   }
 
   const { id: documentId } = await params;
+
+  const canAccess = await canAccessDocument(session, documentId);
+  if (!canAccess) {
+    return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+  }
 
   const document = await prisma.document.findUnique({
     where: { id: documentId },

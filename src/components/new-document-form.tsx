@@ -12,6 +12,7 @@ import {
   UploadCloud,
   XCircle,
 } from "lucide-react";
+import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 type FileKind = "pdf" | "docx" | "xlsx" | "image" | "unknown";
 type DocumentTypeOption = "COMPARISON" | "MATERIAL_REQUISITION";
@@ -72,7 +73,7 @@ function FileTypeIcon({ file }: { file: File | null }) {
   }
 }
 
-export default function NewDocumentForm() {
+export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { defaultRedirectPath?: string }) {
   const router = useRouter();
 
   const [title, setTitle] = useState("");
@@ -194,6 +195,7 @@ export default function NewDocumentForm() {
 
       const response = await fetch("/api/documents", {
         method: "POST",
+        headers: { "x-csrf-token": getCsrfTokenFromBrowser() },
         body: formData,
       });
 
@@ -209,7 +211,7 @@ export default function NewDocumentForm() {
       resetForm();
       window.setTimeout(() => {
         setShowToast(false);
-        router.push("/clerk");
+        router.push(defaultRedirectPath);
         router.refresh();
       }, 1600);
     } catch {
@@ -504,7 +506,7 @@ export default function NewDocumentForm() {
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <button
             type="button"
-            onClick={() => router.push("/clerk")}
+            onClick={() => router.push(defaultRedirectPath)}
             disabled={isSubmitting}
             className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >

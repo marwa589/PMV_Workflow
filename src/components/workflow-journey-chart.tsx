@@ -2,6 +2,7 @@ import { DocumentStatus } from "@prisma/client";
 
 type Props = {
   status: DocumentStatus;
+  lastActiveStage?: DocumentStatus | null;
 };
 
 const steps = [
@@ -12,7 +13,30 @@ const steps = [
   { label: "Completed", value: 4 },
 ];
 
-function resolveStepIndex(status: DocumentStatus) {
+function getStageLabel(stage: DocumentStatus | null | undefined) {
+  switch (stage) {
+    case DocumentStatus.PENDING_APPROVER_1:
+      return "Approver 1";
+    case DocumentStatus.PENDING_APPROVER_2:
+      return "Approver 2";
+    case DocumentStatus.PENDING_APPROVER_3:
+      return "Approver 3";
+    case DocumentStatus.REVISION_REQUIRED:
+      return "Revision required";
+    case DocumentStatus.APPROVED:
+      return "Completed";
+    case DocumentStatus.REJECTED:
+      return "Rejected";
+    default:
+      return "Submitted";
+  }
+}
+
+function resolveStepIndex(status: DocumentStatus, lastActiveStage?: DocumentStatus | null) {
+  if (status === DocumentStatus.REJECTED && lastActiveStage) {
+    return resolveStepIndex(lastActiveStage);
+  }
+
   switch (status) {
     case DocumentStatus.PENDING_APPROVER_1:
       return 1;
@@ -20,12 +44,12 @@ function resolveStepIndex(status: DocumentStatus) {
       return 2;
     case DocumentStatus.PENDING_APPROVER_3:
       return 3;
+    case DocumentStatus.REVISION_REQUIRED:
+      return 3;
     case DocumentStatus.APPROVED:
       return 4;
     case DocumentStatus.REJECTED:
       return 4;
-    case DocumentStatus.REVISION_REQUIRED:
-      return 2;
     case DocumentStatus.ARCHIVED:
       return 4;
     default:
@@ -33,8 +57,9 @@ function resolveStepIndex(status: DocumentStatus) {
   }
 }
 
-export default function WorkflowJourneyChart({ status }: Props) {
-  const currentStep = resolveStepIndex(status);
+export default function WorkflowJourneyChart({ status, lastActiveStage }: Props) {
+  const currentStep = resolveStepIndex(status, lastActiveStage);
+  const stageLabel = status === DocumentStatus.REJECTED ? getStageLabel(lastActiveStage) : getStageLabel(status);
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -42,6 +67,9 @@ export default function WorkflowJourneyChart({ status }: Props) {
         <div>
           <p className="text-sm font-semibold text-slate-900">Workflow journey</p>
           <p className="text-sm text-slate-600">A quick view of where this document is in the approval path.</p>
+        </div>
+        <div className="rounded-full bg-cyan-50 px-3 py-1 text-sm font-medium text-cyan-700">
+          {status === DocumentStatus.REJECTED ? `Rejected at ${stageLabel}` : stageLabel}
         </div>
       </div>
 

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, LockKeyhole, Mail } from "lucide-react";
+import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 type LoginResponse = {
   message: string;
@@ -24,7 +25,10 @@ export default function LoginForm() {
     try {
       const response = await fetch("/api/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": getCsrfTokenFromBrowser(),
+        },
         body: JSON.stringify({ email, password }),
       });
 

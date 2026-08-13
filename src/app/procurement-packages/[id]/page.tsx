@@ -1,9 +1,10 @@
 import { ApprovalActionType, DocumentStatus } from "@prisma/client";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { Clock, Download } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
 import { requireAuth } from "@/lib/auth/guards";
+import { canAccessPackage } from "@/lib/auth/resource-access";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,11 @@ function formatTurnaround(ms: number): string {
 export default async function ProcurementPackagePage({ params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth();
   const { id } = await params;
+
+  const allowed = await canAccessPackage(session, id);
+  if (!allowed) {
+    redirect("/unauthorized");
+  }
 
   const packageDocument = await prisma.document.findUnique({
     where: { id },

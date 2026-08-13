@@ -89,9 +89,11 @@ export default function WorkflowPipelineChart({ stages, documents }: Props) {
                         ? 'border-sky-200 bg-sky-50 text-sky-900 shadow-sm ring-1 ring-sky-200'
                         : stage.key === 'APPROVER_3'
                           ? 'border-violet-200 bg-violet-50 text-violet-900 shadow-sm ring-1 ring-violet-200'
-                          : stage.key === 'APPROVED'
-                            ? 'border-emerald-200 bg-emerald-50 text-emerald-900 shadow-sm ring-1 ring-emerald-200'
-                            : 'border-slate-200 bg-slate-100 text-slate-900 shadow-sm ring-1 ring-slate-300'
+                          : stage.key === 'REVISION_REQUIRED'
+                            ? 'border-orange-200 bg-orange-50 text-orange-900 shadow-sm ring-1 ring-orange-200'
+                            : stage.key === 'APPROVED'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-900 shadow-sm ring-1 ring-emerald-200'
+                              : 'border-slate-200 bg-slate-100 text-slate-900 shadow-sm ring-1 ring-slate-300'
                     : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                 }`}
                 title={`Stage: ${stage.label}\nDocuments: ${stage.count}\nAverage days pending: ${formatDays(stage.averageDaysPending)}\nOldest pending: ${stage.oldestPendingDocument ? `${stage.oldestPendingDocument.documentNumber} - ${stage.oldestPendingDocument.title}` : 'None'}`}
