@@ -1,10 +1,12 @@
 import { mkdir, rm, unlink, writeFile } from "fs/promises";
 import path from "path";
 
-const DEFAULT_UPLOAD_ROOT = "C:\\Users\\Lenovo\\OneDrive - Ahmadiah Contracting & Trading Co. kcsc\\PMV_AWF";
-
 export function getUploadRoot(): string {
-  return process.env.UPLOAD_ROOT?.trim() || DEFAULT_UPLOAD_ROOT;
+  const uploadPath = process.env.UPLOAD_PATH?.trim();
+  if (!uploadPath) {
+    throw new Error("UPLOAD_PATH is not configured.");
+  }
+  return uploadPath;
 }
 
 export function resolveStoredFilePath(storedPath: string): string {
