@@ -1,8 +1,8 @@
 import { readFile } from "fs/promises";
-import path from "path";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { canAccessDocument } from "@/lib/auth/resource-access";
+import { resolveStoredFilePath } from "@/lib/files";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -54,7 +54,7 @@ export async function GET(
   }
 
   try {
-    const absolutePath = path.join(/* turbopackIgnore: true */ process.cwd(), version.filePath);
+    const absolutePath = resolveStoredFilePath(version.filePath);
     const buffer = await readFile(absolutePath);
 
     return new NextResponse(buffer, {

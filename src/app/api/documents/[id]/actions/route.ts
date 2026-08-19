@@ -1,7 +1,6 @@
 import { ApprovalActionType, DocumentStatus, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { unlink } from "fs/promises";
-import { saveDocumentVersionFile } from "@/lib/files";
+import { deleteDocumentFiles, saveDocumentVersionFile } from "@/lib/files";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
@@ -152,7 +151,7 @@ export async function POST(
         await Promise.all(
           versionFilesToDelete.map(async (version) => {
             try {
-              await unlink(version.filePath);
+              await deleteDocumentFiles({ filePaths: [version.filePath] });
             } catch {
               // Ignore missing files so rejection still succeeds.
             }
@@ -408,7 +407,7 @@ export async function POST(
       await Promise.all(
         versionsToDeleteAfterCommit.map(async (version) => {
           try {
-            await unlink(version.filePath);
+            await deleteDocumentFiles({ filePaths: [version.filePath] });
           } catch {
             // Ignore missing files so approval still succeeds.
           }

@@ -1,6 +1,23 @@
 import { mkdir, rm, unlink, writeFile } from "fs/promises";
 import path from "path";
 
+const DEFAULT_UPLOAD_ROOT = "C:\\Users\\Lenovo\\OneDrive - Ahmadiah Contracting & Trading Co. kcsc\\PMV_AWF";
+
+export function getUploadRoot(): string {
+  return process.env.UPLOAD_ROOT?.trim() || DEFAULT_UPLOAD_ROOT;
+}
+
+export function resolveStoredFilePath(storedPath: string): string {
+  if (path.isAbsolute(storedPath)) return storedPath;
+
+  const normalizedPath = storedPath.replaceAll("/", path.sep);
+  if (normalizedPath.startsWith(`uploads${path.sep}`)) {
+    return path.join(process.cwd(), normalizedPath);
+  }
+
+  return path.join(getUploadRoot(), normalizedPath);
+}
+
 const ACCEPTED_EXTENSIONS = ["pdf", "docx", "xlsx", "jpg", "jpeg", "png"];
 const ACCEPTED_MIME_TYPES = [
   "application/pdf",
@@ -36,6 +53,11 @@ function safeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, "_");
 }
 
+function documentFileName(fileName: string, identifier: string, extension: string): string {
+  const baseName = fileName.replace(/\.[^.]+$/, "");
+  return safeFileName(`${baseName}-${identifier}`) + (extension ? `.${extension}` : "");
+}
+
 // Compute the structured storage directory based on document type and relationship.
 export function resolveStorageDir(params: {
   documentType: "COMPARISON" | "MATERIAL_REQUISITION";
@@ -43,12 +65,12 @@ export function resolveStorageDir(params: {
   hasLinkedComparison: boolean;
 }): string {
   if (params.documentType === "COMPARISON") {
-    return path.join(process.cwd(), "uploads", "Comparisons");
+    return path.join(getUploadRoot(), "Comparisons");
   }
   if (params.hasLinkedComparison && params.mrNumber) {
-    return path.join(process.cwd(), "uploads", "MRs+Comparisons", `MR-${safeFileName(params.mrNumber)}`);
+    return path.join(getUploadRoot(), "MRs+Comparisons", `MR-${safeFileName(params.mrNumber)}`);
   }
-  return path.join(process.cwd(), "uploads", "MRs");
+  return path.join(getUploadRoot(), "MRs");
 }
 
 export async function saveDocumentVersionFile(params: {
@@ -76,18 +98,18 @@ export async function saveDocumentVersionFile(params: {
       mrNumber: params.mrNumber,
       hasLinkedComparison: params.hasLinkedComparison ?? false,
     });
-    fileName = safeFileName(`${params.documentNumber}-v${params.versionNumber}-${params.file.name}`);
+    fileName = documentFileName(params.file.name, params.documentNumber, extension);
   } else {
-    // Legacy fallback path (used during approval actions before full info is available)
-    dir = path.join(process.cwd(), "uploads", "documents", params.documentId);
-    fileName = `v${params.versionNumber}-${Date.now()}.${extension}`;
+    // Keep approval uploads in the permanent root when document details are unavailable.
+    dir = path.join(getUploadRoot(), "documents", params.documentId);
+    fileName = documentFileName(params.file.name, params.documentId, extension);
   }
 
   await mkdir(dir, { recursive: true });
   const fullPath = path.join(dir, fileName);
   await writeFile(fullPath, Buffer.from(await params.file.arrayBuffer()));
 
-  const relativePath = path.relative(process.cwd(), fullPath).replaceAll("\\", "/");
+  const relativePath = path.relative(getUploadRoot(), fullPath).replaceAll("\\", "/");
   return { relativePath, extension };
 }
 
@@ -98,11 +120,11 @@ export async function copyComparisonToMrFolder(params: {
   mrNumber: string;
 }): Promise<void> {
   const { readFile } = await import("fs/promises");
-  const destDir = path.join(process.cwd(), "uploads", "MRs+Comparisons", `MR-${safeFileName(params.mrNumber)}`);
+  const destDir = path.join(getUploadRoot(), "MRs+Comparisons", `MR-${safeFileName(params.mrNumber)}`);
   await mkdir(destDir, { recursive: true });
   const destPath = path.join(destDir, safeFileName(params.comparisonOriginalName));
   try {
-    const buffer = await readFile(path.join(process.cwd(), params.comparisonFilePath));
+    const buffer = await readFile(resolveStoredFilePath(params.comparisonFilePath));
     await writeFile(destPath, buffer);
   } catch {
     // Non-critical: if comparison file is missing the copy is skipped silently.
@@ -121,7 +143,7 @@ export async function deleteDocumentFiles(params: { filePaths: string[] } | stri
   await Promise.all(
     params.filePaths.map(async (relativePath) => {
       try {
-        await unlink(path.join(process.cwd(), relativePath));
+        await unlink(resolveStoredFilePath(relativePath));
       } catch {
         // Ignore missing files.
       }

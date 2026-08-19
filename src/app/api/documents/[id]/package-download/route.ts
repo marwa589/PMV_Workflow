@@ -4,6 +4,7 @@ import path from "path";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { canAccessPackage } from "@/lib/auth/resource-access";
+import { resolveStoredFilePath } from "@/lib/files";
 import { prisma } from "@/lib/prisma";
 import { createHash } from "crypto";
 import { pipeline } from "stream/promises";
@@ -33,7 +34,15 @@ export async function GET(
     select: {
       id: true,
       documentNumber: true,
-      relatedComparison: { select: { id: true, documentNumber: true, title: true } },
+      relatedComparison: {
+        select: {
+          id: true,
+          documentNumber: true,
+          title: true,
+          currentVersion: true,
+          versions: { select: { versionNumber: true, filePath: true, mimeType: true } },
+        },
+      },
       currentVersion: true,
       versions: { orderBy: { versionNumber: "asc" }, select: { id: true, versionNumber: true, filePath: true, originalName: true, mimeType: true } },
     },
@@ -46,16 +55,19 @@ export async function GET(
   const filesToPackage = [
     {
       fileName: `${document.documentNumber || "MR"}.pdf`,
-      sourcePath: path.join(process.cwd(), document.versions.find((version) => version.versionNumber === document.currentVersion)?.filePath || ""),
+      sourcePath: resolveStoredFilePath(document.versions.find((version) => version.versionNumber === document.currentVersion)?.filePath || ""),
       mimeType: document.versions.find((version) => version.versionNumber === document.currentVersion)?.mimeType || "application/pdf",
     },
   ];
 
   if (document.relatedComparison) {
+    const comparisonVersion = document.relatedComparison.versions.find(
+      (version) => version.versionNumber === document.relatedComparison?.currentVersion,
+    );
     filesToPackage.push({
       fileName: `${document.relatedComparison.documentNumber || "Comparison"}.pdf`,
-      sourcePath: path.join(process.cwd(), "uploads", "documents", document.relatedComparison.id, `v${document.relatedComparison.id}.pdf`),
-      mimeType: "application/pdf",
+      sourcePath: comparisonVersion ? resolveStoredFilePath(comparisonVersion.filePath) : "",
+      mimeType: comparisonVersion?.mimeType || "application/pdf",
     });
   }
 
@@ -68,7 +80,7 @@ export async function GET(
     const zipEntries = [] as string[];
 
     for (const file of filesToPackage) {
-      if (!file.sourcePath || !file.sourcePath.includes("uploads")) {
+      if (!file.sourcePath) {
         continue;
       }
       const buffer = await readFile(file.sourcePath);

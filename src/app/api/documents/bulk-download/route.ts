@@ -3,6 +3,7 @@ import path from 'path';
 import { NextResponse } from 'next/server';
 import { DocumentStatus } from '@prisma/client';
 import { getSession } from '@/lib/auth/session';
+import { resolveStoredFilePath } from '@/lib/files';
 import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
@@ -85,13 +86,13 @@ export async function GET(request: Request) {
     const mrVersion = versionMap.get(mr.id);
     if (mrVersion) {
       const safeFile = mrVersion.originalName.replace(/[\\/:*?"<>|]/g, '_');
-      await writeFile(path.join(pairFolder, safeFile), await readFile(path.join(process.cwd(), mrVersion.filePath)));
+      await writeFile(path.join(pairFolder, safeFile), await readFile(resolveStoredFilePath(mrVersion.filePath)));
     }
 
     const compVersion = versionMap.get(comp.id);
     if (compVersion) {
       const safeFile = compVersion.originalName.replace(/[\\/:*?"<>|]/g, '_');
-      await writeFile(path.join(pairFolder, safeFile), await readFile(path.join(process.cwd(), compVersion.filePath)));
+      await writeFile(path.join(pairFolder, safeFile), await readFile(resolveStoredFilePath(compVersion.filePath)));
     }
   }
 
@@ -107,7 +108,7 @@ export async function GET(request: Request) {
       const version = versionMap.get(mr.id);
       if (!version) continue;
       const safeFile = version.originalName.replace(/[\\/:*?"<>|]/g, '_');
-      await writeFile(path.join(tempDir, 'MRs', safeFile), await readFile(path.join(process.cwd(), version.filePath)));
+      await writeFile(path.join(tempDir, 'MRs', safeFile), await readFile(resolveStoredFilePath(version.filePath)));
     }
   }
 
@@ -122,7 +123,7 @@ export async function GET(request: Request) {
       const version = versionMap.get(comp.id);
       if (!version) continue;
       const safeFile = version.originalName.replace(/[\\/:*?"<>|]/g, '_');
-      await writeFile(path.join(tempDir, 'Comparisons', safeFile), await readFile(path.join(process.cwd(), version.filePath)));
+      await writeFile(path.join(tempDir, 'Comparisons', safeFile), await readFile(resolveStoredFilePath(version.filePath)));
     }
   }
 

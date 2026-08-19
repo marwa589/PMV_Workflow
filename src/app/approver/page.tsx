@@ -1,7 +1,7 @@
 import { ApprovalActionType, DocumentStatus, UserRole } from "@prisma/client";
 import ApproverPendingTable from "@/components/approver-pending-table";
 import DashboardShell from "@/components/dashboard-shell";
-import DeletionRequestActionButton from "@/components/deletion-request-action-button";
+import DeletionRequestsList from "@/components/deletion-requests-list";
 import DocumentListTable from "@/components/document-list-table";
 import { requireRole } from "@/lib/auth/guards";
 import { APPROVER_ROLES, roleLabel } from "@/lib/auth/roles";
@@ -19,7 +19,8 @@ export default async function ApproverDashboardPage() {
   let rejectedCount = 0;
   let pendingDeletionRequests: {
     id: string;
-    document: { id: string; documentNumber: string; title: string; status: DocumentStatus };
+    documentId: string;
+    document: { id: string; documentNumber: string; title: string };
     requestedBy: { name: string; email: string };
     createdAt: Date;
   }[] = [];
@@ -165,7 +166,8 @@ export default async function ApproverDashboardPage() {
     deletionRequestCount = session.role === UserRole.APPROVER_3 ? deletionRequests.length : 0;
     pendingDeletionRequests = session.role === UserRole.APPROVER_3 ? deletionRequests.map((request) => ({
       id: request.id,
-      document: request.document,
+      documentId: request.documentId,
+      document: { id: request.document.id, documentNumber: request.document.documentNumber, title: request.document.title },
       requestedBy: request.requestedBy,
       createdAt: request.createdAt,
     })) : [];
@@ -265,27 +267,15 @@ export default async function ApproverDashboardPage() {
           <div className="border-b border-slate-200 px-5 py-4">
             <h3 className="text-base font-semibold text-slate-900">Deletion Requests</h3>
           </div>
-          {pendingDeletionRequests.length === 0 ? (
-            <div className="px-5 py-6 text-sm text-slate-500">No deletion requests pending.</div>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {pendingDeletionRequests.map((request) => (
-                <div key={request.id} className="px-5 py-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">
-                        {request.document.documentNumber} - {request.document.title}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Requested by {request.requestedBy.name} ({request.requestedBy.email}) on {new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(request.createdAt)}
-                      </p>
-                    </div>
-                    <DeletionRequestActionButton requestId={request.id} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <DeletionRequestsList
+            requests={pendingDeletionRequests.map((request) => ({
+              id: request.id,
+              documentId: request.documentId,
+              document: { documentNumber: request.document.documentNumber, title: request.document.title },
+              requestedBy: request.requestedBy,
+              createdAt: request.createdAt,
+            }))}
+          />
         </section>
       ) : null}
 
