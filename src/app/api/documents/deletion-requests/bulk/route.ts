@@ -15,8 +15,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  if (session.role !== UserRole.APPROVER_3) {
-    return NextResponse.json({ message: "Only Approver 3 can process deletion requests." }, { status: 403 });
+  if (session.role !== UserRole.ADMIN) {
+    return NextResponse.json({ message: "Only Admin can process deletion requests." }, { status: 403 });
   }
 
   const body = (await request.json()) as { requestIds: string[]; action: string };
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
         where: { id: { in: requests.map((r) => r.id) } },
         data: {
           status: DeletionRequestStatus.REJECTED,
-          approver3Id: session.userId,
+          adminReviewerId: session.userId,
           reviewedAt: new Date(),
         },
       });
@@ -79,7 +79,7 @@ export async function POST(request: Request) {
               where: { id: req.id },
               data: {
                 status: DeletionRequestStatus.APPROVED,
-                approver3Id: session.userId,
+                adminReviewerId: session.userId,
                 reviewedAt: new Date(),
               },
             });

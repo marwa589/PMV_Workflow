@@ -22,11 +22,11 @@ const badgeClasses: Record<DocumentStatus, string> = {
 export function statusLabel(status: DocumentStatus): string {
   switch (status) {
     case "PENDING_APPROVER_1":
-      return "Pending Approval 1";
+      return "Pending PMV Engineer";
     case "PENDING_APPROVER_2":
-      return "Pending Approval 2";
+      return "Pending Workshop Manager";
     case "PENDING_APPROVER_3":
-      return "Pending Approval 3";
+      return "Pending PMV Manager";
     case "APPROVED":
       return "Approved";
     case "REJECTED":

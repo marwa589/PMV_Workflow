@@ -1,7 +1,6 @@
 import { ApprovalActionType, DocumentStatus, UserRole } from "@prisma/client";
 import ApproverPendingTable from "@/components/approver-pending-table";
 import DashboardShell from "@/components/dashboard-shell";
-import DeletionRequestsList from "@/components/deletion-requests-list";
 import DocumentListTable from "@/components/document-list-table";
 import { requireRole } from "@/lib/auth/guards";
 import { APPROVER_ROLES, roleLabel } from "@/lib/auth/roles";
@@ -14,16 +13,8 @@ export default async function ApproverDashboardPage() {
 
   let pendingCount = 0;
   let revisionRequiredCount = 0;
-  let deletionRequestCount = 0;
   let approvedCount = 0;
   let rejectedCount = 0;
-  let pendingDeletionRequests: {
-    id: string;
-    documentId: string;
-    document: { id: string; documentNumber: string; title: string };
-    requestedBy: { name: string; email: string };
-    createdAt: Date;
-  }[] = [];
   let pendingDocuments: {
     id: string;
     documentNumber: string;
@@ -61,7 +52,7 @@ export default async function ApproverDashboardPage() {
   }[] = [];
 
   try {
-    const [pending, revisionRequired, approved, rejected, pendingDocs, revisionRequiredDocs, recentApproved, recentActivity, deletionRequests] = await Promise.all([
+    const [pending, revisionRequired, approved, rejected, pendingDocs, revisionRequiredDocs, recentApproved, recentActivity] = await Promise.all([
       prisma.document.count({
         where: {
           currentApproverId: session.userId,
@@ -148,29 +139,10 @@ export default async function ApproverDashboardPage() {
         orderBy: { performedAt: "desc" },
         take: 8,
       }),
-      session.role === UserRole.APPROVER_3
-        ? prisma.deletionRequest.findMany({
-            where: { status: "PENDING" },
-            include: {
-              document: { select: { id: true, documentNumber: true, title: true, status: true } },
-              requestedBy: { select: { name: true, email: true } },
-            },
-            orderBy: { createdAt: "desc" },
-            take: 20,
-          })
-        : [],
     ]);
 
     pendingCount = pending;
     revisionRequiredCount = revisionRequired;
-    deletionRequestCount = session.role === UserRole.APPROVER_3 ? deletionRequests.length : 0;
-    pendingDeletionRequests = session.role === UserRole.APPROVER_3 ? deletionRequests.map((request) => ({
-      id: request.id,
-      documentId: request.documentId,
-      document: { id: request.document.id, documentNumber: request.document.documentNumber, title: request.document.title },
-      requestedBy: request.requestedBy,
-      createdAt: request.createdAt,
-    })) : [];
     approvedCount = approved;
     rejectedCount = rejected;
     pendingDocuments = pendingDocs.map((doc) => ({
@@ -228,12 +200,6 @@ export default async function ApproverDashboardPage() {
           <p className="text-sm font-medium">Revision Required</p>
           <p className="mt-3 text-3xl font-semibold">{revisionRequiredCount}</p>
         </article>
-        {session.role === UserRole.APPROVER_3 ? (
-          <article className="rounded-2xl bg-amber-50 p-5 text-amber-900 ring-1 ring-amber-200 shadow-sm">
-            <p className="text-sm font-medium">Deletion Requests</p>
-            <p className="mt-3 text-3xl font-semibold">{deletionRequestCount}</p>
-          </article>
-        ) : null}
         <article className="rounded-2xl bg-emerald-50 p-5 text-emerald-900 ring-1 ring-emerald-200 shadow-sm">
           <p className="text-sm font-medium">My Approved Documents</p>
           <p className="mt-3 text-3xl font-semibold">{approvedCount}</p>
@@ -261,23 +227,6 @@ export default async function ApproverDashboardPage() {
           <ApproverPendingTable documents={revisionRequiredDocuments} />
         </div>
       </section>
-
-      {session.role === UserRole.APPROVER_3 ? (
-        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-5 py-4">
-            <h3 className="text-base font-semibold text-slate-900">Deletion Requests</h3>
-          </div>
-          <DeletionRequestsList
-            requests={pendingDeletionRequests.map((request) => ({
-              id: request.id,
-              documentId: request.documentId,
-              document: { documentNumber: request.document.documentNumber, title: request.document.title },
-              requestedBy: request.requestedBy,
-              createdAt: request.createdAt,
-            }))}
-          />
-        </section>
-      ) : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">

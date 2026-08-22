@@ -47,7 +47,7 @@ export default function DeletionRequestsList({ requests }: Props) {
   async function handleIndividualAction(requestId: string, action: "APPROVE" | "REJECT") {
     const actionText = action === "APPROVE" ? "approve" : "reject";
     const confirmMsg = action === "APPROVE"
-      ? "Approve this deletion request? The document will be deleted after approval."
+      ? "Approve this deletion request? The document will be deleted after Admin approval."
       : "Reject this deletion request? The document will remain in the system.";
 
     const confirmed = window.confirm(confirmMsg);

@@ -15,12 +15,12 @@ export async function POST(
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  if (session.role !== UserRole.ADMIN) {
-    return NextResponse.json({ message: "Only admin can delete documents." }, { status: 403 });
+  if (session.role !== UserRole.CLERK) {
+    return NextResponse.json({ message: "Only Clerk can request document deletion." }, { status: 403 });
   }
 
   return NextResponse.json(
-    { message: "Deletion must be requested and approved by Approver 3 before any document is deleted." },
+    { message: "Deletion requests are reviewed by Admin before documents are deleted." },
     { status: 403 },
   );
 }

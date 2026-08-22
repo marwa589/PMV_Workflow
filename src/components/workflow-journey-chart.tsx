@@ -7,20 +7,20 @@ type Props = {
 
 const steps = [
   { label: "Submitted", value: 0 },
-  { label: "Approver 1", value: 1 },
-  { label: "Approver 2", value: 2 },
-  { label: "Approver 3", value: 3 },
+  { label: "PMV Engineer", value: 1 },
+  { label: "Workshop Manager", value: 2 },
+  { label: "PMV Manager", value: 3 },
   { label: "Completed", value: 4 },
 ];
 
 function getStageLabel(stage: DocumentStatus | null | undefined) {
   switch (stage) {
     case DocumentStatus.PENDING_APPROVER_1:
-      return "Approver 1";
+      return "PMV Engineer";
     case DocumentStatus.PENDING_APPROVER_2:
-      return "Approver 2";
+      return "Workshop Manager";
     case DocumentStatus.PENDING_APPROVER_3:
-      return "Approver 3";
+      return "PMV Manager";
     case DocumentStatus.REVISION_REQUIRED:
       return "Revision required";
     case DocumentStatus.APPROVED:

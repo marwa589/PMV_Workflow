@@ -34,11 +34,11 @@ export function parseSearchQuery(value: unknown): string {
 export function getDocumentStatusLabel(status?: DocumentStatus | null): string {
   switch (status) {
     case "PENDING_APPROVER_1":
-      return "pending approval 1";
+      return "pending pmv engineer";
     case "PENDING_APPROVER_2":
-      return "pending approval 2";
+      return "pending workshop manager";
     case "PENDING_APPROVER_3":
-      return "pending approval 3";
+      return "pending pmv manager";
     case "APPROVED":
       return "approved";
     case "REJECTED":

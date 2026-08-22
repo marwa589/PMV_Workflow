@@ -60,6 +60,14 @@ enum NotificationType {
   DOCUMENT_DELETED
 }
 
+enum EmailEventType {
+  APPROVAL_PENDING
+  WORKFLOW_APPROVED
+  WORKFLOW_REJECTED
+  APPROVAL_OVERDUE
+  COMPARISON_MR_OVERDUE
+}
+
 model User {
   id                        String            @id @default(cuid())
   name                      String
@@ -72,9 +80,18 @@ model User {
   approvalHistory           ApprovalHistory[] @relation("ApprovalsPerformedBy")
   assignedDocuments         Document[]        @relation("CurrentApprover")
   notifications             Notification[]    @relation("NotificationsForUser")
+  emailNotificationEvents   EmailNotificationEvent[] @relation("EmailEventsForUser")
   deletionRequestsRequested DeletionRequest[] @relation("DeletionRequestsRequestedBy")
   deletionRequestsApproved  DeletionRequest[] @relation("DeletionRequestsApprovedBy")
+  deletionRequestsReviewed  DeletionRequest[] @relation("DeletionRequestsReviewedBy")
   auditLogsPerformed        AuditLog[]        @relation("AuditLogsPerformedBy")
+  trustedDevices             TrustedDevice[]
+  otpChallenges              OtpChallenge[]
+  signaturePath              String?
+  signatureOriginalName      String?
+  signatureMimeType          String?
+  signatureFileSize          Int?
+  signatureUpdatedAt         DateTime?
   createdAt                 DateTime          @default(now())
   updatedAt                 DateTime          @updatedAt
 }
@@ -155,6 +172,8 @@ model DeletionRequest {
   requestedBy    User                 @relation("DeletionRequestsRequestedBy", fields: [requestedById], references: [id])
   approver3Id    String?
   approver3      User?                @relation("DeletionRequestsApprovedBy", fields: [approver3Id], references: [id], onDelete: SetNull)
+  adminReviewerId String?
+  adminReviewer   User?                @relation("DeletionRequestsReviewedBy", fields: [adminReviewerId], references: [id], onDelete: SetNull)
   status         DeletionRequestStatus @default(PENDING)
   reason         String?
   createdAt      DateTime             @default(now())
@@ -181,6 +200,21 @@ model Notification {
   @@index([isRead])
 }
 
+model EmailNotificationEvent {
+  id          String         @id @default(cuid())
+  recipientId String
+  recipient   User           @relation("EmailEventsForUser", fields: [recipientId], references: [id], onDelete: Cascade)
+  type        EmailEventType
+  documentId  String?
+  createdAt   DateTime       @default(now())
+  availableAt DateTime
+  claimedAt   DateTime?
+  sentAt      DateTime?
+
+  @@index([recipientId, availableAt, sentAt, claimedAt])
+  @@index([type, documentId, createdAt])
+}
+
 model AuditLog {
   id            String   @id @default(cuid())
   documentId    String?
@@ -192,4 +226,35 @@ model AuditLog {
 
   @@index([documentId, createdAt])
   @@index([performedById, createdAt])
+}
+
+model TrustedDevice {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  @@index([userId, expiresAt])
+  @@index([userId, revokedAt])
+}
+
+model OtpChallenge {
+  id                 String   @id @default(cuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challengeTokenHash  String   @unique
+  codeHash            String
+  attempts            Int      @default(0)
+  lockedUntil         DateTime?
+  expiresAt           DateTime
+  verifiedAt          DateTime?
+  consumedAt          DateTime?
+  createdAt           DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, expiresAt])
 }

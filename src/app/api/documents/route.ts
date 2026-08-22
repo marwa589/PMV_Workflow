@@ -3,9 +3,7 @@ import { NextResponse } from "next/server";
 import { copyComparisonToMrFolder, saveDocumentVersionFile } from "@/lib/files";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
-import { sendEmail } from "@/lib/mail";
-import { createNotification } from "@/lib/notifications";
-import { runInBackground } from "@/lib/background";
+import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 
 export const runtime = "nodejs";
 
@@ -58,25 +56,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "At least one file is required." }, { status: 400 });
   }
 
-  const approver1 = await prisma.user.findFirst({
-    where: { role: UserRole.APPROVER_1 },
-    select: { id: true, email: true, name: true },
-  });
-
-  // edit
-  // const approver2 = await prisma.user.findFirst({
-  //   where: { role: UserRole.APPROVER_2 },
+  // const approver1 = await prisma.user.findFirst({
+  //   where: { role: UserRole.APPROVER_1 },
   //   select: { id: true, email: true, name: true },
   // });
-  // edit
 
-  const admins = await prisma.user.findMany({
-    where: { role: UserRole.ADMIN },
+  // edit
+  const approver2 = await prisma.user.findFirst({
+    where: { role: UserRole.APPROVER_2 },
     select: { id: true, email: true, name: true },
   });
+  // edit
 
-  if (!approver1?.email) {
-    return NextResponse.json({ message: "Approver 1 account is missing or has no email address." }, { status: 400 });
+  if (!approver2) {
+    return NextResponse.json({ message: "Workshop Manager account is missing." }, { status: 400 });
   }
 
   try {
@@ -95,15 +88,15 @@ export async function POST(request: Request) {
           title: perFileTitle,
           description: description || null,
           //edit
-          // status: DocumentStatus.PENDING_APPROVER_2,
-          status: DocumentStatus.PENDING_APPROVER_1,
+          status: DocumentStatus.PENDING_APPROVER_2,
+          // status: DocumentStatus.PENDING_APPROVER_1,
           currentVersion: 0,
           createdById: session.userId,
           //edit
-          // lastActiveStage: DocumentStatus.PENDING_APPROVER_2,
-          // currentApproverId: approver2!.id,
-          lastActiveStage: DocumentStatus.PENDING_APPROVER_1,
-          currentApproverId: approver1.id,
+          lastActiveStage: DocumentStatus.PENDING_APPROVER_2,
+          currentApproverId: approver2!.id,
+          // lastActiveStage: DocumentStatus.PENDING_APPROVER_1,
+          // currentApproverId: approver1.id,
           currentApproverAssignedAt: new Date(),
           documentType: normalizedDocumentType,
           mrType: normalizedMrType,
@@ -180,65 +173,13 @@ export async function POST(request: Request) {
       }),
     );
 
-    const recipients = [
-      approver1.email ? { email: approver1.email, name: approver1.name || "Approver", role: "approver" as const } : null,
-      ...admins
-        .filter((admin): admin is (typeof admins)[number] & { email: string } => Boolean(admin.email))
-        .map((admin) => ({ email: admin.email, name: admin.name || "Admin", role: "admin" as const })),
-    ].filter((recipient): recipient is { email: string; name: string; role: "approver" | "admin" } => recipient !== null);
-
-    if (recipients.length > 0) {
-      runInBackground(async () => {
-        await Promise.all(
-          result.flatMap((document) =>
-            recipients.map(async (recipient) => {
-              const notificationMessage = recipient.role === "admin"
-                ? `A new document is waiting for review.`
-                : `You have a new document to review.`;
-
-              await createNotification({
-                userId: recipient.role === "admin" ? admins.find((admin) => admin.email === recipient.email)?.id || "" : approver1.id,
-                type: "PENDING_APPROVAL",
-                title: `New document ready for review`,
-                message: `${document.documentNumber} - ${document.title}`,
-                documentId: document.id,
-              });
-              const subject = recipient.role === "admin"
-                ? `New document uploaded: ${document.documentNumber}`
-                : `New pending approval: ${document.documentNumber}`;
-
-              const html = recipient.role === "admin"
-                ? `
-                  <div style="font-family: Arial, sans-serif; line-height: 1.6;">
-                    <p>Hello ${recipient.name},</p>
-                    <p>A clerk has uploaded a new document and it is waiting for review.</p>
-                    <p><strong>Document:</strong> ${document.documentNumber}</p>
-                    <p><strong>Title:</strong> ${document.title}</p>
-                    <p>Please log in to the system to review the document queue.</p>
-                    <p>Regards,<br />DocuFlow 365</p>
-                  </div>
-                `
-                : `
-                  <div style="font-family: Arial, sans-serif; line-height: 1.6;">
-                    <p>Hello ${recipient.name},</p>
-                    <p>A new document is awaiting your review.</p>
-                    <p><strong>Document:</strong> ${document.documentNumber}</p>
-                    <p><strong>Title:</strong> ${document.title}</p>
-                    <p>Please log in to the system to review it.</p>
-                    <p>Regards,<br />DocuFlow 365</p>
-                  </div>
-                `;
-
-              await sendEmail({
-                to: recipient.email,
-                subject,
-                html,
-              });
-            }),
-          ),
-        );
-      });
-    }
+    await queueWorkflowEmailEvents(
+      result.map((document) => ({
+        recipientId: approver2.id,
+        type: "APPROVAL_PENDING" as const,
+        documentId: document.id,
+      })),
+    );
 
     return NextResponse.json({ message: "Document submitted.", documents: result }, { status: 201 });
   } catch (error) {

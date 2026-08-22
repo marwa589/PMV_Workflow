@@ -3,9 +3,9 @@ import { DocumentStatus } from "@prisma/client";
 export type DocumentTypeFilter = "COMPARISON" | "MATERIAL_REQUISITION" | "";
 
 export const DOCUMENT_STATUS_FILTER_OPTIONS: Array<{ value: DocumentStatus; label: string }> = [
-  { value: DocumentStatus.PENDING_APPROVER_1, label: "Pending Approval 1" },
-  { value: DocumentStatus.PENDING_APPROVER_2, label: "Pending Approval 2" },
-  { value: DocumentStatus.PENDING_APPROVER_3, label: "Pending Approval 3" },
+  { value: DocumentStatus.PENDING_APPROVER_1, label: "Pending PMV Engineer" },
+  { value: DocumentStatus.PENDING_APPROVER_2, label: "Pending Workshop Manager" },
+  { value: DocumentStatus.PENDING_APPROVER_3, label: "Pending PMV Manager" },
   { value: DocumentStatus.APPROVED, label: "Approved" },
   { value: DocumentStatus.REJECTED, label: "Rejected" },
   { value: DocumentStatus.REVISION_REQUIRED, label: "Revision Required" },

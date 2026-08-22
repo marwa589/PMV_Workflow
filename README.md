@@ -1,3 +1,7 @@
+## Workflow email batching
+
+Workflow emails are queued and grouped by recipient for a 10-minute window. Configure `CRON_SECRET` and invoke `POST /api/cron/workflow-emails` with `Authorization: Bearer <CRON_SECRET>` once per minute from the deployment scheduler. The endpoint queues overdue reminders and sends due batches as one summary email per recipient.
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started

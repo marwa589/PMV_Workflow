@@ -1,11 +1,10 @@
 import { ApprovalActionType, DocumentStatus, UserRole } from "@prisma/client";
 import DashboardShell from "@/components/dashboard-shell";
-import DocumentListTable from "@/components/document-list-table";
-import StatusBadge from "@/components/status-badge";
+import DeletionRequestsList from "@/components/deletion-requests-list";
 import WorkflowPipelineChart from "@/components/workflow-pipeline-chart";
 import { requireRole } from "@/lib/auth/guards";
 import { formatWaitingTime, getAgeBucket, getWaitingHours } from "@/lib/document-metrics";
-import { sendComparisonMrFollowUpAlerts, sendPendingAgeAlertEmails } from "@/lib/document-aging";
+import { queueComparisonMrReminders, queuePendingApprovalReminders, flushWorkflowEmailBatches } from "@/lib/workflow-email-batching";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -68,6 +67,7 @@ export default async function AdminDashboardPage() {
     label: string;
     count: number;
     averageDaysPending: number;
+    assignees: { name: string; email: string }[];
     oldestPendingDocument: { documentNumber: string; title: string } | null;
   }> = [];
   let procurementMetrics = {
@@ -79,12 +79,19 @@ export default async function AdminDashboardPage() {
     approvedMrCredit: 0,
     avgTurnaroundDays: null as number | null,
   };
-  let usersByRole: { role: UserRole; count: number }[] = [];
+  let pendingDeletionRequests: {
+    id: string;
+    documentId: string;
+    createdAt: Date;
+    requestedBy: { name: string; email: string };
+    document: { documentNumber: string; title: string };
+  }[] = [];
 
   try {
-    await sendPendingAgeAlertEmails();
-    await sendComparisonMrFollowUpAlerts();
-    const [total, pending, approved, rejected, activity, roleGroups, allDocs, pendingDocs, allPendingDocs] = await Promise.all([
+    await queuePendingApprovalReminders();
+    await queueComparisonMrReminders();
+    await flushWorkflowEmailBatches();
+    const [total, pending, approved, rejected, activity, roleGroups, allDocs, pendingDocs, allPendingDocs, deletionRequests] = await Promise.all([
       prisma.document.count(),
       prisma.document.count({
         where: {
@@ -107,7 +114,10 @@ export default async function AdminDashboardPage() {
         orderBy: { performedAt: "desc" },
         take: 8,
       }),
-      prisma.user.groupBy({ by: ["role"], _count: { _all: true } }),
+      prisma.user.findMany({
+        select: { role: true, name: true, email: true },
+        orderBy: [{ role: "asc" }, { name: "asc" }],
+      }),
       prisma.document.findMany({
         orderBy: { createdAt: "desc" },
         take: 12,
@@ -153,6 +163,15 @@ export default async function AdminDashboardPage() {
           currentApproverAssignedAt: true,
         },
       }),
+      prisma.deletionRequest.findMany({
+        where: { status: "PENDING" },
+        include: {
+          document: { select: { id: true, documentNumber: true, title: true } },
+          requestedBy: { select: { name: true, email: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+      }),
     ]);
 
     totalDocuments = total;
@@ -160,7 +179,6 @@ export default async function AdminDashboardPage() {
     approvedDocuments = approved;
     rejectedDocuments = rejected;
     recentActivity = activity;
-    usersByRole = roleGroups.map((group) => ({ role: group.role, count: group._count._all }));
     allDocuments = allDocs.map((doc) => ({
       id: doc.id,
       documentNumber: doc.documentNumber,
@@ -174,6 +192,7 @@ export default async function AdminDashboardPage() {
       createdAt: doc.createdAt,
     }));
     pendingDocuments = pendingDocs;
+    pendingDeletionRequests = deletionRequests;
     agingSummary = allPendingDocs.reduce(
       (acc, doc) => {
         const hours = getWaitingHours(doc.currentApproverAssignedAt);
@@ -197,9 +216,9 @@ export default async function AdminDashboardPage() {
 
     const pipelineStageDefinitions = [
       { key: "DRAFT", label: "Draft", status: null as DocumentStatus | null },
-      { key: "APPROVER_1", label: "Approver 1", status: DocumentStatus.PENDING_APPROVER_1 },
-      { key: "APPROVER_2", label: "Approver 2", status: DocumentStatus.PENDING_APPROVER_2 },
-      { key: "APPROVER_3", label: "Approver 3", status: DocumentStatus.PENDING_APPROVER_3 },
+      { key: "APPROVER_1", label: "PMV Engineer", status: DocumentStatus.PENDING_APPROVER_1 },
+      { key: "APPROVER_2", label: "Workshop Manager", status: DocumentStatus.PENDING_APPROVER_2 },
+      { key: "APPROVER_3", label: "PMV Manager", status: DocumentStatus.PENDING_APPROVER_3 },
       { key: "REVISION_REQUIRED", label: "Revision Required", status: DocumentStatus.REVISION_REQUIRED },
       { key: "APPROVED", label: "Approved", status: DocumentStatus.APPROVED },
     ];
@@ -224,7 +243,19 @@ export default async function AdminDashboardPage() {
         title: doc.title,
         currentApproverName: doc.currentApprover?.name || null,
         status: doc.status,
-        statusLabel: doc.status.replaceAll("_", " "),
+        statusLabel: stageKey === "APPROVER_1"
+          ? "PMV Engineer"
+          : stageKey === "APPROVER_2"
+            ? "Workshop Manager"
+            : stageKey === "APPROVER_3"
+              ? "PMV Manager"
+              : doc.status === DocumentStatus.REVISION_REQUIRED
+                ? "Revision Required"
+                : doc.status === DocumentStatus.APPROVED
+                  ? "Approved"
+                  : doc.status === DocumentStatus.REJECTED
+                    ? "Rejected"
+                    : doc.status.replaceAll("_", " "),
         stageKey,
         daysPending,
         createdAtLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
@@ -246,6 +277,11 @@ export default async function AdminDashboardPage() {
         label: stage.label,
         count: matchingDocuments.length,
         averageDaysPending,
+        assignees: stage.key.startsWith("APPROVER_")
+          ? roleGroups
+              .filter((user) => user.role === stage.key)
+              .map((user) => ({ name: user.name, email: user.email }))
+          : [],
         oldestPendingDocument: oldestPendingDocument
           ? { documentNumber: oldestPendingDocument.documentNumber, title: oldestPendingDocument.title }
           : null,
@@ -401,102 +437,15 @@ export default async function AdminDashboardPage() {
         </section>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr,0.9fr]">
+      <div className="space-y-6">
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4">
-            <h3 className="text-base font-semibold text-slate-900">Procurement Metrics</h3>
+            <h3 className="text-base font-semibold text-slate-900">Deletion Requests</h3>
+            <p className="mt-1 text-sm text-slate-500">Clerk requests awaiting Admin approval.</p>
           </div>
-          <div className="space-y-3 p-5">
-            {[
-              { label: "Total Comparisons", value: procurementMetrics.comparisons },
-              { label: "Approved Comparisons", value: procurementMetrics.approvedComparisons },
-              { label: "Total MR Cash", value: procurementMetrics.mrCash },
-              { label: "Approved MR Cash", value: procurementMetrics.approvedMrCash },
-              { label: "Total MR Credit", value: procurementMetrics.mrCredit },
-              { label: "Approved MR Credit", value: procurementMetrics.approvedMrCredit },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
-                <p className="text-sm font-medium text-slate-700">{item.label}</p>
-                <p className="text-sm font-semibold text-slate-900">{item.value}</p>
-              </div>
-            ))}
-            <div className="flex items-center justify-between rounded-xl bg-slate-100 px-4 py-3 ring-1 ring-slate-300">
-              <p className="text-sm font-medium text-slate-700">Avg. Comparison → MR Turnaround</p>
-              <p className="text-sm font-semibold text-slate-900">
-                {procurementMetrics.avgTurnaroundDays !== null ? `${procurementMetrics.avgTurnaroundDays} day${procurementMetrics.avgTurnaroundDays !== 1 ? "s" : ""}` : "No data"}
-              </p>
-            </div>
-          </div>
+          <DeletionRequestsList requests={pendingDeletionRequests} />
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-5 py-4">
-            <h3 className="text-base font-semibold text-slate-900">All Documents</h3>
-          </div>
-          <DocumentListTable
-            documents={allDocuments.map((doc) => ({
-              id: doc.id,
-              documentNumber: doc.documentNumber,
-              title: doc.title,
-              status: doc.status,
-              documentType: doc.documentType,
-              mrType: doc.mrType,
-              currentVersion: doc.currentVersion,
-              currentApproverName: doc.currentApprover?.name || null,
-              dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
-            }))}
-            emptyMessage="No documents available."
-            showBulkActions
-            allowBulkDelete
-          />
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-5 py-4">
-            <h3 className="text-base font-semibold text-slate-900">Pending Approvals</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-5 py-3 font-semibold">Document Number</th>
-                  <th className="px-5 py-3 font-semibold">Title</th>
-                  <th className="px-5 py-3 font-semibold">Status</th>
-                  <th className="px-5 py-3 font-semibold">Version</th>
-                  <th className="px-5 py-3 font-semibold">Delete</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pendingDocuments.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-5 py-6 text-center text-slate-500">
-                      No pending approvals.
-                    </td>
-                  </tr>
-                ) : (
-                  pendingDocuments.map((doc) => (
-                    <tr key={doc.id} className="border-t border-slate-100">
-                      <td className="px-5 py-4 font-medium text-slate-900">
-                        <a href={`/documents/${doc.id}`} className="text-slate-900 hover:text-slate-700 hover:underline">
-                          {doc.documentNumber}
-                        </a>
-                      </td>
-                      <td className="px-5 py-4 text-slate-700">{doc.title}</td>
-                      <td className="px-5 py-4">
-                        <StatusBadge status={doc.status} />
-                      </td>
-                      <td className="px-5 py-4 text-slate-700">V{doc.currentVersion}</td>
-                      <td className="px-5 py-4 text-slate-500">—</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[2fr,1fr]">
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4">
             <h3 className="text-base font-semibold text-slate-900">Recent Activity</h3>
@@ -526,26 +475,33 @@ export default async function AdminDashboardPage() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="text-base font-semibold text-slate-900">System Overview</h3>
-          <div className="mt-4 space-y-3">
-            {usersByRole.length === 0 ? (
-              <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600 ring-1 ring-slate-200">
-                No user role statistics available.
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4">
+            <h3 className="text-base font-semibold text-slate-900">Procurement Metrics</h3>
+          </div>
+          <div className="space-y-3 p-5">
+            {[
+              { label: "Total Comparisons", value: procurementMetrics.comparisons },
+              { label: "Approved Comparisons", value: procurementMetrics.approvedComparisons },
+              { label: "Total MR Cash", value: procurementMetrics.mrCash },
+              { label: "Approved MR Cash", value: procurementMetrics.approvedMrCash },
+              { label: "Total MR Credit", value: procurementMetrics.mrCredit },
+              { label: "Approved MR Credit", value: procurementMetrics.approvedMrCredit },
+            ].map((item) => (
+              <div key={item.label} className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
+                <p className="text-sm font-medium text-slate-700">{item.label}</p>
+                <p className="text-sm font-semibold text-slate-900">{item.value}</p>
               </div>
-            ) : (
-              usersByRole.map((roleInfo) => (
-                <div
-                  key={roleInfo.role}
-                  className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200"
-                >
-                  <p className="text-sm font-medium text-slate-700">{roleInfo.role.replaceAll("_", " ")}</p>
-                  <p className="text-sm font-semibold text-slate-900">{roleInfo.count}</p>
-                </div>
-              ))
-            )}
+            ))}
+            <div className="flex items-center justify-between rounded-xl bg-slate-100 px-4 py-3 ring-1 ring-slate-300">
+              <p className="text-sm font-medium text-slate-700">Avg. Comparison → MR Turnaround</p>
+              <p className="text-sm font-semibold text-slate-900">
+                {procurementMetrics.avgTurnaroundDays !== null ? `${procurementMetrics.avgTurnaroundDays} day${procurementMetrics.avgTurnaroundDays !== 1 ? "s" : ""}` : "No data"}
+              </p>
+            </div>
           </div>
         </section>
+
       </div>
     </DashboardShell>
   );

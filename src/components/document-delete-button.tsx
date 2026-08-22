@@ -15,7 +15,7 @@ export default function DocumentDeleteButton({ documentId }: Props) {
 
   async function handleDelete() {
     const confirmed = window.confirm(
-      "Send a deletion request to Approver 3 for approval?",
+      "Send a deletion request to Admin for approval?",
     );
 
     if (!confirmed) {
@@ -40,7 +40,7 @@ export default function DocumentDeleteButton({ documentId }: Props) {
         return;
       }
 
-      window.alert(result.message || "Deletion request sent to Approver 3.");
+      window.alert(result.message || "Deletion request sent to Admin.");
       router.refresh();
     } catch {
       window.alert("Unexpected error while sending the deletion request.");

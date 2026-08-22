@@ -9,6 +9,7 @@ export type PipelineStage = {
   label: string;
   count: number;
   averageDaysPending: number;
+  assignees: { name: string; email: string }[];
   oldestPendingDocument: { documentNumber: string; title: string } | null;
 };
 
@@ -100,6 +101,15 @@ export default function WorkflowPipelineChart({ stages, documents }: Props) {
               >
                 <div className="mt-3">
                   <p className="text-xs font-semibold uppercase tracking-wide opacity-80">{stage.label}</p>
+                  {stage.assignees.length > 0 ? (
+                    <div className="mt-1 space-y-0.5">
+                      {stage.assignees.map((assignee) => (
+                        <p key={assignee.email} className="truncate text-[11px] font-medium normal-case tracking-normal opacity-75">
+                          {assignee.name}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
                   <p className="mt-1 text-lg font-semibold">{stage.count}</p>
                 </div>
               </button>

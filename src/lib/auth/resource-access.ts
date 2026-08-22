@@ -11,9 +11,6 @@ export async function canAccessDocument(session: AuthSessionLike, documentId: st
     where: { id: documentId },
     select: {
       id: true,
-      createdById: true,
-      currentApproverId: true,
-      status: true,
     },
   });
 
@@ -21,19 +18,7 @@ export async function canAccessDocument(session: AuthSessionLike, documentId: st
     return false;
   }
 
-  if (session.role === UserRole.ADMIN) {
-    return true;
-  }
-
-  if (session.role === UserRole.CLERK) {
-    return document.createdById === session.userId;
-  }
-
-  if (session.role === UserRole.APPROVER_1 || session.role === UserRole.APPROVER_2 || session.role === UserRole.APPROVER_3) {
-    return document.currentApproverId === session.userId || document.createdById === session.userId;
-  }
-
-  return false;
+  return true;
 }
 
 export async function canAccessPackage(session: AuthSessionLike, documentId: string): Promise<boolean> {

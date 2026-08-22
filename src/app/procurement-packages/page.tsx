@@ -93,12 +93,12 @@ export default async function ProcurementPackagesPage() {
                 const turnaroundMs = compApprovedAt ? item.createdAt.getTime() - compApprovedAt.getTime() : null;
                 return (
                   <tr key={item.id} className="border-t border-slate-100">
-                    <td className="px-5 py-4 font-semibold text-slate-900">{item.documentNumber}</td>
+                    <td className="px-5 py-4 font-semibold text-slate-900"><Link href={`/documents/${item.id}`} className="hover:underline">{item.documentNumber}</Link></td>
                     <td className="px-5 py-4 text-slate-700">{item.mrType === "CASH" ? "Cash" : item.mrType === "CREDIT" ? "Credit" : "—"}</td>
                     <td className="px-5 py-4 text-slate-700">
                       {item.relatedComparison ? (
                         <div>
-                          <div className="font-medium text-slate-900">{item.relatedComparison.documentNumber}</div>
+                          <Link href={`/documents/${item.relatedComparison.id}`} className="font-medium text-slate-900 hover:underline">{item.relatedComparison.documentNumber}</Link>
                           <div className="text-xs text-slate-500">{item.relatedComparison.title}</div>
                         </div>
                       ) : (
@@ -151,7 +151,7 @@ export default async function ProcurementPackagesPage() {
                   const waitMs = approvedAt ? now - approvedAt.getTime() : null;
                   return (
                     <tr key={comp.id} className="border-t border-amber-100">
-                      <td className="px-5 py-4 font-semibold text-slate-900">{comp.documentNumber}</td>
+                      <td className="px-5 py-4 font-semibold text-slate-900"><Link href={`/documents/${comp.id}`} className="hover:underline">{comp.documentNumber}</Link></td>
                       <td className="px-5 py-4 text-slate-700">{comp.title}</td>
                       <td className="px-5 py-4 text-slate-500">
                         {approvedAt ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(approvedAt) : "—"}

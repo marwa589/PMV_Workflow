@@ -74,7 +74,7 @@ export default async function ApproverMyDocumentsPage({ searchParams }: any) {
         <div className="border-b border-slate-200 px-5 py-4">
           <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} />
         </div>
-        <DocumentListTable documents={filteredDocuments} emptyMessage="No documents assigned or previously handled by you." />
+        <DocumentListTable documents={filteredDocuments} emptyMessage="No documents assigned or previously handled by you." allowReview />
       </section>
     </DashboardShell>
   );

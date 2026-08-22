@@ -36,9 +36,10 @@ type Props = {
   emptyMessage: string;
   showBulkActions?: boolean;
   allowBulkDelete?: boolean;
+  allowReview?: boolean;
 };
 
-export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false }: Props) {
+export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false, allowReview = false }: Props) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const searchParams = useSearchParams();
 
@@ -75,7 +76,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
     if (selectedDocuments.length === 0) return;
 
     const confirmed = window.confirm(
-      `Send deletion requests for ${selectedDocuments.length} document(s) to Approver 3 for approval?`,
+      `Send deletion requests for ${selectedDocuments.length} document(s) to Admin for approval?`,
     );
 
     if (!confirmed) {
@@ -99,7 +100,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
       }
 
       setSelectedIds([]);
-      window.alert(result.message || "Deletion request sent to Approver 3.");
+      window.alert(result.message || "Deletion request sent to Admin.");
       window.location.reload();
     } catch {
       window.alert("Unexpected error while sending deletion requests.");
@@ -160,7 +161,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
             <th className="px-5 py-3 font-semibold">Version</th>
             <th className="px-5 py-3 font-semibold">Current Approver</th>
             <th className="px-5 py-3 font-semibold">Last Updated</th>
-            <th className="px-5 py-3 font-semibold">Download</th>
+            <th className="px-5 py-3 font-semibold">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -201,12 +202,19 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                 <td className="px-5 py-4 text-slate-700">{getCurrentApproverDisplay(doc)}</td>
                 <td className="px-5 py-4 text-slate-500">{doc.dateLabel}</td>
                 <td className="px-5 py-4">
+                  <div className="flex gap-2">
                   <a
                     href={`/api/documents/${doc.id}/download`}
                     className="inline-flex rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                   >
                     Download
                   </a>
+                  {allowReview && doc.status !== "APPROVED" && doc.status !== "REJECTED" ? (
+                    <Link href={`/approver/review/${doc.id}`} className="inline-flex rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700">
+                      Review
+                    </Link>
+                  ) : null}
+                  </div>
                 </td>
               </tr>
             ))

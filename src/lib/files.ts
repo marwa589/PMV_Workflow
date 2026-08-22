@@ -60,6 +60,16 @@ function documentFileName(fileName: string, identifier: string, extension: strin
   return safeFileName(`${baseName}-${identifier}`) + (extension ? `.${extension}` : "");
 }
 
+export async function saveUserSignatureFile(params: { userId: string; userName: string; file: File }): Promise<{ relativePath: string }> {
+  const extension = params.file.name.includes(".") ? params.file.name.slice(params.file.name.lastIndexOf(".")) : "";
+  const fileName = safeFileName(`${params.userName}${extension}`);
+  const dir = path.join(getUploadRoot(), "Signatures", params.userId);
+  await mkdir(dir, { recursive: true });
+  const fullPath = path.join(dir, fileName);
+  await writeFile(fullPath, Buffer.from(await params.file.arrayBuffer()));
+  return { relativePath: path.relative(getUploadRoot(), fullPath).replaceAll("\\", "/") };
+}
+
 // Compute the structured storage directory based on document type and relationship.
 export function resolveStorageDir(params: {
   documentType: "COMPARISON" | "MATERIAL_REQUISITION";

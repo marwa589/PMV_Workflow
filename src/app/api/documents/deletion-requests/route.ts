@@ -12,8 +12,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  if (session.role !== UserRole.ADMIN) {
-    return NextResponse.json({ message: "Only admin can request document deletion." }, { status: 403 });
+  if (session.role !== UserRole.CLERK) {
+    return NextResponse.json({ message: "Only Clerk can request document deletion." }, { status: 403 });
   }
 
   let payload: { ids?: unknown };
@@ -59,7 +59,7 @@ export async function POST(request: Request) {
       data: {
         documentId: document.id,
         requestedById: session.userId,
-        reason: "Admin requested deletion",
+        reason: "Clerk requested deletion",
       },
     });
 
@@ -76,7 +76,7 @@ export async function POST(request: Request) {
   return NextResponse.json(
     {
       message: createdCount > 0
-        ? "Deletion request sent to Approver 3. The documents will be deleted after approval."
+        ? "Deletion request sent to Admin. The documents will be deleted after approval."
         : "Deletion requests already exist for the selected documents.",
       createdCount,
     },

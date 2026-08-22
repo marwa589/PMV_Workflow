@@ -17,8 +17,8 @@ export async function POST(
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  if (session.role !== UserRole.APPROVER_3) {
-    return NextResponse.json({ message: "Only Approver 3 can approve deletion requests." }, { status: 403 });
+  if (session.role !== UserRole.ADMIN) {
+    return NextResponse.json({ message: "Only Admin can approve deletion requests." }, { status: 403 });
   }
 
   const { id } = await params;
@@ -47,7 +47,7 @@ export async function POST(
       where: { id },
       data: {
         status: DeletionRequestStatus.REJECTED,
-        approver3Id: session.userId,
+        adminReviewerId: session.userId,
         reviewedAt: new Date(),
       },
     });
@@ -70,7 +70,7 @@ export async function POST(
       where: { id },
       data: {
         status: DeletionRequestStatus.APPROVED,
-        approver3Id: session.userId,
+        adminReviewerId: session.userId,
         reviewedAt: new Date(),
       },
     });
@@ -117,5 +117,5 @@ export async function POST(
     await deleteDocumentFiles({ filePaths });
   }
 
-  return NextResponse.json({ message: "Document deleted after Approver 3 approval." }, { status: 200 });
+  return NextResponse.json({ message: "Document deleted after Admin approval." }, { status: 200 });
 }

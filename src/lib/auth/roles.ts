@@ -26,11 +26,11 @@ export function roleLabel(role: UserRole): string {
     case UserRole.CLERK:
       return "Clerk";
     case UserRole.APPROVER_1:
-      return "Approver 1";
+      return "PMV Engineer";
     case UserRole.APPROVER_2:
-      return "Approver 2";
+      return "Workshop Manager";
     case UserRole.APPROVER_3:
-      return "Approver 3";
+      return "PMV Manager";
     case UserRole.ADMIN:
       return "Admin";
     default:

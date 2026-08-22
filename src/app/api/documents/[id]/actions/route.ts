@@ -3,10 +3,9 @@ import { NextResponse } from "next/server";
 import { deleteDocumentFiles, saveDocumentVersionFile } from "@/lib/files";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
-import { sendEmail } from "@/lib/mail";
 import { createNotification } from "@/lib/notifications";
 import { APPROVER_WORKFLOW, getCommentRouting, getWorkflowAuthorizationPolicy, isApproverRole } from "@/lib/workflow";
-import { sendAdminOutcomeEmails, sendPendingAgeAlertEmails } from "@/lib/document-aging";
+import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 import { writeAuditLog } from "@/lib/audit";
 import { runInBackground } from "@/lib/background";
 
@@ -32,6 +31,7 @@ export async function POST(
   const decision = String(formData.get("decision") || "").trim().toUpperCase() as Decision;
   const comments = String(formData.get("comments") || "").trim();
   const fileValue = formData.get("file");
+  const signatureCount = Number(formData.get("signatureCount") || 0);
 
   if (decision !== "APPROVE" && decision !== "REJECT" && decision !== "COMMENT") {
     return NextResponse.json({ message: "Decision must be APPROVE, REJECT, or COMMENT." }, { status: 400 });
@@ -356,6 +356,7 @@ export async function POST(
           nextStatus: workflow.nextStatus,
           previousStatus: document.status,
           nextApproverRole: workflow.nextApproverRole,
+          signatureCount: Number.isFinite(signatureCount) ? signatureCount : 0,
         }),
       });
 
@@ -395,10 +396,6 @@ export async function POST(
       };
     });
 
-    runInBackground(async () => {
-      await sendPendingAgeAlertEmails();
-    });
-
     if (result.status === DocumentStatus.APPROVED) {
       const versionsToDeleteAfterCommit = (
         result as typeof result & { versionsToDeleteAfterCommit?: { filePath: string }[] }
@@ -428,6 +425,39 @@ export async function POST(
         createdBy: { select: { name: true, email: true } },
       },
     });
+
+    if (
+      documentForEmail?.currentApprover?.email &&
+      (result.status === DocumentStatus.PENDING_APPROVER_1 ||
+        result.status === DocumentStatus.PENDING_APPROVER_2 ||
+        result.status === DocumentStatus.PENDING_APPROVER_3 ||
+        result.status === DocumentStatus.REVISION_REQUIRED)
+    ) {
+      const approver = await prisma.user.findFirst({
+        where: { email: documentForEmail.currentApprover.email },
+        select: { id: true },
+      });
+      if (approver) {
+        await queueWorkflowEmailEvents([{
+          recipientId: approver.id,
+          type: "APPROVAL_PENDING",
+          documentId,
+        }]);
+      }
+    }
+
+    if (result.status === DocumentStatus.APPROVED || result.status === DocumentStatus.REJECTED) {
+      const clerk = documentForEmail?.createdBy?.email
+        ? await prisma.user.findUnique({ where: { email: documentForEmail.createdBy.email }, select: { id: true } })
+        : null;
+      if (clerk) {
+        await queueWorkflowEmailEvents([{
+          recipientId: clerk.id,
+          type: result.status === DocumentStatus.APPROVED ? "WORKFLOW_APPROVED" : "WORKFLOW_REJECTED",
+          documentId,
+        }]);
+      }
+    }
 
     const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
@@ -500,14 +530,6 @@ export async function POST(
         </table>
       `;
 
-      runInBackground(async () => {
-        if (!documentForEmail.currentApprover?.email) return;
-        await sendEmail({
-          to: documentForEmail.currentApprover.email,
-          subject: pendingSubject,
-          html: pendingHtml,
-        });
-      });
     }
 
     if (
@@ -554,38 +576,6 @@ export async function POST(
         </table>
       `;
 
-      runInBackground(async () => {
-        if (!documentForEmail.currentApprover?.email) return;
-        await sendEmail({
-          to: documentForEmail.currentApprover.email,
-          subject: revisionSubject,
-          html: revisionHtml,
-        });
-      });
-    }
-
-    if (result.status === DocumentStatus.APPROVED) {
-      runInBackground(async () => {
-        await sendAdminOutcomeEmails({
-          documentNumber: documentForEmail?.documentNumber || documentId,
-          title: documentForEmail?.title || "Document",
-          outcome: "approved",
-        });
-      });
-    }
-
-    if (
-      result.status === DocumentStatus.REJECTED
-    ) {
-      runInBackground(async () => {
-        await sendAdminOutcomeEmails({
-          documentNumber: documentForEmail?.documentNumber || documentId,
-          title: documentForEmail?.title || "Document",
-          outcome: "rejected",
-          clerkEmail: documentForEmail?.createdBy?.email,
-          clerkName: documentForEmail?.createdBy?.name,
-        });
-      });
     }
 
     if (
@@ -637,13 +627,6 @@ export async function POST(
         </table>
       `;
 
-      runInBackground(async () => {
-        await sendEmail({
-          to: documentForEmail.createdBy.email,
-          subject,
-          html,
-        });
-      });
     }
 
     return NextResponse.json({ message: "Action processed.", result }, { status: 200 });

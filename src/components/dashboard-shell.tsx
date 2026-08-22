@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import {
-  Archive,
   Bell,
   CheckCircle2,
   ChevronRight,
@@ -39,6 +38,11 @@ type DashboardShellProps = {
   children: ReactNode;
 };
 
+type SidebarCounts = {
+  materialRequisitions: number;
+  comparisons: number;
+};
+
 type NotificationItem = {
   id: string;
   title: string;
@@ -54,6 +58,8 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "My Documents", href: "/clerk/my-documents", icon: FileText },
     { label: "MRs", href: "/clerk/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "Comparison Sheets", href: "/clerk/my-documents?documentType=COMPARISON", icon: FileText },
+    { label: "Rejected Documents", href: "/clerk/my-documents?status=REJECTED", icon: FileCheck2 },
+    { label: "Revision Required", href: "/clerk/my-documents?status=REVISION_REQUIRED", icon: ClipboardCheck },
     { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
   ],
   APPROVER_1: [
@@ -65,7 +71,7 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "Pending Approvals", href: "/approver/pending-approvals", icon: ClipboardCheck },
     { label: "Approved Documents", href: "/approver/approved-documents", icon: CheckCircle2 },
     { label: "Rejected Documents", href: "/approver/rejected-documents", icon: FileCheck2 },
-    { label: "Archive", href: "/approver/archive", icon: Archive },
+    { label: "Account Settings", href: "/approver/settings", icon: Settings },
   ],
   APPROVER_2: [
     { label: "Dashboard", href: "/approver", icon: LayoutDashboard },
@@ -76,7 +82,7 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "Pending Approvals", href: "/approver/pending-approvals", icon: ClipboardCheck },
     { label: "Approved Documents", href: "/approver/approved-documents", icon: CheckCircle2 },
     { label: "Rejected Documents", href: "/approver/rejected-documents", icon: FileCheck2 },
-    { label: "Archive", href: "/approver/archive", icon: Archive },
+    { label: "Account Settings", href: "/approver/settings", icon: Settings },
   ],
   APPROVER_3: [
     { label: "Dashboard", href: "/approver", icon: LayoutDashboard },
@@ -87,7 +93,7 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "Pending Approvals", href: "/approver/pending-approvals", icon: ClipboardCheck },
     { label: "Approved Documents", href: "/approver/approved-documents", icon: CheckCircle2 },
     { label: "Rejected Documents", href: "/approver/rejected-documents", icon: FileCheck2 },
-    { label: "Archive", href: "/approver/archive", icon: Archive },
+    { label: "Account Settings", href: "/approver/settings", icon: Settings },
   ],
   ADMIN: [
     { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
@@ -99,7 +105,6 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "Pending Approvals", href: "/admin/pending-approvals", icon: ClipboardCheck },
     { label: "Approved Documents", href: "/admin/approved-documents", icon: CheckCircle2 },
     { label: "Rejected Documents", href: "/admin/rejected-documents", icon: FileCheck2 },
-    { label: "Archive", href: "/admin/archive", icon: Archive },
     { label: "Users", href: "/admin/users", icon: Users },
     { label: "Settings", href: "/admin/settings", icon: Settings },
   ],
@@ -108,9 +113,11 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
 function Sidebar({
   role,
   closeMenu,
+  counts,
 }: {
   role: AppRole;
   closeMenu?: () => void;
+  counts: SidebarCounts;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -156,7 +163,7 @@ function Sidebar({
             >
               <span className="flex items-center gap-3">
                 <Icon className="h-4 w-4" />
-                {item.label}
+                {item.label === "MRs" && counts.materialRequisitions > 0 ? `${counts.materialRequisitions} ${item.label}` : item.label === "Comparison Sheets" && counts.comparisons > 0 ? `${counts.comparisons} ${item.label}` : item.label}
               </span>
               <ChevronRight className={`h-4 w-4 ${active ? "text-white/70" : "text-slate-400"}`} />
             </button>
@@ -168,7 +175,7 @@ function Sidebar({
         <div className="rounded-xl bg-slate-100 px-4 py-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Workflow Chain</p>
           <p className="mt-1 text-sm text-slate-800">
-            Clerk {"->"} Approver 1 {"->"} Approver 2 {"->"} Approver 3 {"->"} Approved
+            Clerk {"->"} PMV Engineer {"->"} Workshop Manager {"->"} PMV Manager {"->"} Approved
           </p>
         </div>
       </div>
@@ -191,6 +198,7 @@ export default function DashboardShell({
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [sidebarCounts, setSidebarCounts] = useState<SidebarCounts>({ materialRequisitions: 0, comparisons: 0 });
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -238,6 +246,13 @@ export default function DashboardShell({
     void loadNotifications();
   }, [pathname]);
 
+  useEffect(() => {
+    void fetch("/api/sidebar-counts", { cache: "no-store" })
+      .then((response) => response.ok ? response.json() as Promise<SidebarCounts> : null)
+      .then((counts) => { if (counts) setSidebarCounts(counts); })
+      .catch(() => undefined);
+  }, [pathname]);
+
   async function handleSignOut() {
     setIsSigningOut(true);
     try {
@@ -260,7 +275,7 @@ export default function DashboardShell({
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-0 h-80 bg-gradient-to-br from-slate-200 via-slate-100 to-cyan-100" />
       <div className="relative z-10 flex min-h-screen">
         <div className="hidden lg:block">
-          <Sidebar role={role} />
+          <Sidebar role={role} counts={sidebarCounts} />
         </div>
 
         {menuOpen && (
@@ -272,7 +287,7 @@ export default function DashboardShell({
               className="flex-1 bg-slate-900/40"
             />
             <div className="h-full shadow-2xl">
-              <Sidebar role={role} closeMenu={() => setMenuOpen(false)} />
+              <Sidebar role={role} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} />
             </div>
           </div>
         )}

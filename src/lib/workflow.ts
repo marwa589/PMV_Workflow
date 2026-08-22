@@ -40,7 +40,7 @@ export function getCommentRouting(role: UserRole): { status: DocumentStatus; tar
     case UserRole.APPROVER_3:
       return { status: DocumentStatus.REVISION_REQUIRED, targetRole: UserRole.APPROVER_2 };
     case UserRole.APPROVER_2:
-      return { status: DocumentStatus.REVISION_REQUIRED, targetRole: UserRole.APPROVER_1 };
+      return { status: DocumentStatus.REVISION_REQUIRED, targetRole: null };
     case UserRole.APPROVER_1:
       return { status: DocumentStatus.REVISION_REQUIRED, targetRole: null };
     default:
@@ -83,11 +83,11 @@ export function getWorkflowAuthorizationPolicy({
 export function statusLabel(status: DocumentStatus): string {
   switch (status) {
     case DocumentStatus.PENDING_APPROVER_1:
-      return "Pending Approval 1";
+      return "Pending PMV Engineer";
     case DocumentStatus.PENDING_APPROVER_2:
-      return "Pending Approval 2";
+      return "Pending Workshop Manager";
     case DocumentStatus.PENDING_APPROVER_3:
-      return "Pending Approval 3";
+      return "Pending PMV Manager";
     case DocumentStatus.APPROVED:
       return "Approved";
     case DocumentStatus.REJECTED:
