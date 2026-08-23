@@ -36,10 +36,11 @@ type Props = {
   emptyMessage: string;
   showBulkActions?: boolean;
   allowBulkDelete?: boolean;
+  allowAdminDelete?: boolean;
   allowReview?: boolean;
 };
 
-export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false, allowReview = false }: Props) {
+export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false, allowAdminDelete = false, allowReview = false }: Props) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const searchParams = useSearchParams();
 
@@ -107,6 +108,29 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
     }
   }
 
+  async function handleAdminDelete() {
+    if (selectedDocuments.length === 0) return;
+    if (!window.confirm(`Permanently delete ${selectedDocuments.length} document(s) and their files?`)) return;
+
+    try {
+      const response = await fetch("/api/documents/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-csrf-token": getCsrfTokenFromBrowser() },
+        body: JSON.stringify({ ids: selectedDocuments.map((doc) => doc.id) }),
+      });
+      const result = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        window.alert(result.message || "Failed to delete documents.");
+        return;
+      }
+      setSelectedIds([]);
+      window.alert(result.message || "Documents deleted.");
+      window.location.reload();
+    } catch {
+      window.alert("Unexpected error while deleting documents.");
+    }
+  }
+
   function getDocumentTypeLabel(doc: DocumentListItem): string {
     if (doc.documentType === "MATERIAL_REQUISITION") {
       if (doc.mrType === "CASH") return "MR - Cash";
@@ -145,6 +169,11 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
           {allowBulkDelete ? (
             <button type="button" onClick={handleBulkDelete} className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100">
               Request deletion
+            </button>
+          ) : null}
+          {allowAdminDelete ? (
+            <button type="button" onClick={handleAdminDelete} className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100">
+              Delete permanently
             </button>
           ) : null}
         </div>

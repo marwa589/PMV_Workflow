@@ -62,14 +62,21 @@ export async function POST(request: Request) {
   // });
 
   // edit
-  const approver2 = await prisma.user.findFirst({
-    where: { role: UserRole.APPROVER_2 },
+  // const approver2 = await prisma.user.findFirst({
+  //   where: { role: UserRole.APPROVER_2 },
+  //   select: { id: true, email: true, name: true },
+  // });
+  // edit
+   const approver3 = await prisma.user.findFirst({
+    where: { role: UserRole.APPROVER_3 },
     select: { id: true, email: true, name: true },
   });
-  // edit
 
-  if (!approver2) {
-    return NextResponse.json({ message: "Workshop Manager account is missing." }, { status: 400 });
+  // if (!approver2) {
+  //   return NextResponse.json({ message: "Workshop Manager account is missing." }, { status: 400 });
+  // }
+  if (!approver3) {
+    return NextResponse.json({ message: "PMV Manager account is missing." }, { status: 400 });
   }
 
   try {
@@ -88,13 +95,16 @@ export async function POST(request: Request) {
           title: perFileTitle,
           description: description || null,
           //edit
-          status: DocumentStatus.PENDING_APPROVER_2,
+          // status: DocumentStatus.PENDING_APPROVER_2,
           // status: DocumentStatus.PENDING_APPROVER_1,
+          status: DocumentStatus.PENDING_APPROVER_3,
           currentVersion: 0,
           createdById: session.userId,
           //edit
-          lastActiveStage: DocumentStatus.PENDING_APPROVER_2,
-          currentApproverId: approver2!.id,
+          lastActiveStage: DocumentStatus.PENDING_APPROVER_3,
+          currentApproverId: approver3!.id,
+          // lastActiveStage: DocumentStatus.PENDING_APPROVER_2,
+          // currentApproverId: approver2!.id,
           // lastActiveStage: DocumentStatus.PENDING_APPROVER_1,
           // currentApproverId: approver1.id,
           currentApproverAssignedAt: new Date(),
@@ -173,9 +183,16 @@ export async function POST(request: Request) {
       }),
     );
 
+    // await queueWorkflowEmailEvents(
+    //   result.map((document) => ({
+    //     recipientId: approver2.id,
+    //     type: "APPROVAL_PENDING" as const,
+    //     documentId: document.id,
+    //   })),
+    // );
     await queueWorkflowEmailEvents(
       result.map((document) => ({
-        recipientId: approver2.id,
+        recipientId: approver3.id,
         type: "APPROVAL_PENDING" as const,
         documentId: document.id,
       })),

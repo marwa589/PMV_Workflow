@@ -2,7 +2,7 @@ import { EmailEventType, DocumentStatus, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
 
-const BATCH_WINDOW_MS = 10 * 60 * 1000;
+const EMAIL_DELAY_MS = 10 * 60 * 1000;
 const REMINDER_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const CLAIM_TIMEOUT_MS = 15 * 60 * 1000;
 
@@ -20,13 +20,16 @@ export async function queueWorkflowEmailEvents(events: Array<{
 }>) {
   if (events.length === 0) return 0;
 
-  const availableAt = new Date(Date.now() + BATCH_WINDOW_MS);
+  const createdAt = new Date();
+  const emailDueAt = new Date(createdAt.getTime() + EMAIL_DELAY_MS);
   await prisma.emailNotificationEvent.createMany({
     data: events.map((event) => ({
       recipientId: event.recipientId,
       type: event.type,
       documentId: event.documentId ?? null,
-      availableAt,
+      createdAt,
+      emailDueAt,
+      emailSent: false,
     })),
   });
 
@@ -157,12 +160,12 @@ export async function flushWorkflowEmailBatches() {
   const claimCutoff = new Date(now.getTime() - CLAIM_TIMEOUT_MS);
   const events = await prisma.emailNotificationEvent.findMany({
     where: {
-      availableAt: { lte: now },
-      sentAt: null,
+      emailDueAt: { lte: now },
+      emailSent: false,
       OR: [{ claimedAt: null }, { claimedAt: { lt: claimCutoff } }],
     },
     include: { recipient: { select: { email: true } } },
-    orderBy: { availableAt: "asc" },
+    orderBy: { emailDueAt: "asc" },
     take: 500,
   });
 
@@ -179,7 +182,7 @@ export async function flushWorkflowEmailBatches() {
     const claimed = await prisma.emailNotificationEvent.updateMany({
       where: {
         id: { in: group.map((event) => event.id) },
-        sentAt: null,
+        emailSent: false,
         OR: [{ claimedAt: null }, { claimedAt: { lt: claimCutoff } }],
       },
       data: { claimedAt },
@@ -209,8 +212,8 @@ export async function flushWorkflowEmailBatches() {
         html: renderSummary(counts),
       });
       await prisma.emailNotificationEvent.updateMany({
-        where: { id: { in: group.map((event) => event.id) }, claimedAt },
-        data: { sentAt: new Date(), claimedAt: null },
+        where: { id: { in: group.map((event) => event.id) }, claimedAt, emailSent: false },
+        data: { emailSent: true, claimedAt: null },
       });
       sentCount += 1;
     } catch (error) {

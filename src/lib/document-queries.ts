@@ -31,10 +31,9 @@ export type ActionDocumentRow = {
   currentApprover: { name: string } | null;
 };
 
-export async function getDocumentsForClerk(userId: string) {
+export async function getDocumentsForClerk(_userId: string) {
   const [documents, total, pending, approved, rejected] = await Promise.all([
     prisma.document.findMany({
-      where: { createdById: userId },
       include: {
         currentApprover: { select: { name: true } },
         relatedComparison: { select: { documentNumber: true, title: true } },
@@ -47,15 +46,14 @@ export async function getDocumentsForClerk(userId: string) {
       },
       orderBy: { createdAt: "desc" },
     }),
-    prisma.document.count({ where: { createdById: userId } }),
+    prisma.document.count(),
     prisma.document.count({
       where: {
-        createdById: userId,
         status: { in: [DocumentStatus.PENDING_APPROVER_1, DocumentStatus.PENDING_APPROVER_2, DocumentStatus.PENDING_APPROVER_3] },
       },
     }),
-    prisma.document.count({ where: { createdById: userId, status: DocumentStatus.APPROVED } }),
-    prisma.document.count({ where: { createdById: userId, status: DocumentStatus.REJECTED } }),
+    prisma.document.count({ where: { status: DocumentStatus.APPROVED } }),
+    prisma.document.count({ where: { status: DocumentStatus.REJECTED } }),
   ]);
 
   return { documents, total, pending, approved, rejected };

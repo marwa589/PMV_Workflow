@@ -18,12 +18,12 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
   const searchQuery = parseSearchQuery(resolvedSearchParams?.search);
 
-  const pageTitle = documentTypeFilter === "MATERIAL_REQUISITION" ? "MRs" : documentTypeFilter === "COMPARISON" ? "Comparison Sheets" : "My Documents";
+  const pageTitle = documentTypeFilter === "MATERIAL_REQUISITION" ? "MRs" : documentTypeFilter === "COMPARISON" ? "Comparison Sheets" : "Documents";
   const pageSubtitle = documentTypeFilter === "MATERIAL_REQUISITION"
     ? "Clerk material requisition submissions"
     : documentTypeFilter === "COMPARISON"
       ? "Clerk comparison sheet submissions"
-      : "Clerk document submissions";
+      : "All workflow documents";
 
   const documents = data.documents
     .filter((doc) => !statusFilter || doc.status === statusFilter)
@@ -66,7 +66,7 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
 
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">
-          <h3 className="text-base font-semibold text-slate-900">My Documents</h3>
+          <h3 className="text-base font-semibold text-slate-900">All Documents</h3>
         </div>
         <div className="border-b border-slate-200 px-5 py-4">
           <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} />

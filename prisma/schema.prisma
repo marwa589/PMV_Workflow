@@ -1,14 +1,201 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+model User {
+  id                        String                   @id @default(cuid())
+  name                      String
+  email                     String                   @unique
+  passwordHash              String
+  role                      UserRole
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  sessionVersion            Int                      @default(0)
+  signatureFileSize         Int?
+  signatureMimeType         String?
+  signatureOriginalName     String?
+  signaturePath             String?
+  signatureUpdatedAt        DateTime?
+  approvalHistory           ApprovalHistory[]        @relation("ApprovalsPerformedBy")
+  auditLogsPerformed        AuditLog[]               @relation("AuditLogsPerformedBy")
+  deletionRequestsReviewed  DeletionRequest[]        @relation("DeletionRequestsReviewedBy")
+  deletionRequestsApproved  DeletionRequest[]        @relation("DeletionRequestsApprovedBy")
+  deletionRequestsRequested DeletionRequest[]        @relation("DeletionRequestsRequestedBy")
+  createdDocuments          Document[]               @relation("DocumentsCreatedBy")
+  assignedDocuments         Document[]               @relation("CurrentApprover")
+  uploadedVersions          DocumentVersion[]        @relation("VersionsUploadedBy")
+  emailNotificationEvents   EmailNotificationEvent[] @relation("EmailEventsForUser")
+  notifications             Notification[]           @relation("NotificationsForUser")
+  otpChallenges             OtpChallenge[]
+  trustedDevices            TrustedDevice[]
+}
+
+model Document {
+  id                        String            @id @default(cuid())
+  documentNumber            String            @unique
+  title                     String
+  description               String?
+  status                    DocumentStatus
+  currentVersion            Int               @default(1)
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
+  createdById               String
+  currentApproverId         String?
+  documentType              DocumentType      @default(COMPARISON)
+  mrType                    MrType?
+  currentApproverAssignedAt DateTime?
+  mrNumber                  String?
+  relatedComparisonId       String?
+  lastActiveStage           DocumentStatus?
+  approvals                 ApprovalHistory[]
+  deletionRequests          DeletionRequest[] @relation("DeletionRequests")
+  createdBy                 User              @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
+  currentApprover           User?             @relation("CurrentApprover", fields: [currentApproverId], references: [id])
+  relatedComparison         Document?         @relation("MRToComparison", fields: [relatedComparisonId], references: [id])
+  linkedMRs                 Document[]        @relation("MRToComparison")
+  versions                  DocumentVersion[]
+
+  @@index([createdById])
+  @@index([currentApproverId])
+  @@index([relatedComparisonId])
+  @@index([status])
+}
+
+model DocumentVersion {
+  id             String            @id @default(cuid())
+  documentId     String
+  versionNumber  Int
+  filePath       String
+  originalName   String
+  extension      String?
+  mimeType       String
+  fileSize       Int
+  uploadedAt     DateTime          @default(now())
+  uploadedById   String
+  approvalEvents ApprovalHistory[]
+  document       Document          @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy     User              @relation("VersionsUploadedBy", fields: [uploadedById], references: [id])
+
+  @@unique([documentId, versionNumber])
+  @@index([documentId])
+  @@index([uploadedById])
+}
+
+model ApprovalHistory {
+  id            String             @id @default(cuid())
+  documentId    String
+  action        ApprovalActionType
+  comments      String?
+  performedAt   DateTime           @default(now())
+  performedById String
+  versionId     String?
+  document      Document           @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  performedBy   User               @relation("ApprovalsPerformedBy", fields: [performedById], references: [id])
+  version       DocumentVersion?   @relation(fields: [versionId], references: [id])
+
+  @@index([documentId, performedAt])
+  @@index([performedById])
+  @@index([versionId])
+}
+
+model DeletionRequest {
+  id              String                @id @default(cuid())
+  documentId      String
+  requestedById   String
+  approver3Id     String?
+  status          DeletionRequestStatus @default(PENDING)
+  reason          String?
+  createdAt       DateTime              @default(now())
+  reviewedAt      DateTime?
+  adminReviewerId String?
+  adminReviewer   User?                 @relation("DeletionRequestsReviewedBy", fields: [adminReviewerId], references: [id])
+  approver3       User?                 @relation("DeletionRequestsApprovedBy", fields: [approver3Id], references: [id])
+  document        Document              @relation("DeletionRequests", fields: [documentId], references: [id], onDelete: Cascade)
+  requestedBy     User                  @relation("DeletionRequestsRequestedBy", fields: [requestedById], references: [id])
+
+  @@unique([documentId, status])
+  @@index([requestedById])
+  @@index([approver3Id])
+  @@index([status])
+}
+
+model Notification {
+  id         String           @id @default(cuid())
+  userId     String
+  type       NotificationType
+  title      String
+  message    String
+  documentId String?
+  isRead     Boolean          @default(false)
+  createdAt  DateTime         @default(now())
+  user       User             @relation("NotificationsForUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([isRead])
+}
+
+model EmailNotificationEvent {
+  id          String         @id @default(cuid())
+  recipientId String
+  type        EmailEventType
+  documentId  String?
+  createdAt   DateTime       @default(now())
+  emailDueAt  DateTime
+  emailSent   Boolean        @default(false)
+  claimedAt   DateTime?
+  recipient   User           @relation("EmailEventsForUser", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([emailDueAt, emailSent, claimedAt])
+  @@index([recipientId, emailDueAt])
+  @@index([type, documentId, createdAt])
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  documentId    String?
+  performedById String
+  action        String
+  details       String?
+  createdAt     DateTime @default(now())
+  performedBy   User     @relation("AuditLogsPerformedBy", fields: [performedById], references: [id])
+
+  @@index([documentId, createdAt])
+  @@index([performedById, createdAt])
+}
+
+model TrustedDevice {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([userId, revokedAt])
+}
+
+model OtpChallenge {
+  id                 String    @id @default(cuid())
+  userId             String
+  challengeTokenHash String    @unique
+  codeHash           String
+  attempts           Int       @default(0)
+  lockedUntil        DateTime?
+  expiresAt          DateTime
+  verifiedAt         DateTime?
+  consumedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, expiresAt])
 }
 
 enum UserRole {
@@ -66,195 +253,4 @@ enum EmailEventType {
   WORKFLOW_REJECTED
   APPROVAL_OVERDUE
   COMPARISON_MR_OVERDUE
-}
-
-model User {
-  id                        String            @id @default(cuid())
-  name                      String
-  email                     String            @unique
-  passwordHash              String
-  role                      UserRole
-  sessionVersion            Int               @default(0)
-  createdDocuments          Document[]        @relation("DocumentsCreatedBy")
-  uploadedVersions          DocumentVersion[] @relation("VersionsUploadedBy")
-  approvalHistory           ApprovalHistory[] @relation("ApprovalsPerformedBy")
-  assignedDocuments         Document[]        @relation("CurrentApprover")
-  notifications             Notification[]    @relation("NotificationsForUser")
-  emailNotificationEvents   EmailNotificationEvent[] @relation("EmailEventsForUser")
-  deletionRequestsRequested DeletionRequest[] @relation("DeletionRequestsRequestedBy")
-  deletionRequestsApproved  DeletionRequest[] @relation("DeletionRequestsApprovedBy")
-  deletionRequestsReviewed  DeletionRequest[] @relation("DeletionRequestsReviewedBy")
-  auditLogsPerformed        AuditLog[]        @relation("AuditLogsPerformedBy")
-  trustedDevices             TrustedDevice[]
-  otpChallenges              OtpChallenge[]
-  signaturePath              String?
-  signatureOriginalName      String?
-  signatureMimeType          String?
-  signatureFileSize          Int?
-  signatureUpdatedAt         DateTime?
-  createdAt                 DateTime          @default(now())
-  updatedAt                 DateTime          @updatedAt
-}
-
-model Document {
-  id                        String            @id @default(cuid())
-  documentNumber            String            @unique
-  title                     String
-  description               String?
-  status                    DocumentStatus
-  documentType              DocumentType      @default(COMPARISON)
-  mrType                    MrType?
-  mrNumber                  String?
-  relatedComparisonId       String?
-  currentVersion            Int               @default(1)
-  createdAt                 DateTime          @default(now())
-  updatedAt                 DateTime          @updatedAt
-  createdById               String
-  createdBy                 User              @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
-  currentApproverId         String?
-  currentApprover           User?             @relation("CurrentApprover", fields: [currentApproverId], references: [id], onDelete: SetNull)
-  currentApproverAssignedAt DateTime?
-  lastActiveStage           DocumentStatus?
-  relatedComparison         Document?         @relation("MRToComparison", fields: [relatedComparisonId], references: [id], onDelete: SetNull)
-  linkedMRs                 Document[]        @relation("MRToComparison")
-  versions                  DocumentVersion[]
-  approvals                 ApprovalHistory[]
-  deletionRequests          DeletionRequest[]    @relation("DeletionRequests")
-
-  @@index([createdById])
-  @@index([currentApproverId])
-  @@index([relatedComparisonId])
-  @@index([status])
-}
-
-model DocumentVersion {
-  id            String   @id @default(cuid())
-  documentId    String
-  versionNumber Int
-  filePath      String
-  originalName  String
-  extension     String?
-  mimeType      String
-  fileSize      Int
-  uploadedAt    DateTime @default(now())
-  uploadedById  String
-  uploadedBy    User     @relation("VersionsUploadedBy", fields: [uploadedById], references: [id])
-  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  approvalEvents ApprovalHistory[]
-
-  @@unique([documentId, versionNumber])
-  @@index([documentId])
-  @@index([uploadedById])
-}
-
-model ApprovalHistory {
-  id            String             @id @default(cuid())
-  documentId    String
-  versionId     String?
-  action        ApprovalActionType
-  comments      String?
-  performedAt   DateTime           @default(now())
-  performedById String
-  performedBy   User               @relation("ApprovalsPerformedBy", fields: [performedById], references: [id])
-  document      Document           @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  version       DocumentVersion?   @relation(fields: [versionId], references: [id], onDelete: SetNull)
-
-  @@index([documentId, performedAt])
-  @@index([performedById])
-  @@index([versionId])
-}
-
-model DeletionRequest {
-  id             String               @id @default(cuid())
-  documentId     String
-  document       Document             @relation("DeletionRequests", fields: [documentId], references: [id], onDelete: Cascade)
-  requestedById  String
-  requestedBy    User                 @relation("DeletionRequestsRequestedBy", fields: [requestedById], references: [id])
-  approver3Id    String?
-  approver3      User?                @relation("DeletionRequestsApprovedBy", fields: [approver3Id], references: [id], onDelete: SetNull)
-  adminReviewerId String?
-  adminReviewer   User?                @relation("DeletionRequestsReviewedBy", fields: [adminReviewerId], references: [id], onDelete: SetNull)
-  status         DeletionRequestStatus @default(PENDING)
-  reason         String?
-  createdAt      DateTime             @default(now())
-  reviewedAt     DateTime?
-
-  @@unique([documentId, status])
-  @@index([requestedById])
-  @@index([approver3Id])
-  @@index([status])
-}
-
-model Notification {
-  id            String            @id @default(cuid())
-  userId        String
-  user          User              @relation("NotificationsForUser", fields: [userId], references: [id], onDelete: Cascade)
-  type          NotificationType
-  title         String
-  message       String
-  documentId    String?
-  isRead        Boolean           @default(false)
-  createdAt     DateTime          @default(now())
-
-  @@index([userId, createdAt])
-  @@index([isRead])
-}
-
-model EmailNotificationEvent {
-  id          String         @id @default(cuid())
-  recipientId String
-  recipient   User           @relation("EmailEventsForUser", fields: [recipientId], references: [id], onDelete: Cascade)
-  type        EmailEventType
-  documentId  String?
-  createdAt   DateTime       @default(now())
-  availableAt DateTime
-  claimedAt   DateTime?
-  sentAt      DateTime?
-
-  @@index([recipientId, availableAt, sentAt, claimedAt])
-  @@index([type, documentId, createdAt])
-}
-
-model AuditLog {
-  id            String   @id @default(cuid())
-  documentId    String?
-  performedById String
-  performedBy   User     @relation("AuditLogsPerformedBy", fields: [performedById], references: [id])
-  action        String
-  details       String?
-  createdAt     DateTime @default(now())
-
-  @@index([documentId, createdAt])
-  @@index([performedById, createdAt])
-}
-
-model TrustedDevice {
-  id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash  String   @unique
-  createdAt  DateTime @default(now())
-  lastUsedAt DateTime?
-  expiresAt  DateTime
-  revokedAt  DateTime?
-
-  @@index([userId, expiresAt])
-  @@index([userId, revokedAt])
-}
-
-model OtpChallenge {
-  id                 String   @id @default(cuid())
-  userId             String
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  challengeTokenHash  String   @unique
-  codeHash            String
-  attempts            Int      @default(0)
-  lockedUntil         DateTime?
-  expiresAt           DateTime
-  verifiedAt          DateTime?
-  consumedAt          DateTime?
-  createdAt           DateTime @default(now())
-
-  @@index([userId, createdAt])
-  @@index([userId, expiresAt])
 }

@@ -69,7 +69,7 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
         <div className="border-b border-slate-200 px-5 py-4">
           <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} />
         </div>
-        <DocumentListTable documents={filteredDocuments} emptyMessage="No documents available." showBulkActions />
+        <DocumentListTable documents={filteredDocuments} emptyMessage="No documents available." showBulkActions allowAdminDelete />
       </section>
     </DashboardShell>
   );

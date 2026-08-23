@@ -1,6 +1,7 @@
 "use client";
 
 import { PDFDocument } from "pdf-lib";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 import { ArrowLeft, Check, Download, Loader2, PenLine, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -23,6 +24,8 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
   const router = useRouter();
   const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const canvasRefs = useRef<Record<number, HTMLCanvasElement | null>>({});
+  const pdfBytesRef = useRef<Uint8Array | null>(null);
+  const pdfJsDocumentRef = useRef<PDFDocumentProxy | null>(null);
   const [pages, setPages] = useState<PageInfo[]>([]);
   const [signatureUrl, setSignatureUrl] = useState<string | null>(null);
   const [signatureRatio, setSignatureRatio] = useState(3);
@@ -41,9 +44,15 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
   useEffect(() => {
     let cancelled = false;
     async function load() {
+      const startedAt = performance.now();
       try {
         const pdfjs = await loadPdfJs();
-        const pdf = await pdfjs.getDocument({ url: `/api/documents/${documentId}/download` }).promise;
+        const response = await fetch(`/api/documents/${documentId}/download`);
+        if (!response.ok) throw new Error("Unable to load the current PDF version.");
+        const pdfBytes = new Uint8Array(await response.arrayBuffer());
+        const pdf = await pdfjs.getDocument({ data: pdfBytes.slice() }).promise;
+        pdfBytesRef.current = pdfBytes;
+        pdfJsDocumentRef.current = pdf;
         const nextPages: PageInfo[] = [];
         for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
           const page = await pdf.getPage(pageNumber);
@@ -51,6 +60,7 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
           nextPages.push({ pageNumber, width: viewport.width, height: viewport.height });
         }
         if (!cancelled) setPages(nextPages);
+        console.info(`[review] PDF loaded in ${Math.round(performance.now() - startedAt)}ms`, { documentId, pages: pdf.numPages, bytes: pdfBytes.byteLength });
       } catch {
         if (!cancelled) setError("Unable to display the current PDF version.");
       }
@@ -80,8 +90,9 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
     if (!pages.length) return;
     let cancelled = false;
     async function render() {
-      const pdfjs = await loadPdfJs();
-      const pdf = await pdfjs.getDocument({ url: `/api/documents/${documentId}/download` }).promise;
+      const pdf = pdfJsDocumentRef.current;
+      if (!pdf) return;
+      const startedAt = performance.now();
       for (const info of pages) {
         if (cancelled) return;
         const page = await pdf.getPage(info.pageNumber);
@@ -89,7 +100,7 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
         const canvas = canvasRefs.current[info.pageNumber];
         const rect = element?.getBoundingClientRect();
         if (!canvas || !rect?.width) continue;
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const dpr = Math.min(window.devicePixelRatio || 1, 3);
         const cssScale = rect.width / page.getViewport({ scale: 1 }).width;
         const viewport = page.getViewport({ scale: cssScale * dpr });
         canvas.width = viewport.width;
@@ -99,6 +110,7 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
         const context = canvas.getContext("2d");
         if (context) await page.render({ canvasContext: context, canvas, viewport }).promise;
       }
+      console.info(`[review] PDF rendered in ${Math.round(performance.now() - startedAt)}ms`, { documentId, pages: pages.length, zoom });
     }
     void render().catch(() => setError("Unable to render the PDF preview."));
     const resize = () => void render();
@@ -162,18 +174,20 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
     }
     setSaving(true);
     setError(null);
+    const startedAt = performance.now();
     try {
       const formData = new FormData();
       formData.set("decision", decision);
       formData.set("comments", comments);
       if (decision === "APPROVE" && placements.length && signatureUrl) {
-        const pdf = await PDFDocument.load(await (await fetch(`/api/documents/${documentId}/download`)).arrayBuffer());
+        const pdfBytes = pdfBytesRef.current;
+        const coordinatePdf = pdfJsDocumentRef.current;
+        if (!pdfBytes || !coordinatePdf) throw new Error("The PDF is still loading. Please try again.");
+        const pdf = await PDFDocument.load(pdfBytes.slice());
         const signatureResponse = await fetch(signatureUrl);
         const signatureBlob = await signatureResponse.blob();
         const signatureBytes = await signatureBlob.arrayBuffer();
         const image = signatureBlob.type === "image/png" ? await pdf.embedPng(signatureBytes) : await pdf.embedJpg(signatureBytes);
-        const pdfjs = await loadPdfJs();
-        const coordinatePdf = await pdfjs.getDocument({ url: `/api/documents/${documentId}/download` }).promise;
         for (const item of placements) {
           const page = pdf.getPage(item.pageNumber - 1);
           const coordinatePage = await coordinatePdf.getPage(item.pageNumber);
@@ -187,9 +201,11 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
         formData.set("file", new File([buffer], `${documentNumber}-signed.pdf`, { type: "application/pdf" }));
         formData.set("signatureCount", String(placements.length));
       }
+      console.info(`[review] Action prepared in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
       const response = await fetch(`/api/documents/${documentId}/actions`, { method: "POST", headers: { "x-csrf-token": getCsrfTokenFromBrowser() }, body: formData });
       const result = (await response.json()) as { message?: string };
       if (!response.ok) throw new Error(result.message || "Unable to process document action.");
+      console.info(`[review] Action request completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
       router.push("/approver/pending-approvals");
       router.refresh();
     } catch (submitError) {

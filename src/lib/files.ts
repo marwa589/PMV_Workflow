@@ -144,7 +144,7 @@ export async function copyComparisonToMrFolder(params: {
 }
 
 // Delete files by their stored relative paths, then remove empty parent dirs.
-export async function deleteDocumentFiles(params: { filePaths: string[] } | string): Promise<void> {
+export async function deleteDocumentFiles(params: { filePaths: string[]; directoryPaths?: string[] } | string): Promise<void> {
   // Accept legacy string (documentId) for the old uploads/documents/{id} directory.
   if (typeof params === "string") {
     const dir = path.join(process.cwd(), "uploads", "documents", params);
@@ -159,6 +159,12 @@ export async function deleteDocumentFiles(params: { filePaths: string[] } | stri
       } catch {
         // Ignore missing files.
       }
+    }),
+  );
+
+  await Promise.all(
+    (params.directoryPaths || []).map(async (directoryPath) => {
+      await rm(path.join(getUploadRoot(), directoryPath), { recursive: true, force: true });
     }),
   );
 }

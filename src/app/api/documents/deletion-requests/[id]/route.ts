@@ -31,7 +31,7 @@ export async function POST(
 
   const requestRecord = await prisma.deletionRequest.findUnique({
     where: { id },
-    include: { document: { select: { id: true, documentNumber: true, title: true, versions: { select: { filePath: true } } } } },
+    include: { document: { select: { id: true, documentNumber: true, title: true, mrNumber: true, documentType: true, versions: { select: { filePath: true } }, linkedMRs: { select: { mrNumber: true } } } } },
   });
 
   if (!requestRecord) {
@@ -64,6 +64,12 @@ export async function POST(
 
   const document = requestRecord.document;
   const filePaths = document.versions.map((version) => version.filePath);
+  const directoryPaths = [
+    ...(document.mrNumber && document.documentType === "MATERIAL_REQUISITION" ? [`MRs+Comparisons/MR-${document.mrNumber}`] : []),
+    ...document.linkedMRs
+      .filter((mr) => Boolean(mr.mrNumber))
+      .map((mr) => `MRs+Comparisons/MR-${mr.mrNumber}`),
+  ];
 
   await prisma.$transaction(async (tx) => {
     await tx.deletionRequest.update({
@@ -75,6 +81,8 @@ export async function POST(
       },
     });
     await tx.approvalHistory.deleteMany({ where: { documentId: document.id } });
+    await tx.emailNotificationEvent.deleteMany({ where: { documentId: document.id } });
+    await tx.notification.deleteMany({ where: { documentId: document.id } });
     await tx.documentVersion.deleteMany({ where: { documentId: document.id } });
     await tx.document.delete({ where: { id: document.id } });
   });
@@ -112,9 +120,9 @@ export async function POST(
     );
   });
 
-  if (filePaths.length > 0) {
+  if (filePaths.length > 0 || directoryPaths.length > 0) {
     const { deleteDocumentFiles } = await import("@/lib/files");
-    await deleteDocumentFiles({ filePaths });
+    await deleteDocumentFiles({ filePaths, directoryPaths });
   }
 
   return NextResponse.json({ message: "Document deleted after Admin approval." }, { status: 200 });

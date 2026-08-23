@@ -4,7 +4,6 @@ import DeletionRequestsList from "@/components/deletion-requests-list";
 import WorkflowPipelineChart from "@/components/workflow-pipeline-chart";
 import { requireRole } from "@/lib/auth/guards";
 import { formatWaitingTime, getAgeBucket, getWaitingHours } from "@/lib/document-metrics";
-import { queueComparisonMrReminders, queuePendingApprovalReminders, flushWorkflowEmailBatches } from "@/lib/workflow-email-batching";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -88,9 +87,6 @@ export default async function AdminDashboardPage() {
   }[] = [];
 
   try {
-    await queuePendingApprovalReminders();
-    await queueComparisonMrReminders();
-    await flushWorkflowEmailBatches();
     const [total, pending, approved, rejected, activity, roleGroups, allDocs, pendingDocs, allPendingDocs, deletionRequests] = await Promise.all([
       prisma.document.count(),
       prisma.document.count({

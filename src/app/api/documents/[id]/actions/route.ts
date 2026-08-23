@@ -38,6 +38,7 @@ export async function POST(
   }
 
   const workflow = APPROVER_WORKFLOW[session.role];
+  const startedAt = performance.now();
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -161,6 +162,7 @@ export async function POST(
         return {
           status: DocumentStatus.REJECTED,
           currentVersion: 0,
+          emailRecipientId: document.createdById,
         };
       }
 
@@ -260,6 +262,7 @@ export async function POST(
         return {
           status: routing.status,
           currentVersion: nextVersionNumber,
+          emailRecipientId: assignedApproverId,
         };
       }
 
@@ -361,15 +364,10 @@ export async function POST(
       });
 
       if (workflow.nextApproverRole) {
-        const nextApprover = await tx.user.findFirst({
-          where: { role: workflow.nextApproverRole },
-          select: { id: true },
-        });
-
-        if (nextApprover) {
+        if (nextApproverId) {
           runInBackground(async () => {
             await createNotification({
-              userId: nextApprover.id,
+              userId: nextApproverId,
               type: "PENDING_APPROVAL",
               title: "Document awaiting your review",
               message: `${document.documentNumber} - ${document.title}`,
@@ -393,8 +391,11 @@ export async function POST(
         status: workflow.nextStatus,
         currentVersion: nextVersionNumber,
         versionsToDeleteAfterCommit,
+        emailRecipientId: nextApproverId || document.createdById,
       };
     });
+
+    console.info(`[actions] Transaction completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
 
     if (result.status === DocumentStatus.APPROVED) {
       const versionsToDeleteAfterCommit = (
@@ -410,6 +411,7 @@ export async function POST(
           }
         }),
       );
+      console.info(`[actions] File cleanup completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
     }
 
     const documentForEmail = await prisma.document.findUnique({
@@ -421,8 +423,8 @@ export async function POST(
         documentType: true,
         mrType: true,
         createdAt: true,
-        currentApprover: { select: { name: true, email: true } },
-        createdBy: { select: { name: true, email: true } },
+        currentApprover: { select: { id: true, name: true, email: true } },
+        createdBy: { select: { id: true, name: true, email: true } },
       },
     });
 
@@ -433,13 +435,9 @@ export async function POST(
         result.status === DocumentStatus.PENDING_APPROVER_3 ||
         result.status === DocumentStatus.REVISION_REQUIRED)
     ) {
-      const approver = await prisma.user.findFirst({
-        where: { email: documentForEmail.currentApprover.email },
-        select: { id: true },
-      });
-      if (approver) {
+      if (documentForEmail.currentApprover.id) {
         await queueWorkflowEmailEvents([{
-          recipientId: approver.id,
+          recipientId: documentForEmail.currentApprover.id,
           type: "APPROVAL_PENDING",
           documentId,
         }]);
@@ -447,17 +445,16 @@ export async function POST(
     }
 
     if (result.status === DocumentStatus.APPROVED || result.status === DocumentStatus.REJECTED) {
-      const clerk = documentForEmail?.createdBy?.email
-        ? await prisma.user.findUnique({ where: { email: documentForEmail.createdBy.email }, select: { id: true } })
-        : null;
-      if (clerk) {
+      if (documentForEmail?.createdBy?.id) {
         await queueWorkflowEmailEvents([{
-          recipientId: clerk.id,
+          recipientId: documentForEmail.createdBy.id,
           type: result.status === DocumentStatus.APPROVED ? "WORKFLOW_APPROVED" : "WORKFLOW_REJECTED",
           documentId,
         }]);
       }
     }
+
+    console.info(`[actions] Queueing completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
 
     const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
@@ -629,6 +626,7 @@ export async function POST(
 
     }
 
+    console.info(`[actions] Request completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
     return NextResponse.json({ message: "Action processed.", result }, { status: 200 });
   } catch (error) {
     return NextResponse.json(

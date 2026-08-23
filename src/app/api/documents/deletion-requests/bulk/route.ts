@@ -37,7 +37,7 @@ export async function POST(request: Request) {
         status: DeletionRequestStatus.PENDING,
       },
       include: {
-        document: { select: { id: true, documentNumber: true, title: true, versions: { select: { filePath: true } } } },
+        document: { select: { id: true, documentNumber: true, title: true, mrNumber: true, documentType: true, versions: { select: { filePath: true } }, linkedMRs: { select: { mrNumber: true } } } },
       },
     });
 
@@ -85,6 +85,8 @@ export async function POST(request: Request) {
             });
 
             await tx.approvalHistory.deleteMany({ where: { documentId: req.document.id } });
+            await tx.emailNotificationEvent.deleteMany({ where: { documentId: req.document.id } });
+            await tx.notification.deleteMany({ where: { documentId: req.document.id } });
             await tx.documentVersion.deleteMany({ where: { documentId: req.document.id } });
             await tx.document.delete({ where: { id: req.document.id } });
           });
@@ -123,9 +125,15 @@ export async function POST(request: Request) {
               }),
             );
 
-            if (req.document.versions.length > 0) {
+            if (req.document.versions.length > 0 || req.document.linkedMRs.some((mr) => Boolean(mr.mrNumber))) {
               const filePaths = req.document.versions.map((version) => version.filePath);
-              await deleteDocumentFiles({ filePaths });
+              const directoryPaths = [
+                ...(req.document.mrNumber && req.document.documentType === "MATERIAL_REQUISITION" ? [`MRs+Comparisons/MR-${req.document.mrNumber}`] : []),
+                ...req.document.linkedMRs
+                  .filter((mr) => Boolean(mr.mrNumber))
+                  .map((mr) => `MRs+Comparisons/MR-${mr.mrNumber}`),
+              ];
+              await deleteDocumentFiles({ filePaths, directoryPaths });
             }
           });
         } catch {

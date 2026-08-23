@@ -1,6 +1,8 @@
 ## Workflow email batching
 
-Workflow emails are queued and grouped by recipient for a 10-minute window. Configure `CRON_SECRET` and invoke `POST /api/cron/workflow-emails` with `Authorization: Bearer <CRON_SECRET>` once per minute from the deployment scheduler. The endpoint queues overdue reminders and sends due batches as one summary email per recipient.
+Workflow events are stored with `createdAt`, `emailDueAt` (`createdAt + 10 minutes`), and `emailSent` (`false`). The Node.js application starts an in-process worker through `src/instrumentation.ts`; it checks due events every minute, groups them by recipient, sends one summary email per recipient, and marks delivered events as sent. No external cron scheduler is required.
+
+After applying the updated Prisma schema to an existing database, regenerate the client with `npx prisma generate`. For this repository's schema-sync workflow, apply the database changes with `npx prisma db push`.
 
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
