@@ -57,6 +57,9 @@ function safeFileName(name: string): string {
 
 function documentFileName(fileName: string, identifier: string, extension: string): string {
   const baseName = fileName.replace(/\.[^.]+$/, "");
+  if (baseName.endsWith("-signed")) {
+    return safeFileName(baseName) + (extension ? `.${extension}` : "");
+  }
   return safeFileName(`${baseName}-${identifier}`) + (extension ? `.${extension}` : "");
 }
 
@@ -110,7 +113,7 @@ export async function saveDocumentVersionFile(params: {
       mrNumber: params.mrNumber,
       hasLinkedComparison: params.hasLinkedComparison ?? false,
     });
-    fileName = documentFileName(params.file.name, params.documentNumber, extension);
+    fileName = documentFileName(params.file.name, `${params.documentNumber}-v${params.versionNumber}`, extension);
   } else {
     // Keep approval uploads in the permanent root when document details are unavailable.
     dir = path.join(getUploadRoot(), "documents", params.documentId);

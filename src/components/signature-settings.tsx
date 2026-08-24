@@ -13,6 +13,26 @@ export default function SignatureSettings({ hasSignature, signatureName }: { has
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  async function normalizeImageOrientation(file: File): Promise<File> {
+    if (!file.type.startsWith("image/") || typeof createImageBitmap !== "function") return file;
+
+    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      bitmap.close();
+      return file;
+    }
+
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) return file;
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, "")}.png`, { type: "image/png" });
+  }
+
   function selectFile(file: File | null) {
     if (!file) return;
     if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
@@ -28,8 +48,9 @@ export default function SignatureSettings({ hasSignature, signatureName }: { has
     setError(null);
     setMessage(null);
     try {
+      const normalizedFile = await normalizeImageOrientation(selectedFile);
       const formData = new FormData();
-      formData.set("signature", selectedFile);
+      formData.set("signature", normalizedFile);
       const response = await fetch("/api/auth/signature", {
         method: "POST",
         headers: { "x-csrf-token": getCsrfTokenFromBrowser() },

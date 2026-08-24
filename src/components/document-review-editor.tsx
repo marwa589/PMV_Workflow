@@ -1,6 +1,6 @@
 "use client";
 
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, degrees } from "pdf-lib";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { ArrowLeft, Check, Download, Loader2, PenLine, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -193,12 +193,22 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
           const coordinatePage = await coordinatePdf.getPage(item.pageNumber);
           const viewport = coordinatePage.getViewport({ scale: 1 });
           const topLeft = viewport.convertToPdfPoint((item.x / 100) * viewport.width, (item.y / 100) * viewport.height);
-          const bottomRight = viewport.convertToPdfPoint(((item.x + item.width) / 100) * viewport.width, ((item.y + item.height) / 100) * viewport.height);
-          page.drawImage(image, { x: Math.min(topLeft[0], bottomRight[0]), y: Math.min(topLeft[1], bottomRight[1]), width: Math.abs(bottomRight[0] - topLeft[0]), height: Math.abs(bottomRight[1] - topLeft[1]) });
+          const topRight = viewport.convertToPdfPoint(((item.x + item.width) / 100) * viewport.width, (item.y / 100) * viewport.height);
+          const bottomLeft = viewport.convertToPdfPoint((item.x / 100) * viewport.width, ((item.y + item.height) / 100) * viewport.height);
+          const imageWidth = Math.hypot(topRight[0] - topLeft[0], topRight[1] - topLeft[1]);
+          const imageHeight = Math.hypot(bottomLeft[0] - topLeft[0], bottomLeft[1] - topLeft[1]);
+          const imageAngle = Math.atan2(topRight[1] - topLeft[1], topRight[0] - topLeft[0]) * (180 / Math.PI);
+          page.drawImage(image, {
+            x: bottomLeft[0],
+            y: bottomLeft[1],
+            width: imageWidth,
+            height: imageHeight,
+            rotate: degrees(imageAngle),
+          });
         }
         const signedBytes = await pdf.save();
         const buffer = signedBytes.buffer.slice(signedBytes.byteOffset, signedBytes.byteOffset + signedBytes.byteLength) as ArrayBuffer;
-        formData.set("file", new File([buffer], `${documentNumber}-signed.pdf`, { type: "application/pdf" }));
+        formData.set("file", new File([buffer], `${title}-signed.pdf`, { type: "application/pdf" }));
         formData.set("signatureCount", String(placements.length));
       }
       console.info(`[review] Action prepared in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
@@ -242,10 +252,10 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
             </button>
           </div>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex items-center gap-2"><button type="button" onClick={() => addSignature(activePlacement?.pageNumber || 1)} disabled={!hasSignature} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><PenLine className="h-4 w-4" />Sign</button><span className="text-sm text-slate-500">{hasSignature ? `${placements.length} signature placement${placements.length === 1 ? "" : "s"}` : "Save a signature in Account Settings first."}</span></div><div className="flex items-center gap-2"><button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.1))} className="rounded-lg border px-3 py-2 text-sm">−</button><span className="min-w-16 text-center text-sm">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-2 text-sm">+</button></div></div>
+        <div className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex items-center gap-2"><button type="button" onClick={() => addSignature(activePlacement?.pageNumber || 1)} disabled={!hasSignature} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><PenLine className="h-4 w-4" />Sign</button><span className="text-sm text-slate-500">{hasSignature ? `${placements.length} signature placement${placements.length === 1 ? "" : "s"}` : "Save a signature in Account Settings first."}</span></div><div className="flex items-center gap-2"><button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.1))} className="rounded-lg border px-3 py-2 text-sm">−</button><span className="min-w-16 text-center text-sm">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-2 text-sm">+</button></div></div>
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</div> : null}{status ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{status}</div> : null}
         <section className="space-y-5 rounded-2xl border border-slate-200 bg-slate-950 p-4 shadow-sm">
-          {pages.map((page) => <div key={page.pageNumber} ref={(element) => { pageRefs.current[page.pageNumber] = element; }} className="relative mx-auto overflow-visible bg-white shadow-2xl" style={{ width: `${page.width * zoom}px`, aspectRatio: `${page.width} / ${page.height}` }}><canvas ref={(element) => { canvasRefs.current[page.pageNumber] = element; }} className="absolute inset-0 h-full w-full" />{placements.filter((item) => item.pageNumber === page.pageNumber).map((item) => <div key={item.id} className="absolute border-2 border-cyan-500 bg-cyan-100/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, touchAction: "none" }} onPointerDown={(event) => startDrag(event, item, "drag")}><img src={signatureUrl || ""} alt="Saved signature" className="h-full w-full select-none object-contain" draggable={false} /><button type="button" aria-label="Resize signature" className="absolute -bottom-2 -right-2 h-5 w-5 rounded-full border-2 border-white bg-cyan-700" onPointerDown={(event) => startDrag(event, item, "resize")} /><button type="button" aria-label="Remove signature placement" className="absolute -right-2 -top-7 rounded bg-rose-600 p-1 text-white" onClick={() => setPlacements((current) => current.filter((value) => value.id !== item.id))}><Trash2 className="h-3 w-3" /></button></div>)}</div>)}
+          {pages.map((page) => <div key={page.pageNumber} ref={(element) => { pageRefs.current[page.pageNumber] = element; }} className="relative mx-auto overflow-visible bg-white shadow-2xl" style={{ width: `${page.width * zoom}px`, aspectRatio: `${page.width} / ${page.height}` }}><canvas ref={(element) => { canvasRefs.current[page.pageNumber] = element; }} className="absolute inset-0 h-full w-full" />{placements.filter((item) => item.pageNumber === page.pageNumber).map((item) => <div key={item.id} className="absolute border-2 border-cyan-500 bg-cyan-100/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, touchAction: "none" }} onPointerDown={(event) => startDrag(event, item, "drag")}><img src={signatureUrl || ""} alt="Saved signature" className="h-full w-full select-none object-fill" draggable={false} /><button type="button" aria-label="Resize signature" className="absolute -bottom-2 -right-2 h-5 w-5 rounded-full border-2 border-white bg-cyan-700" onPointerDown={(event) => startDrag(event, item, "resize")} /><button type="button" aria-label="Remove signature placement" className="absolute -right-2 -top-7 rounded bg-rose-600 p-1 text-white" onClick={() => setPlacements((current) => current.filter((value) => value.id !== item.id))}><Trash2 className="h-3 w-3" /></button></div>)}</div>)}
         </section>
       </div>
     </main>
