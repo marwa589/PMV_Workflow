@@ -1,7 +1,7 @@
-import { mkdir, writeFile, rm, readFile } from 'fs/promises';
-import path from 'path';
+import { readFile } from 'fs/promises';
 import { NextResponse } from 'next/server';
 import { DocumentStatus } from '@prisma/client';
+import { PDFDocument } from 'pdf-lib';
 import { getSession } from '@/lib/auth/session';
 import { resolveStoredFilePath } from '@/lib/files';
 import { prisma } from '@/lib/prisma';
@@ -42,115 +42,61 @@ export async function GET(request: Request) {
     },
   });
 
-  // Fetch the current-version file path for every document we might need
-  const allDocIds = [
-    ...documents.map((d) => d.id),
-    ...documents.map((d) => d.relatedComparison?.id).filter(Boolean) as string[],
-  ];
-  const uniqueDocIds = [...new Set(allDocIds)];
+  const selectedIds = new Set(ids);
+  const comparisonIdsIncluded = new Set<string>();
+  const orderedDocuments = documents.flatMap((document) => {
+    const selected = [document];
+    if (
+      document.documentType === 'MATERIAL_REQUISITION' &&
+      document.relatedComparison?.status === DocumentStatus.APPROVED &&
+      !comparisonIdsIncluded.has(document.relatedComparison.id)
+    ) {
+      comparisonIdsIncluded.add(document.relatedComparison.id);
+      const comparison = documents.find((item) => item.id === document.relatedComparison?.id);
+      if (comparison && selectedIds.has(comparison.id)) return selected;
+      return [document, { ...document, id: document.relatedComparison.id, documentType: 'COMPARISON' as const, currentVersion: document.relatedComparison.currentVersion, relatedComparison: null }];
+    }
+    if (document.documentType === 'COMPARISON') comparisonIdsIncluded.add(document.id);
+    return selected;
+  });
 
   const versionMap = new Map<string, { filePath: string; originalName: string }>();
-  for (const docId of uniqueDocIds) {
-    // Find the document's currentVersion number first
-    const docRecord = documents.find((d) => d.id === docId)
-      ?? await prisma.document.findUnique({ where: { id: docId }, select: { currentVersion: true } });
-    if (!docRecord) continue;
+  for (const document of orderedDocuments) {
     const version = await prisma.documentVersion.findUnique({
-      where: { documentId_versionNumber: { documentId: docId, versionNumber: docRecord.currentVersion } },
+      where: { documentId_versionNumber: { documentId: document.id, versionNumber: document.currentVersion } },
       select: { filePath: true, originalName: true },
     });
-    if (version) versionMap.set(docId, version);
+    if (version) versionMap.set(document.id, version);
   }
 
-  const tempDir = path.join(process.cwd(), 'tmp', `bulk-${Date.now()}`);
-  await mkdir(tempDir, { recursive: true });
-
-  // Track which comparison IDs are already placed inside a paired MR folder
-  const pairedComparisonIds = new Set<string>();
-
-  // --- Bucket 1: MRs with a linked approved comparison ---
-  const pairedMRs = documents.filter(
-    (d) => d.documentType === 'MATERIAL_REQUISITION' &&
-      d.relatedComparison &&
-      d.relatedComparison.status === DocumentStatus.APPROVED,
-  );
-
-  for (const mr of pairedMRs) {
-    const comp = mr.relatedComparison!;
-    pairedComparisonIds.add(comp.id);
-
-    const mrLabel = mr.mrNumber ? `MR-${mr.mrNumber}` : mr.documentNumber;
-    const pairFolder = path.join(tempDir, 'MRs+Comparisons', mrLabel.replace(/[\\/:*?"<>|]/g, '_'));
-    await mkdir(pairFolder, { recursive: true });
-
-    const mrVersion = versionMap.get(mr.id);
-    if (mrVersion) {
-      const safeFile = mrVersion.originalName.replace(/[\\/:*?"<>|]/g, '_');
-      await writeFile(path.join(pairFolder, safeFile), await readFile(resolveStoredFilePath(mrVersion.filePath)));
+  const mergedPdf = await PDFDocument.create();
+  for (const document of orderedDocuments) {
+    const version = versionMap.get(document.id);
+    if (!version) continue;
+    if (!version.originalName.toLowerCase().endsWith('.pdf')) {
+      return NextResponse.json({ message: `Bulk PDF download supports PDF files only: ${version.originalName}` }, { status: 400 });
     }
-
-    const compVersion = versionMap.get(comp.id);
-    if (compVersion) {
-      const safeFile = compVersion.originalName.replace(/[\\/:*?"<>|]/g, '_');
-      await writeFile(path.join(pairFolder, safeFile), await readFile(resolveStoredFilePath(compVersion.filePath)));
-    }
+    const sourcePdf = await PDFDocument.load(await readFile(resolveStoredFilePath(version.filePath)));
+    const pages = await mergedPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
+    pages.forEach((page) => mergedPdf.addPage(page));
   }
 
-  // --- Bucket 2: MRs with no linked approved comparison ---
-  const soloMRs = documents.filter(
-    (d) => d.documentType === 'MATERIAL_REQUISITION' &&
-      (!d.relatedComparison || d.relatedComparison.status !== DocumentStatus.APPROVED),
-  );
-
-  if (soloMRs.length > 0) {
-    await mkdir(path.join(tempDir, 'MRs'), { recursive: true });
-    for (const mr of soloMRs) {
-      const version = versionMap.get(mr.id);
-      if (!version) continue;
-      const safeFile = version.originalName.replace(/[\\/:*?"<>|]/g, '_');
-      await writeFile(path.join(tempDir, 'MRs', safeFile), await readFile(resolveStoredFilePath(version.filePath)));
-    }
+  if (mergedPdf.getPageCount() === 0) {
+    return NextResponse.json({ message: 'No PDF files found for the selected documents.' }, { status: 404 });
   }
 
-  // --- Bucket 3: Comparisons not already in a pair ---
-  const soloComparisons = documents.filter(
-    (d) => d.documentType === 'COMPARISON' && !pairedComparisonIds.has(d.id),
-  );
-
-  if (soloComparisons.length > 0) {
-    await mkdir(path.join(tempDir, 'Comparisons'), { recursive: true });
-    for (const comp of soloComparisons) {
-      const version = versionMap.get(comp.id);
-      if (!version) continue;
-      const safeFile = version.originalName.replace(/[\\/:*?"<>|]/g, '_');
-      await writeFile(path.join(tempDir, 'Comparisons', safeFile), await readFile(resolveStoredFilePath(version.filePath)));
-    }
-  }
-
-  const archiveName = `documents-${Date.now()}.zip`;
-  const archivePath = path.join(process.cwd(), 'tmp', archiveName);
-
-  const { execFile } = await import('child_process');
-  const { promisify } = await import('util');
-  const execFileAsync = promisify(execFile);
-
-  try {
-    await execFileAsync('powershell', [
-      '-NoProfile', '-Command',
-      `Compress-Archive -Path '${tempDir}\\*' -DestinationPath '${archivePath}' -Force`,
-    ]);
-  } catch {
-    await execFileAsync('zip', ['-r', archivePath, '.'], { cwd: tempDir });
-  }
-
-  const buffer = await readFile(archivePath);
-  await rm(tempDir, { recursive: true, force: true });
-  await rm(archivePath, { force: true });
+  const buffer = Buffer.from(await mergedPdf.save());
+  const includedDocumentIds = [...versionMap.keys()];
+  await prisma.document.updateMany({
+    where: { id: { in: includedDocumentIds }, status: DocumentStatus.APPROVED },
+    data: { downloadedAt: new Date() },
+  });
+  const archiveName = `documents-${Date.now()}.pdf`;
 
   return new NextResponse(buffer, {
     status: 200,
     headers: {
-      'Content-Type': 'application/zip',
+      'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${archiveName}"`,
     },
   });

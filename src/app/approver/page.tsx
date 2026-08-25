@@ -23,6 +23,8 @@ export default async function ApproverDashboardPage() {
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     uploadedAt: string;
+    relatedComparisonId: string | null;
+    relatedComparisonDocumentNumber: string | null;
   }[] = [];
   let revisionRequiredDocuments: {
     id: string;
@@ -32,6 +34,8 @@ export default async function ApproverDashboardPage() {
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     uploadedAt: string;
+    relatedComparisonId: string | null;
+    relatedComparisonDocumentNumber: string | null;
   }[] = [];
   let approvedDocuments: {
     id: string;
@@ -95,6 +99,7 @@ export default async function ApproverDashboardPage() {
           },
         },
         orderBy: { createdAt: "desc" },
+        include: { relatedComparison: { select: { id: true, documentNumber: true } } },
         take: 10,
       }),
       prisma.document.findMany({
@@ -103,6 +108,7 @@ export default async function ApproverDashboardPage() {
           status: DocumentStatus.REVISION_REQUIRED,
         },
         orderBy: { createdAt: "desc" },
+        include: { relatedComparison: { select: { id: true, documentNumber: true } } },
         take: 10,
       }),
       prisma.approvalHistory.findMany({
@@ -153,6 +159,8 @@ export default async function ApproverDashboardPage() {
       mrType: doc.mrType,
       currentVersion: doc.currentVersion,
       uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+      relatedComparisonId: doc.relatedComparison?.id || null,
+      relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
     }));
     revisionRequiredDocuments = revisionRequiredDocs.map((doc) => ({
       id: doc.id,
@@ -162,6 +170,8 @@ export default async function ApproverDashboardPage() {
       mrType: doc.mrType,
       currentVersion: doc.currentVersion,
       uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+      relatedComparisonId: doc.relatedComparison?.id || null,
+      relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
     }));
     approvedDocuments = recentApproved.map((item) => ({
       id: item.document.id,
@@ -242,6 +252,8 @@ export default async function ApproverDashboardPage() {
             mrType: doc.mrType,
             currentVersion: doc.currentVersion,
             currentApproverName: null,
+              relatedComparisonId: null,
+              relatedComparisonDocumentNumber: null,
             dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.performedAt),
           }))}
           emptyMessage="No approved documents by you yet."

@@ -10,6 +10,8 @@ type PendingDocument = {
   mrType?: "CASH" | "CREDIT" | null;
   currentVersion: number;
   uploadedAt: string;
+  relatedComparisonId?: string | null;
+  relatedComparisonDocumentNumber?: string | null;
 };
 
 export default function ApproverPendingTable({ documents }: { documents: PendingDocument[] }) {
@@ -34,6 +36,7 @@ export default function ApproverPendingTable({ documents }: { documents: Pending
             <th className="px-5 py-3 font-semibold">Document Number</th>
             <th className="px-5 py-3 font-semibold">Title</th>
             <th className="px-5 py-3 font-semibold">Type</th>
+            <th className="px-5 py-3 font-semibold">Related Comparison</th>
             <th className="px-5 py-3 font-semibold">Current Version</th>
             <th className="px-5 py-3 font-semibold">Date</th>
             <th className="px-5 py-3 font-semibold">Actions</th>
@@ -45,6 +48,7 @@ export default function ApproverPendingTable({ documents }: { documents: Pending
               <td className="px-5 py-4 font-medium text-slate-900"><a href={`/documents/${document.id}`} className="hover:underline">{document.documentNumber}</a></td>
               <td className="px-5 py-4 text-slate-700">{document.title}</td>
               <td className="px-5 py-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">{getDocumentTypeLabel(document)}</span></td>
+              <td className="px-5 py-4">{document.relatedComparisonId && document.relatedComparisonDocumentNumber ? <a href={`/documents/${document.relatedComparisonId}`} target="_blank" rel="noopener noreferrer" className="font-medium text-cyan-700 hover:underline">{document.relatedComparisonDocumentNumber}</a> : "—"}</td>
               <td className="px-5 py-4 text-slate-700">V{document.currentVersion}</td>
               <td className="px-5 py-4 text-slate-500">{document.uploadedAt}</td>
               <td className="px-5 py-4">

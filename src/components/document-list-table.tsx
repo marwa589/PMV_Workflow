@@ -29,7 +29,15 @@ export type DocumentListItem = {
   currentApproverName?: string | null;
   rejectionComments?: string | null;
   dateLabel: string;
+  relatedComparisonId?: string | null;
+  relatedComparisonDocumentNumber?: string | null;
+  downloadedAt?: Date | null;
+  approvalDate?: Date | null;
 };
+
+function formatDateTime(value?: Date | null): string {
+  return value ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—";
+}
 
 type Props = {
   documents: DocumentListItem[];
@@ -38,9 +46,10 @@ type Props = {
   allowBulkDelete?: boolean;
   allowAdminDelete?: boolean;
   allowReview?: boolean;
+  showDownloadTracking?: boolean;
 };
 
-export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false, allowAdminDelete = false, allowReview = false }: Props) {
+export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false, allowAdminDelete = false, allowReview = false, showDownloadTracking = false }: Props) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const searchParams = useSearchParams();
 
@@ -48,6 +57,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
   const visibleDocuments = useMemo(() => documents.filter((doc) => matchesDocumentSearch(doc, searchQuery)), [documents, searchQuery]);
   const approvedDocuments = useMemo(() => visibleDocuments.filter((doc) => doc.status === "APPROVED"), [visibleDocuments]);
   const selectedDocuments = useMemo(() => visibleDocuments.filter((doc) => selectedIds.includes(doc.id)), [selectedIds, visibleDocuments]);
+  const columnCount = (showBulkActions ? 1 : 0) + (showDownloadTracking ? 12 : 9);
 
   function toggleSelection(id: string) {
     setSelectedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
@@ -187,6 +197,8 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
             <th className="px-5 py-3 font-semibold">Title</th>
             <th className="px-5 py-3 font-semibold">Status</th>
             <th className="px-5 py-3 font-semibold">Type</th>
+            <th className="px-5 py-3 font-semibold">Related Comparison</th>
+            {showDownloadTracking ? <><th className="px-5 py-3 font-semibold">Download Status</th><th className="px-5 py-3 font-semibold">Download Timestamp</th><th className="px-5 py-3 font-semibold">Approval Date/Time</th></> : null}
             <th className="px-5 py-3 font-semibold">Version</th>
             <th className="px-5 py-3 font-semibold">Current Approver</th>
             <th className="px-5 py-3 font-semibold">Last Updated</th>
@@ -196,7 +208,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
         <tbody>
           {visibleDocuments.length === 0 ? (
             <tr>
-              <td colSpan={showBulkActions ? 9 : 8} className="px-5 py-6 text-center text-slate-500">
+              <td colSpan={columnCount} className="px-5 py-6 text-center text-slate-500">
                 {emptyMessage}
               </td>
             </tr>
@@ -227,6 +239,20 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                     {getDocumentTypeLabel(doc)}
                   </span>
                 </td>
+                <td className="px-5 py-4 text-slate-700">
+                  {doc.relatedComparisonId && doc.relatedComparisonDocumentNumber ? (
+                    <Link href={`/documents/${doc.relatedComparisonId}`} target="_blank" rel="noopener noreferrer" className="font-medium text-cyan-700 hover:underline">
+                      {doc.relatedComparisonDocumentNumber}
+                    </Link>
+                  ) : "—"}
+                </td>
+                {showDownloadTracking ? (
+                  <>
+                    <td className="px-5 py-4 text-slate-700">{doc.downloadedAt ? "Downloaded" : "Not Downloaded"}</td>
+                    <td className="px-5 py-4 text-slate-500">{formatDateTime(doc.downloadedAt)}</td>
+                    <td className="px-5 py-4 text-slate-500">{formatDateTime(doc.approvalDate)}</td>
+                  </>
+                ) : null}
                 <td className="px-5 py-4 text-slate-700">V{doc.currentVersion}</td>
                 <td className="px-5 py-4 text-slate-700">{getCurrentApproverDisplay(doc)}</td>
                 <td className="px-5 py-4 text-slate-500">{doc.dateLabel}</td>

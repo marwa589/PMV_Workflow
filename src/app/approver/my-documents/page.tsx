@@ -39,8 +39,9 @@ export default async function ApproverMyDocumentsPage({ searchParams }: any) {
     rejectionComments: doc.approvals[0]?.comments || null,
     currentVersion: doc.currentVersion,
     currentApproverName: doc.currentApprover?.name || null,
-    mrNumber: doc.mrNumber || null,
+    relatedComparisonId: doc.relatedComparison?.id || null,
     relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
+    mrNumber: doc.mrNumber || null,
     relatedComparisonTitle: doc.relatedComparison?.title || null,
     dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.updatedAt),
   }));

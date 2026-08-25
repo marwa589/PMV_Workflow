@@ -8,9 +8,15 @@ const prisma = new PrismaClient({ adapter });
 
 const users = [
   {
-    name: "Clerk User",
-    email: "clerk@example.com",
-    password: "clerk123",
+    name: "Aqueel Sayed",
+    email: "aqueel.sayed@ahmadiah.com",
+    password: "aqueel123",
+    role: UserRole.CLERK,
+  },
+  {
+    name: "Omar Merzek",
+    email: "omar.merzek@ahmadiah.com",
+    password: "omar123",
     role: UserRole.CLERK,
   },
   {
@@ -91,6 +97,23 @@ async function main() {
         role: user.role,
         passwordHash,
       },
+    });
+  }
+
+  const oldClerk = await prisma.user.findUnique({ where: { email: "clerk@example.com" }, select: { id: true } });
+  const aqueel = await prisma.user.findUnique({ where: { email: "aqueel.sayed@ahmadiah.com" }, select: { id: true } });
+  if (oldClerk && aqueel) {
+    await prisma.$transaction(async (tx) => {
+      await tx.document.updateMany({ where: { createdById: oldClerk.id }, data: { createdById: aqueel.id } });
+      await tx.documentVersion.updateMany({ where: { uploadedById: oldClerk.id }, data: { uploadedById: aqueel.id } });
+      await tx.approvalHistory.updateMany({ where: { performedById: oldClerk.id }, data: { performedById: aqueel.id } });
+      await tx.deletionRequest.updateMany({ where: { requestedById: oldClerk.id }, data: { requestedById: aqueel.id } });
+      await tx.notification.updateMany({ where: { userId: oldClerk.id }, data: { userId: aqueel.id } });
+      await tx.emailNotificationEvent.updateMany({ where: { recipientId: oldClerk.id }, data: { recipientId: aqueel.id } });
+      await tx.auditLog.updateMany({ where: { performedById: oldClerk.id }, data: { performedById: aqueel.id } });
+      await tx.trustedDevice.updateMany({ where: { userId: oldClerk.id }, data: { userId: aqueel.id } });
+      await tx.otpChallenge.updateMany({ where: { userId: oldClerk.id }, data: { userId: aqueel.id } });
+      await tx.user.delete({ where: { id: oldClerk.id } });
     });
   }
 

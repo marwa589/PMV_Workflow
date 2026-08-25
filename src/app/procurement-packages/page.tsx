@@ -17,7 +17,10 @@ export default async function ProcurementPackagesPage() {
   const session = await requireAuth();
 
   const packages = await prisma.document.findMany({
-    where: { documentType: "MATERIAL_REQUISITION", status: DocumentStatus.APPROVED },
+    where: {
+      documentType: "MATERIAL_REQUISITION",
+      relatedComparison: { status: DocumentStatus.APPROVED },
+    },
     select: {
       id: true,
       documentNumber: true,
@@ -68,7 +71,7 @@ export default async function ProcurementPackagesPage() {
   const now = Date.now();
 
   return (
-    <DashboardShell role={session.role} userName={session.name} title="MRs + Comparisons" subtitle="Approved MRs with their linked comparison sheets">
+    <DashboardShell role={session.role} userName={session.name} title="MRs + Comparisons" subtitle="MRs with approved related comparison sheets">
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">
           <h3 className="text-base font-semibold text-slate-900">MRs + Comparisons</h3>
@@ -98,7 +101,7 @@ export default async function ProcurementPackagesPage() {
                     <td className="px-5 py-4 text-slate-700">
                       {item.relatedComparison ? (
                         <div>
-                          <Link href={`/documents/${item.relatedComparison.id}`} className="font-medium text-slate-900 hover:underline">{item.relatedComparison.documentNumber}</Link>
+                          <Link href={`/documents/${item.relatedComparison.id}`} target="_blank" rel="noopener noreferrer" className="font-medium text-slate-900 hover:underline">{item.relatedComparison.documentNumber}</Link>
                           <div className="text-xs text-slate-500">{item.relatedComparison.title}</div>
                         </div>
                       ) : (

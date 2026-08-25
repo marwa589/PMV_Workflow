@@ -1,7 +1,7 @@
 import { DocumentStatus, UserRole } from "@prisma/client";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, Download, FileText, History, UserCircle2 } from "lucide-react";
+import { ArrowLeft, Download, FileText, History } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
 import StatusBadge from "@/components/status-badge";
 import WorkflowJourneyChart from "@/components/workflow-journey-chart";
@@ -70,8 +70,6 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
   }
 
   const latestComment = document.approvals.find((item) => item.comments)?.comments || null;
-  const currentVersion = document.versions.find((version) => version.versionNumber === document.currentVersion);
-
   return (
     <DashboardShell
       role={session.role}
@@ -93,6 +91,13 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
         >
           <Download className="h-4 w-4" />
           Download current file
+        </a>
+        <a
+          href={`/api/documents/${document.id}/download?inline=1`}
+          className="inline-flex items-center gap-2 rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-medium text-cyan-800 hover:bg-cyan-100"
+        >
+          <FileText className="h-4 w-4" />
+          Open File
         </a>
       </div>
 
@@ -121,7 +126,18 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-medium text-slate-500">Related comparison</span>
-                    <span className="font-semibold text-slate-900">{document.relatedComparison ? document.relatedComparison.documentNumber : "None"}</span>
+                    {document.relatedComparison ? (
+                      <Link
+                        href={`/documents/${document.relatedComparison.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold text-cyan-700 hover:text-cyan-900 hover:underline"
+                      >
+                        {document.relatedComparison.documentNumber}
+                      </Link>
+                    ) : (
+                      <span className="font-semibold text-slate-900">None</span>
+                    )}
                   </div>
                 </>
               ) : null}
@@ -232,7 +248,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
               <p className="text-sm font-semibold text-slate-900">Related comparison</p>
               <p className="mt-1 text-sm text-slate-600">{document.relatedComparison.title}</p>
             </div>
-            <Link href={`/documents/${document.relatedComparison.id}`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            <Link href={`/documents/${document.relatedComparison.id}`} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
               Open comparison
             </Link>
           </div>
@@ -253,25 +269,6 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
-        <div className="flex items-center gap-2">
-          <UserCircle2 className="h-4 w-4 text-slate-500" />
-          <p className="text-sm font-semibold text-slate-900">Current file</p>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
-          <div>
-            <p className="text-sm font-semibold text-slate-900">{currentVersion?.originalName || "No current file"}</p>
-            <p className="mt-1 text-sm text-slate-600">Version {document.currentVersion}</p>
-          </div>
-          <a
-            href={`/api/documents/${document.id}/download`}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            <Download className="h-4 w-4" />
-            Download
-          </a>
-        </div>
-      </div>
     </DashboardShell>
   );
 }

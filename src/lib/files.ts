@@ -1,4 +1,5 @@
-import { mkdir, rm, unlink, writeFile } from "fs/promises";
+import { mkdir, readFile, rm, unlink, writeFile } from "fs/promises";
+import { PDFDocument } from "pdf-lib";
 import path from "path";
 
 export function getUploadRoot(): string {
@@ -126,6 +127,37 @@ export async function saveDocumentVersionFile(params: {
 
   const relativePath = path.relative(getUploadRoot(), fullPath).replaceAll("\\", "/");
   return { relativePath, extension };
+}
+
+export async function mergePdfFiles(params: {
+  firstFilePath: string;
+  secondFilePath: string;
+  fileName: string;
+}): Promise<{ relativePath: string }> {
+  const [firstBytes, secondBytes] = await Promise.all([
+    readFile(resolveStoredFilePath(params.firstFilePath)),
+    readFile(resolveStoredFilePath(params.secondFilePath)),
+  ]);
+  const mergedPdf = await PDFDocument.create();
+  const [firstPdf, secondPdf] = await Promise.all([
+    PDFDocument.load(firstBytes),
+    PDFDocument.load(secondBytes),
+  ]);
+
+  for (const sourcePdf of [firstPdf, secondPdf]) {
+    const pages = await mergedPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
+    pages.forEach((page) => mergedPdf.addPage(page));
+  }
+
+  const directory = path.join(getUploadRoot(), "MRs+Comparisons");
+  await mkdir(directory, { recursive: true });
+  const safeName = `${safeFileName(params.fileName.replace(/\.[^.]+$/, ""))}.pdf`;
+  const fullPath = path.join(directory, safeName);
+  await writeFile(fullPath, await mergedPdf.save());
+
+  return {
+    relativePath: path.relative(getUploadRoot(), fullPath).replaceAll("\\", "/"),
+  };
 }
 
 // Copy a comparison file into an MRs+Comparisons subfolder so OneDrive sees the pair together.

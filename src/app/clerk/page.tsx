@@ -21,7 +21,10 @@ export default async function ClerkDashboardPage() {
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     createdAt: Date;
+    downloadedAt: Date | null;
     currentApprover: { name: string } | null;
+    relatedComparison: { id: string; documentNumber: string } | null;
+    approvals: { performedAt: Date }[];
   }[] = [];
   let statusCounts = {
     pending: 0,
@@ -34,7 +37,16 @@ export default async function ClerkDashboardPage() {
       prisma.document.count({ where: { createdById: session.userId } }),
       prisma.document.findMany({
         where: { createdById: session.userId },
-        include: { currentApprover: { select: { name: true } } },
+        include: {
+          currentApprover: { select: { name: true } },
+          relatedComparison: { select: { id: true, documentNumber: true } },
+          approvals: {
+            where: { action: "APPROVED" },
+            orderBy: { performedAt: "desc" },
+            take: 1,
+            select: { performedAt: true },
+          },
+        },
         orderBy: { createdAt: "desc" },
         take: 6,
       }),
@@ -115,9 +127,14 @@ export default async function ClerkDashboardPage() {
             mrType: doc.mrType,
             currentVersion: doc.currentVersion,
             currentApproverName: doc.currentApprover?.name || null,
+            relatedComparisonId: doc.relatedComparison?.id || null,
+            relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
+            downloadedAt: doc.downloadedAt,
+            approvalDate: doc.approvals[0]?.performedAt || null,
             dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
           }))}
           emptyMessage="No documents available yet."
+          showDownloadTracking
         />
       </section>
 

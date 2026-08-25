@@ -1,6 +1,6 @@
 import { ApprovalActionType, DocumentStatus, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { deleteDocumentFiles, saveDocumentVersionFile } from "@/lib/files";
+import { deleteDocumentFiles, mergePdfFiles, saveDocumentVersionFile } from "@/lib/files";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { createNotification } from "@/lib/notifications";
@@ -281,12 +281,51 @@ export async function POST(
         hasLinkedComparison: !!document.relatedComparisonId,
       });
 
+      let finalFilePath = saved.relativePath;
+      let finalOriginalName = fileValue.name;
+      let mergedSourcePaths: string[] = [];
+      if (!workflow.nextApproverRole && document.documentType === "MATERIAL_REQUISITION" && document.relatedComparisonId) {
+        const comparison = await tx.document.findUnique({
+          where: { id: document.relatedComparisonId },
+          select: {
+            status: true,
+            title: true,
+            currentVersion: true,
+            versions: {
+              orderBy: { versionNumber: "desc" },
+              take: 1,
+              select: { filePath: true },
+            },
+          },
+        });
+        const comparisonVersion = comparison?.versions[0];
+        if (comparison?.status === DocumentStatus.APPROVED && comparisonVersion) {
+          const merged = await mergePdfFiles({
+            firstFilePath: comparisonVersion.filePath,
+            secondFilePath: saved.relativePath,
+            fileName: `${document.title} + ${comparison.title}`,
+          });
+          finalFilePath = merged.relativePath;
+          finalOriginalName = `${document.title} + ${comparison.title}.pdf`;
+          mergedSourcePaths = [saved.relativePath, comparisonVersion.filePath];
+          await tx.documentVersion.update({
+            where: {
+              documentId_versionNumber: {
+                documentId: document.relatedComparisonId,
+                versionNumber: comparison.currentVersion,
+              },
+            },
+            data: { filePath: finalFilePath, originalName: finalOriginalName },
+          });
+        }
+      }
+
       const newVersion = await tx.documentVersion.create({
         data: {
           documentId: document.id,
           versionNumber: nextVersionNumber,
-          filePath: saved.relativePath,
-          originalName: fileValue.name,
+          filePath: finalFilePath,
+          originalName: finalOriginalName,
           extension: saved.extension,
           mimeType: fileValue.type || "application/octet-stream",
           fileSize: fileValue.size,
@@ -391,6 +430,8 @@ export async function POST(
         status: workflow.nextStatus,
         currentVersion: nextVersionNumber,
         versionsToDeleteAfterCommit,
+        currentFilePath: finalFilePath,
+        mergedSourcePaths,
         emailRecipientId: nextApproverId || document.createdById,
       };
     });
@@ -401,11 +442,18 @@ export async function POST(
       const versionsToDeleteAfterCommit = (
         result as typeof result & { versionsToDeleteAfterCommit?: { filePath: string }[] }
       ).versionsToDeleteAfterCommit || [];
+      const currentFilePath = (
+        result as typeof result & { currentFilePath?: string }
+      ).currentFilePath;
+      const mergedSourcePaths = (
+        result as typeof result & { mergedSourcePaths?: string[] }
+      ).mergedSourcePaths || [];
 
       await Promise.all(
-        versionsToDeleteAfterCommit.map(async (version) => {
+        [...versionsToDeleteAfterCommit.map((version) => version.filePath), ...mergedSourcePaths].map(async (filePath) => {
+          if (filePath === currentFilePath) return;
           try {
-            await deleteDocumentFiles({ filePaths: [version.filePath] });
+            await deleteDocumentFiles({ filePaths: [filePath] });
           } catch {
             // Ignore missing files so approval still succeeds.
           }
@@ -435,23 +483,36 @@ export async function POST(
         result.status === DocumentStatus.PENDING_APPROVER_3 ||
         result.status === DocumentStatus.REVISION_REQUIRED)
     ) {
-      if (documentForEmail.currentApprover.id) {
-        await queueWorkflowEmailEvents([{
-          recipientId: documentForEmail.currentApprover.id,
-          type: "APPROVAL_PENDING",
-          documentId,
-        }]);
+      const recipients = new Set<string>();
+      if (result.status === DocumentStatus.REVISION_REQUIRED) {
+        const aqueel = await prisma.user.findUnique({
+          where: { email: "aqueel.sayed@ahmadiah.com" },
+          select: { id: true },
+        });
+        if (aqueel) recipients.add(aqueel.id);
+      } else if (documentForEmail.currentApprover.id) {
+        recipients.add(documentForEmail.currentApprover.id);
       }
+      await queueWorkflowEmailEvents([...recipients].map((recipientId) => ({
+        recipientId,
+        type: "APPROVAL_PENDING" as const,
+        documentId,
+      })));
     }
 
     if (result.status === DocumentStatus.APPROVED || result.status === DocumentStatus.REJECTED) {
-      if (documentForEmail?.createdBy?.id) {
-        await queueWorkflowEmailEvents([{
-          recipientId: documentForEmail.createdBy.id,
-          type: result.status === DocumentStatus.APPROVED ? "WORKFLOW_APPROVED" : "WORKFLOW_REJECTED",
-          documentId,
-        }]);
-      }
+      const clerkRecipients = await prisma.user.findMany({
+        where: {
+          role: UserRole.CLERK,
+          email: { in: ["aqueel.sayed@ahmadiah.com", "omar.merzek@ahmadiah.com"] },
+        },
+        select: { id: true, email: true },
+      });
+      const emailType = result.status === DocumentStatus.APPROVED ? "WORKFLOW_APPROVED" : "WORKFLOW_REJECTED";
+      const recipients = result.status === DocumentStatus.APPROVED
+        ? clerkRecipients
+        : clerkRecipients.filter((clerk) => clerk.email === "aqueel.sayed@ahmadiah.com");
+      await queueWorkflowEmailEvents(recipients.map((clerk) => ({ recipientId: clerk.id, type: emailType, documentId })));
     }
 
     console.info(`[actions] Queueing completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });

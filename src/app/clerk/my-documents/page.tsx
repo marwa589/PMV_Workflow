@@ -4,7 +4,7 @@ import DocumentListTable from "@/components/document-list-table";
 import DocumentStatusFilter from "@/components/document-status-filter";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
-import { parseDocumentStatusFilter, parseDocumentTypeFilter } from "@/lib/document-status";
+import { parseDocumentStatusFilter, parseDocumentTypeFilter, parseDownloadStatusFilter } from "@/lib/document-status";
 import { parseSearchQuery, matchesDocumentSearch } from "@/lib/document-search";
 import { getDocumentsForClerk } from "@/lib/document-queries";
 
@@ -16,6 +16,9 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
   const resolvedSearchParams = await Promise.resolve(searchParams);
   const statusFilter = parseDocumentStatusFilter(resolvedSearchParams?.status);
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
+  const downloadStatusFilter = parseDownloadStatusFilter(resolvedSearchParams?.downloadStatus);
+  const approvalFrom = typeof resolvedSearchParams?.approvalFrom === "string" ? resolvedSearchParams.approvalFrom : "";
+  const approvalTo = typeof resolvedSearchParams?.approvalTo === "string" ? resolvedSearchParams.approvalTo : "";
   const searchQuery = parseSearchQuery(resolvedSearchParams?.search);
 
   const pageTitle = documentTypeFilter === "MATERIAL_REQUISITION" ? "MRs" : documentTypeFilter === "COMPARISON" ? "Comparison Sheets" : "Documents";
@@ -28,6 +31,13 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
   const documents = data.documents
     .filter((doc) => !statusFilter || doc.status === statusFilter)
     .filter((doc) => !documentTypeFilter || doc.documentType === documentTypeFilter)
+    .filter((doc) => !downloadStatusFilter || (downloadStatusFilter === "DOWNLOADED" ? doc.downloadedAt : !doc.downloadedAt))
+    .filter((doc) => {
+      const approvalTime = doc.approvals.find((approval) => approval.action === "APPROVED")?.performedAt?.getTime();
+      const from = approvalFrom ? new Date(approvalFrom).getTime() : null;
+      const to = approvalTo ? new Date(approvalTo).getTime() : null;
+      return (!from || (approvalTime !== undefined && approvalTime >= from)) && (!to || (approvalTime !== undefined && approvalTime <= to));
+    })
     .map((doc) => ({
     id: doc.id,
     documentNumber: doc.documentNumber,
@@ -38,9 +48,12 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
     rejectionComments: doc.approvals[0]?.comments || null,
     currentVersion: doc.currentVersion,
     currentApproverName: doc.currentApprover?.name || null,
-    mrNumber: doc.mrNumber || null,
+    relatedComparisonId: doc.relatedComparison?.id || null,
     relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
+    mrNumber: doc.mrNumber || null,
     relatedComparisonTitle: doc.relatedComparison?.title || null,
+    downloadedAt: doc.downloadedAt,
+    approvalDate: doc.approvals.find((approval) => approval.action === "APPROVED")?.performedAt || null,
     dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.updatedAt),
   }));
 
@@ -69,9 +82,9 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
           <h3 className="text-base font-semibold text-slate-900">All Documents</h3>
         </div>
         <div className="border-b border-slate-200 px-5 py-4">
-          <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} />
+          <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} downloadStatus={downloadStatusFilter} approvalFrom={approvalFrom} approvalTo={approvalTo} showDownloadFilters />
         </div>
-        <DocumentListTable documents={filteredDocuments} emptyMessage="No clerk documents found." showBulkActions allowBulkDelete />
+        <DocumentListTable documents={filteredDocuments} emptyMessage="No clerk documents found." showBulkActions allowBulkDelete showDownloadTracking />
       </section>
     </DashboardShell>
   );

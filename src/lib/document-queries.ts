@@ -36,11 +36,11 @@ export async function getDocumentsForClerk(_userId: string) {
     prisma.document.findMany({
       include: {
         currentApprover: { select: { name: true } },
-        relatedComparison: { select: { documentNumber: true, title: true } },
+        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
-          where: { action: ApprovalActionType.REJECTED },
+          where: { action: { in: [ApprovalActionType.REJECTED, ApprovalActionType.APPROVED] } },
           orderBy: { performedAt: "desc" },
-          take: 1,
+          take: 50,
           include: { performedBy: { select: { name: true } } },
         },
       },
@@ -68,7 +68,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole) {
       },
       include: {
         currentApprover: { select: { name: true } },
-        relatedComparison: { select: { documentNumber: true, title: true } },
+        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
           orderBy: { performedAt: "desc" },
           take: 1,
@@ -84,7 +84,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole) {
       },
       include: {
         currentApprover: { select: { name: true } },
-        relatedComparison: { select: { documentNumber: true, title: true } },
+        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
           orderBy: { performedAt: "desc" },
           take: 1,
@@ -97,7 +97,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole) {
       where: { approvals: { some: { performedById: userId, action: ApprovalActionType.APPROVED } } },
       include: {
         currentApprover: { select: { name: true } },
-        relatedComparison: { select: { documentNumber: true, title: true } },
+        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
           where: { action: ApprovalActionType.REJECTED },
           orderBy: { performedAt: "desc" },
@@ -111,7 +111,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole) {
       where: { approvals: { some: { performedById: userId, action: ApprovalActionType.REJECTED } } },
       include: {
         currentApprover: { select: { name: true } },
-        relatedComparison: { select: { documentNumber: true, title: true } },
+        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
           where: { action: ApprovalActionType.REJECTED },
           orderBy: { performedAt: "desc" },
@@ -127,7 +127,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole) {
       },
       include: {
         currentApprover: { select: { name: true } },
-        relatedComparison: { select: { documentNumber: true, title: true } },
+        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
           where: { action: ApprovalActionType.REJECTED },
           orderBy: { performedAt: "desc" },
@@ -154,7 +154,7 @@ export async function getDocumentsForAdmin() {
       orderBy: { createdAt: "desc" },
       include: {
         currentApprover: { select: { name: true } },
-        relatedComparison: { select: { documentNumber: true, title: true } },
+        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
           where: { action: ApprovalActionType.REJECTED },
           orderBy: { performedAt: "desc" },
@@ -168,7 +168,7 @@ export async function getDocumentsForAdmin() {
       orderBy: { createdAt: "desc" },
       include: {
         currentApprover: { select: { name: true } },
-        relatedComparison: { select: { documentNumber: true, title: true } },
+        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
           where: { action: ApprovalActionType.REJECTED },
           orderBy: { performedAt: "desc" },
@@ -182,7 +182,7 @@ export async function getDocumentsForAdmin() {
       orderBy: { createdAt: "desc" },
       include: {
         currentApprover: { select: { name: true } },
-        relatedComparison: { select: { documentNumber: true, title: true } },
+        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
           where: { action: ApprovalActionType.REJECTED },
           orderBy: { performedAt: "desc" },
@@ -196,7 +196,7 @@ export async function getDocumentsForAdmin() {
       orderBy: { createdAt: "desc" },
       include: {
         currentApprover: { select: { name: true } },
-        relatedComparison: { select: { documentNumber: true, title: true } },
+        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
           where: { action: ApprovalActionType.REJECTED },
           orderBy: { performedAt: "desc" },

@@ -31,6 +31,7 @@ export default async function AdminDashboardPage() {
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     currentApprover: { name: string } | null;
+    relatedComparison: { id: string; documentNumber: string } | null;
     currentApproverAssignedAt: Date | null;
     createdAt: Date;
   }[] = [];
@@ -119,6 +120,7 @@ export default async function AdminDashboardPage() {
         take: 12,
         include: {
           currentApprover: { select: { name: true } },
+          relatedComparison: { select: { id: true, documentNumber: true } },
         },
       }),
       prisma.document.findMany({
@@ -184,6 +186,7 @@ export default async function AdminDashboardPage() {
       mrType: doc.mrType,
       currentVersion: doc.currentVersion,
       currentApprover: doc.currentApprover,
+      relatedComparison: doc.relatedComparison,
       currentApproverAssignedAt: doc.currentApproverAssignedAt,
       createdAt: doc.createdAt,
     }));
@@ -238,6 +241,8 @@ export default async function AdminDashboardPage() {
         documentNumber: doc.documentNumber,
         title: doc.title,
         currentApproverName: doc.currentApprover?.name || null,
+        relatedComparisonId: doc.relatedComparison?.id || null,
+        relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
         status: doc.status,
         statusLabel: stageKey === "APPROVER_1"
           ? "PMV Engineer"

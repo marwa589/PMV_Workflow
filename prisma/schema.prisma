@@ -48,6 +48,7 @@ model Document {
   documentType              DocumentType      @default(COMPARISON)
   mrType                    MrType?
   currentApproverAssignedAt DateTime?
+  downloadedAt             DateTime?
   mrNumber                  String?
   relatedComparisonId       String?
   lastActiveStage           DocumentStatus?

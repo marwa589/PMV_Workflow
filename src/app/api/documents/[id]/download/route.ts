@@ -8,7 +8,7 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
@@ -61,7 +61,7 @@ export async function GET(
       status: 200,
       headers: {
         "Content-Type": version.mimeType || "application/octet-stream",
-        "Content-Disposition": `attachment; filename="${version.originalName}"`,
+        "Content-Disposition": `${new URL(request.url).searchParams.get("inline") === "1" ? "inline" : "attachment"}; filename="${version.originalName}"`,
       },
     });
   } catch {

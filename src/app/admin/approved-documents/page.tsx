@@ -20,6 +20,8 @@ export default async function AdminApprovedDocumentsPage() {
     mrType: doc.mrType,
     currentVersion: doc.currentVersion,
     currentApproverName: doc.currentApprover?.name || null,
+    relatedComparisonId: doc.relatedComparison?.id || null,
+    relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
     dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
   }));
 
