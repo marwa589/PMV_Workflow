@@ -1,5 +1,5 @@
 import { DocumentStatus } from "@prisma/client";
-import { DOCUMENT_STATUS_FILTER_OPTIONS, DownloadStatusFilter } from "@/lib/document-status";
+import { DOCUMENT_STATUS_FILTER_OPTIONS, DownloadStatusFilter, MrTypeFilter } from "@/lib/document-status";
 
 type Props = {
   value?: DocumentStatus | "";
@@ -9,12 +9,24 @@ type Props = {
   approvalFrom?: string;
   approvalTo?: string;
   showDownloadFilters?: boolean;
+  mrType?: MrTypeFilter;
+  showMrTypeFilter?: boolean;
 };
 
-export default function DocumentStatusFilter({ value = "", title = "Filter by Status", documentType = "", downloadStatus = "", approvalFrom = "", approvalTo = "", showDownloadFilters = false }: Props) {
+export default function DocumentStatusFilter({ value = "", title = "Filter by Status", documentType = "", downloadStatus = "", approvalFrom = "", approvalTo = "", showDownloadFilters = false, mrType = "", showMrTypeFilter = false }: Props) {
   return (
     <form method="get" className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       {documentType ? <input type="hidden" name="documentType" value={documentType} /> : null}
+      {showMrTypeFilter && documentType === "MATERIAL_REQUISITION" ? (
+        <div className="min-w-0 flex-1">
+          <label htmlFor="mr-type" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">MR Type</label>
+          <select id="mr-type" name="mrType" defaultValue={mrType} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400">
+            <option value="">All MR Types</option>
+            <option value="CASH">Cash</option>
+            <option value="CREDIT">Credit</option>
+          </select>
+        </div>
+      ) : null}
       {showDownloadFilters ? (
         <>
           <div className="min-w-0 flex-1">

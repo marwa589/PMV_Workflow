@@ -17,6 +17,7 @@ import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 type FileKind = "pdf" | "docx" | "xlsx" | "image" | "unknown";
 type DocumentTypeOption = "COMPARISON" | "MATERIAL_REQUISITION";
 type MrTypeOption = "CASH" | "CREDIT";
+type ComparisonTypeOption = "SPARE_PARTS" | "OTHER";
 
 const ACCEPTED_EXTENSIONS = ["pdf", "docx", "xlsx", "jpg", "jpeg", "png"];
 const ACCEPTED_MIME_TYPES = [
@@ -79,6 +80,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [documentType, setDocumentType] = useState<DocumentTypeOption | null>(null);
+  const [comparisonType, setComparisonType] = useState<ComparisonTypeOption | null>(null);
   const [mrType, setMrType] = useState<MrTypeOption | null>(null);
   const [mrNumber, setMrNumber] = useState("");
   const [comparisonLinkChoice, setComparisonLinkChoice] = useState<"YES" | "NO" | null>(null);
@@ -138,6 +140,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
     setTitle("");
     setDescription("");
     setDocumentType(null);
+    setComparisonType(null);
     setMrType(null);
     setMrNumber("");
     setComparisonLinkChoice(null);
@@ -162,6 +165,11 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
       return;
     }
 
+    if (documentType === "COMPARISON" && !comparisonType) {
+      setError("Please select a comparison type.");
+      return;
+    }
+
     if (selectedFiles.length === 0) {
       setError("Please upload at least one file before creating.");
       return;
@@ -175,6 +183,9 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
       formData.set("title", title);
       formData.set("description", description);
       formData.set("documentType", documentType);
+      if (documentType === "COMPARISON" && comparisonType) {
+        formData.set("comparisonType", comparisonType);
+      }
       if (documentType === "MATERIAL_REQUISITION") {
         if (mrType) {
           formData.set("mrType", mrType);
@@ -252,6 +263,8 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
                       setDocumentType(option.value as DocumentTypeOption);
                       if (option.value === "COMPARISON") {
                         setMrType(null);
+                      } else {
+                        setComparisonType(null);
                       }
                     }}
                     className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${
@@ -265,6 +278,33 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
                 ))}
               </div>
             </div>
+
+            {documentType === "COMPARISON" ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <label className="block text-sm font-medium text-slate-700">
+                  Comparison Type <span className="text-rose-600">*</span>
+                </label>
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {[
+                    { value: "SPARE_PARTS", label: "Spare Parts Comparison" },
+                    { value: "OTHER", label: "Other Comparison" },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setComparisonType(option.value as ComparisonTypeOption)}
+                      className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${
+                        comparisonType === option.value
+                          ? "border-cyan-500 bg-cyan-50 text-cyan-700"
+                          : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {documentType === "MATERIAL_REQUISITION" ? (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">

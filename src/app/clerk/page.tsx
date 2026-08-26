@@ -34,9 +34,8 @@ export default async function ClerkDashboardPage() {
 
   try {
     const [total, recent, pendingCount, approvedCount, rejectedCount] = await Promise.all([
-      prisma.document.count({ where: { createdById: session.userId } }),
+      prisma.document.count(),
       prisma.document.findMany({
-        where: { createdById: session.userId },
         include: {
           currentApprover: { select: { name: true } },
           relatedComparison: { select: { id: true, documentNumber: true } },
@@ -52,7 +51,6 @@ export default async function ClerkDashboardPage() {
       }),
       prisma.document.count({
         where: {
-          createdById: session.userId,
           status: {
             in: [
               DocumentStatus.PENDING_APPROVER_1,
@@ -63,10 +61,10 @@ export default async function ClerkDashboardPage() {
         },
       }),
       prisma.document.count({
-        where: { createdById: session.userId, status: DocumentStatus.APPROVED },
+        where: { status: DocumentStatus.APPROVED },
       }),
       prisma.document.count({
-        where: { createdById: session.userId, status: DocumentStatus.REJECTED },
+        where: { status: DocumentStatus.REJECTED },
       }),
     ]);
 

@@ -4,7 +4,7 @@ import { deleteDocumentFiles, mergePdfFiles, saveDocumentVersionFile } from "@/l
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { createNotification } from "@/lib/notifications";
-import { APPROVER_WORKFLOW, getCommentRouting, getWorkflowAuthorizationPolicy, isApproverRole } from "@/lib/workflow";
+import { APPROVER_WORKFLOW, getWorkflowAuthorizationPolicy, isApproverRole } from "@/lib/workflow";
 import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 import { writeAuditLog } from "@/lib/audit";
 import { runInBackground } from "@/lib/background";
@@ -53,6 +53,7 @@ export async function POST(
           currentApproverId: true,
           createdById: true,
           documentType: true,
+          comparisonType: true,
           mrNumber: true,
           relatedComparisonId: true,
         },
@@ -91,6 +92,14 @@ export async function POST(
       }
 
       if (decision === "REJECT") {
+        const aqueel = await tx.user.findUnique({
+          where: { email: "aqueel.sayed@ahmadiah.com" },
+          select: { id: true },
+        });
+        if (!aqueel) {
+          throw new Error("Aqueel Sayed clerk account not found.");
+        }
+
         const versionFilesToDelete = await tx.documentVersion.findMany({
           where: {
             documentId: document.id,
@@ -104,7 +113,7 @@ export async function POST(
           data: {
             status: DocumentStatus.REJECTED,
             currentVersion: 0,
-            currentApproverId: null,
+            currentApproverId: aqueel.id,
             currentApproverAssignedAt: null,
             lastActiveStage: document.status,
           },
@@ -134,7 +143,7 @@ export async function POST(
 
         runInBackground(async () => {
           await createNotification({
-            userId: document.createdById,
+            userId: aqueel.id,
             type: "DOCUMENT_REJECTED",
             title: "Document rejected",
             message: `${document.documentNumber} - ${document.title}`,
@@ -162,13 +171,18 @@ export async function POST(
         return {
           status: DocumentStatus.REJECTED,
           currentVersion: 0,
-          emailRecipientId: document.createdById,
+          emailRecipientId: aqueel.id,
         };
       }
 
       if (decision === "COMMENT") {
-        const routing = getCommentRouting(session.role);
-        let assignedApproverId: string | null = document.createdById;
+        const sparePartsRevision = session.role === UserRole.APPROVER_3
+          && document.documentType === "COMPARISON"
+          && document.comparisonType === "SPARE_PARTS";
+        const routing = sparePartsRevision
+          ? { status: DocumentStatus.REVISION_REQUIRED, targetRole: UserRole.APPROVER_2 }
+          : { status: DocumentStatus.REVISION_REQUIRED, targetRole: null };
+        let assignedApproverId: string | null = null;
         let nextVersionNumber = document.currentVersion;
         let revisionVersionId = currentVersionRecord.id;
 
@@ -183,6 +197,15 @@ export async function POST(
           }
 
           assignedApproverId = targetApprover.id;
+        } else {
+          const aqueel = await tx.user.findUnique({
+            where: { email: "aqueel.sayed@ahmadiah.com" },
+            select: { id: true },
+          });
+          if (!aqueel) {
+            throw new Error("Aqueel Sayed clerk account not found.");
+          }
+          assignedApproverId = aqueel.id;
         }
 
         if (fileValue instanceof File) {
@@ -307,16 +330,7 @@ export async function POST(
           });
           finalFilePath = merged.relativePath;
           finalOriginalName = `${document.title} + ${comparison.title}.pdf`;
-          mergedSourcePaths = [saved.relativePath, comparisonVersion.filePath];
-          await tx.documentVersion.update({
-            where: {
-              documentId_versionNumber: {
-                documentId: document.relatedComparisonId,
-                versionNumber: comparison.currentVersion,
-              },
-            },
-            data: { filePath: finalFilePath, originalName: finalOriginalName },
-          });
+          mergedSourcePaths = [saved.relativePath];
         }
       }
 
@@ -485,11 +499,7 @@ export async function POST(
     ) {
       const recipients = new Set<string>();
       if (result.status === DocumentStatus.REVISION_REQUIRED) {
-        const aqueel = await prisma.user.findUnique({
-          where: { email: "aqueel.sayed@ahmadiah.com" },
-          select: { id: true },
-        });
-        if (aqueel) recipients.add(aqueel.id);
+        if (result.emailRecipientId) recipients.add(result.emailRecipientId);
       } else if (documentForEmail.currentApprover.id) {
         recipients.add(documentForEmail.currentApprover.id);
       }
@@ -501,18 +511,20 @@ export async function POST(
     }
 
     if (result.status === DocumentStatus.APPROVED || result.status === DocumentStatus.REJECTED) {
+      const approvedRecipientEmail = documentForEmail?.documentType === "COMPARISON"
+        ? "aqueel.sayed@ahmadiah.com"
+        : "omar.merzek@ahmadiah.com";
       const clerkRecipients = await prisma.user.findMany({
         where: {
           role: UserRole.CLERK,
-          email: { in: ["aqueel.sayed@ahmadiah.com", "omar.merzek@ahmadiah.com"] },
+          email: result.status === DocumentStatus.APPROVED
+            ? approvedRecipientEmail
+            : "aqueel.sayed@ahmadiah.com",
         },
         select: { id: true, email: true },
       });
       const emailType = result.status === DocumentStatus.APPROVED ? "WORKFLOW_APPROVED" : "WORKFLOW_REJECTED";
-      const recipients = result.status === DocumentStatus.APPROVED
-        ? clerkRecipients
-        : clerkRecipients.filter((clerk) => clerk.email === "aqueel.sayed@ahmadiah.com");
-      await queueWorkflowEmailEvents(recipients.map((clerk) => ({ recipientId: clerk.id, type: emailType, documentId })));
+      await queueWorkflowEmailEvents(clerkRecipients.map((clerk) => ({ recipientId: clerk.id, type: emailType, documentId })));
     }
 
     console.info(`[actions] Queueing completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });

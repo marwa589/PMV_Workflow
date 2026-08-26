@@ -20,9 +20,9 @@ const users = [
     role: UserRole.CLERK,
   },
   {
-    name: "Miara Kagami",
-    email: "miarakagami@gmail.com",
-    password: "miara123",
+    name: "Mohammad Mehieddine",
+    email: "mohammad.mehieddine@example.com",
+    password: "mohammad123",
     role: UserRole.APPROVER_1,
   },
   {
@@ -46,9 +46,9 @@ const users = [
 ];
 
 async function main() {
-  await prisma.user.deleteMany({
-    where: { email: "samira_rajab86@yahoo.com" },
-  });
+  // await prisma.user.deleteMany({
+  //   where: { email: "samira_rajab86@yahoo.com" },
+  // });
 
   const accountPasswords = {
     [UserRole.APPROVER_1]: "miara123",

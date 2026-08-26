@@ -158,7 +158,7 @@ function renderSummary(counts: Record<string, number>) {
 export async function flushWorkflowEmailBatches() {
   const now = new Date();
   const claimCutoff = new Date(now.getTime() - CLAIM_TIMEOUT_MS);
-  const events = await prisma.emailNotificationEvent.findMany({
+  const pendingEvents = await prisma.emailNotificationEvent.findMany({
     where: {
       emailDueAt: { lte: now },
       emailSent: false,
@@ -168,6 +168,33 @@ export async function flushWorkflowEmailBatches() {
     orderBy: { emailDueAt: "asc" },
     take: 500,
   });
+
+  const reminderEvents = pendingEvents.filter(
+    (event) => event.type === EmailEventType.APPROVAL_PENDING || event.type === EmailEventType.APPROVAL_OVERDUE,
+  );
+  const approvedDocumentIds = new Set(
+    (
+      await prisma.document.findMany({
+        where: {
+          id: { in: reminderEvents.flatMap((event) => event.documentId ? [event.documentId] : []) },
+          status: DocumentStatus.APPROVED,
+        },
+        select: { id: true },
+      })
+    ).map((document) => document.id),
+  );
+  const staleReminderIds = reminderEvents
+    .filter((event) => event.documentId && approvedDocumentIds.has(event.documentId))
+    .map((event) => event.id);
+
+  if (staleReminderIds.length > 0) {
+    await prisma.emailNotificationEvent.updateMany({
+      where: { id: { in: staleReminderIds }, emailSent: false },
+      data: { emailSent: true, claimedAt: null },
+    });
+  }
+
+  const events = pendingEvents.filter((event) => !staleReminderIds.includes(event.id));
 
   const groups = new Map<string, typeof events>();
   for (const event of events) {

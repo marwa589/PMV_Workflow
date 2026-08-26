@@ -17,6 +17,7 @@ export async function GET(request: Request) {
     where: {
       documentType: "COMPARISON",
       status: "APPROVED",
+      linkedMRs: { none: {} },
       OR: [
         { documentNumber: { contains: search, mode: "insensitive" } },
         { title: { contains: search, mode: "insensitive" } },

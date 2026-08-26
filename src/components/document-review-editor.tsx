@@ -1,6 +1,6 @@
 "use client";
 
-import { PDFDocument, degrees } from "pdf-lib";
+import { PDFDocument, degrees, rgb } from "pdf-lib";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { ArrowLeft, Check, Download, Loader2, PenLine, Plus, RotateCw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -9,7 +9,9 @@ import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 type PageInfo = { pageNumber: number; width: number; height: number };
 type Placement = { id: string; pageNumber: number; x: number; y: number; width: number; height: number; rotation: number };
+type CirclePlacement = { id: string; pageNumber: number; x: number; y: number; width: number; height: number };
 type DragState = { id: string; startX: number; startY: number; origin: Placement; mode: "drag" | "resize" };
+type CircleDragState = { id: string; pageNumber: number; startX: number; startY: number; rect: DOMRect };
 
 function clamp(value: number, min: number, max: number) { return Math.max(min, Math.min(max, value)); }
 function isPdf(file: File) { return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"); }
@@ -30,7 +32,10 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
   const [signatureUrl, setSignatureUrl] = useState<string | null>(null);
   const [signatureRatio, setSignatureRatio] = useState(3);
   const [placements, setPlacements] = useState<Placement[]>([]);
+  const [circles, setCircles] = useState<CirclePlacement[]>([]);
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const [circleMode, setCircleMode] = useState(false);
+  const [circleDrag, setCircleDrag] = useState<CircleDragState | null>(null);
   const [zoom, setZoom] = useState(1);
   const [decision, setDecision] = useState<"APPROVE" | "REJECT" | "COMMENT">("APPROVE");
   const [comments, setComments] = useState("");
@@ -149,6 +154,33 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); };
   }, [dragState, pages, signatureRatio]);
 
+  useEffect(() => {
+    if (!circleDrag) return;
+    const activeCircle = circleDrag;
+    function move(event: PointerEvent) {
+      const endX = clamp(((event.clientX - activeCircle.rect.left) / activeCircle.rect.width) * 100, 0, 100);
+      const endY = clamp(((event.clientY - activeCircle.rect.top) / activeCircle.rect.height) * 100, 0, 100);
+      const startX = (activeCircle.startX / activeCircle.rect.width) * 100;
+      const startY = (activeCircle.startY / activeCircle.rect.height) * 100;
+      const width = Math.abs(endX - startX);
+      const height = Math.abs(endY - startY);
+      setCircles((current) => current.map((item) => item.id === activeCircle.id ? {
+        ...item,
+        x: Math.min(startX, endX),
+        y: Math.min(startY, endY),
+        width,
+        height,
+      } : item));
+    }
+    const end = () => {
+      setCircleDrag(null);
+      setCircleMode(false);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); };
+  }, [circleDrag]);
+
   function startDrag(event: React.PointerEvent<HTMLElement>, placement: Placement, mode: DragState["mode"]) {
     event.preventDefault();
     event.stopPropagation();
@@ -165,6 +197,17 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
     const height = page ? clamp(((width / 100) * page.width / signatureRatio / page.height) * 100, 4, 18) : 10;
     setPlacements((current) => [...current, { id: `${Date.now()}-${Math.random()}`, pageNumber, x: 12, y: 78, width, height, rotation: 0 }]);
     setStatus("Signature added. Drag and resize it before approving.");
+  }
+
+  function startCircle(event: React.PointerEvent<HTMLDivElement>, pageNumber: number) {
+    if (!circleMode || circleDrag) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * 100;
+    const y = ((event.clientY - rect.top) / rect.height) * 100;
+    const id = `${Date.now()}-${Math.random()}`;
+    setCircles((current) => [...current, { id, pageNumber, x, y, width: 0, height: 0 }]);
+    setCircleDrag({ id, pageNumber, startX: event.clientX - rect.left, startY: event.clientY - rect.top, rect });
+    event.preventDefault();
   }
 
   async function submit() {
@@ -210,6 +253,25 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
             width: imageWidth,
             height: imageHeight,
             rotate: degrees(totalAngle),
+          });
+        }
+        for (const item of circles) {
+          const page = pdf.getPage(item.pageNumber - 1);
+          const coordinatePage = await coordinatePdf.getPage(item.pageNumber);
+          const viewport = coordinatePage.getViewport({ scale: 1 });
+          const topLeft = viewport.convertToPdfPoint((item.x / 100) * viewport.width, (item.y / 100) * viewport.height);
+          const bottomRight = viewport.convertToPdfPoint(((item.x + item.width) / 100) * viewport.width, ((item.y + item.height) / 100) * viewport.height);
+          const left = Math.min(topLeft[0], bottomRight[0]);
+          const right = Math.max(topLeft[0], bottomRight[0]);
+          const bottom = Math.min(topLeft[1], bottomRight[1]);
+          const top = Math.max(topLeft[1], bottomRight[1]);
+          page.drawEllipse({
+            x: (left + right) / 2,
+            y: (bottom + top) / 2,
+            xScale: (right - left) / 2,
+            yScale: (top - bottom) / 2,
+            borderColor: rgb(0.85, 0.1, 0.1),
+            borderWidth: 2,
           });
         }
         const signedBytes = await pdf.save();
@@ -258,10 +320,10 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
             </button>
           </div>
         </div>
-        <div className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex items-center gap-2"><button type="button" onClick={() => addSignature(activePlacement?.pageNumber || 1)} disabled={!hasSignature} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><PenLine className="h-4 w-4" />Sign</button><span className="text-sm text-slate-500">{hasSignature ? `${placements.length} signature placement${placements.length === 1 ? "" : "s"}` : "Save a signature in Account Settings first."}</span></div><div className="flex items-center gap-2"><button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.1))} className="rounded-lg border px-3 py-2 text-sm">−</button><span className="min-w-16 text-center text-sm">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-2 text-sm">+</button></div></div>
+        <div className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex items-center gap-2"><button type="button" onClick={() => addSignature(activePlacement?.pageNumber || 1)} disabled={!hasSignature} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><PenLine className="h-4 w-4" />Sign</button><button type="button" onClick={() => setCircleMode((value) => !value)} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${circleMode ? "border-rose-600 bg-rose-600 text-white" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`} aria-pressed={circleMode} title="Circle markup tool"><span className="h-4 w-4 rounded-full border-2 border-current" />Circle</button><span className="text-sm text-slate-500">{circleMode ? "Drag around content to highlight it." : hasSignature ? `${placements.length} signature placement${placements.length === 1 ? "" : "s"}` : "Save a signature in Account Settings first."}</span></div><div className="flex items-center gap-2"><button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.1))} className="rounded-lg border px-3 py-2 text-sm">−</button><span className="min-w-16 text-center text-sm">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-2 text-sm">+</button></div></div>
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</div> : null}{status ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{status}</div> : null}
         <section className="space-y-5 rounded-2xl border border-slate-200 bg-slate-950 p-4 shadow-sm">
-          {pages.map((page) => <div key={page.pageNumber} ref={(element) => { pageRefs.current[page.pageNumber] = element; }} className="relative mx-auto overflow-visible bg-white shadow-2xl" style={{ width: `${page.width * zoom}px`, aspectRatio: `${page.width} / ${page.height}` }}><canvas ref={(element) => { canvasRefs.current[page.pageNumber] = element; }} className="absolute inset-0 h-full w-full" />{placements.filter((item) => item.pageNumber === page.pageNumber).map((item) => <div key={item.id} className="absolute border-2 border-cyan-500 bg-cyan-100/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, touchAction: "none", transform: `rotate(${item.rotation}deg)` }} onPointerDown={(event) => startDrag(event, item, "drag")}><img src={signatureUrl || ""} alt="Saved signature" className="h-full w-full select-none object-fill" draggable={false} /><button type="button" aria-label="Rotate signature" title="Rotate signature" className="absolute -left-2 -top-7 rounded bg-cyan-700 p-1 text-white" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setPlacements((current) => current.map((value) => value.id === item.id ? { ...value, rotation: (value.rotation + 90) % 360 } : value)); }}><RotateCw className="h-3 w-3" /></button><button type="button" aria-label="Resize signature" className="absolute -bottom-2 -right-2 h-5 w-5 rounded-full border-2 border-white bg-cyan-700" onPointerDown={(event) => startDrag(event, item, "resize")} /><button type="button" aria-label="Remove signature placement" className="absolute -right-2 -top-7 rounded bg-rose-600 p-1 text-white" onClick={() => setPlacements((current) => current.filter((value) => value.id !== item.id))}><Trash2 className="h-3 w-3" /></button></div>)}</div>)}
+          {pages.map((page) => <div key={page.pageNumber} ref={(element) => { pageRefs.current[page.pageNumber] = element; }} className={`relative mx-auto overflow-visible bg-white shadow-2xl ${circleMode ? "cursor-crosshair" : ""}`} style={{ width: `${page.width * zoom}px`, aspectRatio: `${page.width} / ${page.height}` }} onPointerDown={(event) => startCircle(event, page.pageNumber)}><canvas ref={(element) => { canvasRefs.current[page.pageNumber] = element; }} className="absolute inset-0 h-full w-full" />{circles.filter((item) => item.pageNumber === page.pageNumber && item.width > 0 && item.height > 0).map((item) => <div key={item.id} className="absolute rounded-[50%] border-2 border-rose-600 bg-rose-200/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, pointerEvents: "none" }} />)}{placements.filter((item) => item.pageNumber === page.pageNumber).map((item) => <div key={item.id} className="absolute border-2 border-cyan-500 bg-cyan-100/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, touchAction: "none", transform: `rotate(${item.rotation}deg)` }} onPointerDown={(event) => startDrag(event, item, "drag")}><img src={signatureUrl || ""} alt="Saved signature" className="h-full w-full select-none object-fill" draggable={false} /><button type="button" aria-label="Rotate signature" title="Rotate signature" className="absolute -left-2 -top-7 rounded bg-cyan-700 p-1 text-white" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setPlacements((current) => current.map((value) => value.id === item.id ? { ...value, rotation: (value.rotation + 90) % 360 } : value)); }}><RotateCw className="h-3 w-3" /></button><button type="button" aria-label="Resize signature" className="absolute -bottom-2 -right-2 h-5 w-5 rounded-full border-2 border-white bg-cyan-700" onPointerDown={(event) => startDrag(event, item, "resize")} /><button type="button" aria-label="Remove signature placement" className="absolute -right-2 -top-7 rounded bg-rose-600 p-1 text-white" onClick={() => setPlacements((current) => current.filter((value) => value.id !== item.id))}><Trash2 className="h-3 w-3" /></button></div>)}</div>)}
         </section>
       </div>
     </main>

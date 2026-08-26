@@ -58,9 +58,6 @@ function safeFileName(name: string): string {
 
 function documentFileName(fileName: string, identifier: string, extension: string): string {
   const baseName = fileName.replace(/\.[^.]+$/, "");
-  if (baseName.endsWith("-signed")) {
-    return safeFileName(baseName) + (extension ? `.${extension}` : "");
-  }
   return safeFileName(`${baseName}-${identifier}`) + (extension ? `.${extension}` : "");
 }
 

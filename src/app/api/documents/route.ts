@@ -33,6 +33,7 @@ export async function POST(request: Request) {
   const title = String(formData.get("title") || "").trim();
   const description = String(formData.get("description") || "").trim();
   const documentType = String(formData.get("documentType") || "").trim();
+  const comparisonType = String(formData.get("comparisonType") || "").trim();
   const mrType = String(formData.get("mrType") || "").trim();
   const mrNumber = String(formData.get("mrNumber") || "").trim();
   const relatedComparisonId = String(formData.get("relatedComparisonId") || "").trim();
@@ -52,22 +53,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "MR type is required." }, { status: 400 });
   }
 
+  if (documentType === "COMPARISON" && !["SPARE_PARTS", "OTHER"].includes(comparisonType)) {
+    return NextResponse.json({ message: "Comparison type is required." }, { status: 400 });
+  }
+
   if (files.length === 0) {
     return NextResponse.json({ message: "At least one file is required." }, { status: 400 });
   }
 
-  // const approver1 = await prisma.user.findFirst({
-  //   where: { role: UserRole.APPROVER_1 },
-  //   select: { id: true, email: true, name: true },
-  // });
+  if (documentType !== "MATERIAL_REQUISITION" && relatedComparisonId) {
+    return NextResponse.json({ message: "Only material requisitions can link a comparison." }, { status: 400 });
+  }
 
-  // edit
-  // const approver2 = await prisma.user.findFirst({
-  //   where: { role: UserRole.APPROVER_2 },
-  //   select: { id: true, email: true, name: true },
-  // });
-  // edit
-   const approver3 = await prisma.user.findFirst({
+  if (relatedComparisonId && files.length > 1) {
+    return NextResponse.json({ message: "A related comparison can only be linked to one MR." }, { status: 400 });
+  }
+
+  const approver2 = await prisma.user.findFirst({
+    where: { role: UserRole.APPROVER_2 },
+    select: { id: true, email: true, name: true },
+  });
+  const approver3 = await prisma.user.findFirst({
     where: { role: UserRole.APPROVER_3 },
     select: { id: true, email: true, name: true },
   });
@@ -78,9 +84,28 @@ export async function POST(request: Request) {
   if (!approver3) {
     return NextResponse.json({ message: "PMV Manager account is missing." }, { status: 400 });
   }
+  const initialApprover = documentType === "COMPARISON" && comparisonType === "SPARE_PARTS" ? approver2 : approver3;
+  if (!initialApprover) {
+    return NextResponse.json({ message: "Workshop Manager account is missing for Spare Parts comparisons." }, { status: 400 });
+  }
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      if (relatedComparisonId) {
+        const comparison = await tx.document.findFirst({
+          where: {
+            id: relatedComparisonId,
+            documentType: DocumentType.COMPARISON,
+            status: DocumentStatus.APPROVED,
+            linkedMRs: { none: {} },
+          },
+          select: { id: true },
+        });
+        if (!comparison) {
+          throw new Error("The selected comparison is no longer available or is already linked to an MR.");
+        }
+      }
+
       const createdDocuments = [] as Array<{ id: string; documentNumber: string; title: string; compVersionForCopy: { filePath: string; originalName: string } | null; mrNumberForCopy: string | null }>;
 
       for (const [index, file] of files.entries()) {
@@ -94,21 +119,14 @@ export async function POST(request: Request) {
           documentNumber,
           title: perFileTitle,
           description: description || null,
-          //edit
-          // status: DocumentStatus.PENDING_APPROVER_2,
-          // status: DocumentStatus.PENDING_APPROVER_1,
-          status: DocumentStatus.PENDING_APPROVER_3,
+          status: initialApprover === approver2 ? DocumentStatus.PENDING_APPROVER_2 : DocumentStatus.PENDING_APPROVER_3,
           currentVersion: 0,
           createdById: session.userId,
-          //edit
-          lastActiveStage: DocumentStatus.PENDING_APPROVER_3,
-          currentApproverId: approver3!.id,
-          // lastActiveStage: DocumentStatus.PENDING_APPROVER_2,
-          // currentApproverId: approver2!.id,
-          // lastActiveStage: DocumentStatus.PENDING_APPROVER_1,
-          // currentApproverId: approver1.id,
+          lastActiveStage: initialApprover === approver2 ? DocumentStatus.PENDING_APPROVER_2 : DocumentStatus.PENDING_APPROVER_3,
+          currentApproverId: initialApprover.id,
           currentApproverAssignedAt: new Date(),
           documentType: normalizedDocumentType,
+          comparisonType: normalizedDocumentType === DocumentType.COMPARISON ? comparisonType as "SPARE_PARTS" | "OTHER" : null,
           mrType: normalizedMrType,
           mrNumber: documentType === "MATERIAL_REQUISITION" && mrNumber ? mrNumber : null,
           ...(documentType === "MATERIAL_REQUISITION" && relatedComparisonId
@@ -183,16 +201,9 @@ export async function POST(request: Request) {
       }),
     );
 
-    // await queueWorkflowEmailEvents(
-    //   result.map((document) => ({
-    //     recipientId: approver2.id,
-    //     type: "APPROVAL_PENDING" as const,
-    //     documentId: document.id,
-    //   })),
-    // );
     await queueWorkflowEmailEvents(
       result.map((document) => ({
-        recipientId: approver3.id,
+        recipientId: initialApprover.id,
         type: "APPROVAL_PENDING" as const,
         documentId: document.id,
       })),

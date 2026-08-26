@@ -46,11 +46,12 @@ model Document {
   createdById               String
   currentApproverId         String?
   documentType              DocumentType      @default(COMPARISON)
+  comparisonType            ComparisonType?
   mrType                    MrType?
   currentApproverAssignedAt DateTime?
   downloadedAt             DateTime?
   mrNumber                  String?
-  relatedComparisonId       String?
+  relatedComparisonId       String?           @unique
   lastActiveStage           DocumentStatus?
   approvals                 ApprovalHistory[]
   deletionRequests          DeletionRequest[] @relation("DeletionRequests")
@@ -233,6 +234,11 @@ enum DeletionRequestStatus {
 enum DocumentType {
   COMPARISON
   MATERIAL_REQUISITION
+}
+
+enum ComparisonType {
+  SPARE_PARTS
+  OTHER
 }
 
 enum MrType {

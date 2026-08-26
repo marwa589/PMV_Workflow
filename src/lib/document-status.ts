@@ -2,6 +2,7 @@ import { DocumentStatus } from "@prisma/client";
 
 export type DocumentTypeFilter = "COMPARISON" | "MATERIAL_REQUISITION" | "";
 export type DownloadStatusFilter = "DOWNLOADED" | "NOT_DOWNLOADED" | "";
+export type MrTypeFilter = "CASH" | "CREDIT" | "";
 
 export const DOCUMENT_STATUS_FILTER_OPTIONS: Array<{ value: DocumentStatus; label: string }> = [
   { value: DocumentStatus.PENDING_APPROVER_1, label: "Pending PMV Engineer" },
@@ -39,6 +40,14 @@ export function parseDocumentTypeFilter(value: unknown): DocumentTypeFilter {
 
 export function parseDownloadStatusFilter(value: unknown): DownloadStatusFilter {
   if (value === "DOWNLOADED" || value === "NOT_DOWNLOADED") {
+    return value;
+  }
+
+  return "";
+}
+
+export function parseMrTypeFilter(value: unknown): MrTypeFilter {
+  if (value === "CASH" || value === "CREDIT") {
     return value;
   }
 

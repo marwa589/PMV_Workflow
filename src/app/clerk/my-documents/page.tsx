@@ -4,7 +4,7 @@ import DocumentListTable from "@/components/document-list-table";
 import DocumentStatusFilter from "@/components/document-status-filter";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
-import { parseDocumentStatusFilter, parseDocumentTypeFilter, parseDownloadStatusFilter } from "@/lib/document-status";
+import { parseDocumentStatusFilter, parseDocumentTypeFilter, parseDownloadStatusFilter, parseMrTypeFilter } from "@/lib/document-status";
 import { parseSearchQuery, matchesDocumentSearch } from "@/lib/document-search";
 import { getDocumentsForClerk } from "@/lib/document-queries";
 
@@ -17,6 +17,7 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
   const statusFilter = parseDocumentStatusFilter(resolvedSearchParams?.status);
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
   const downloadStatusFilter = parseDownloadStatusFilter(resolvedSearchParams?.downloadStatus);
+  const mrTypeFilter = parseMrTypeFilter(resolvedSearchParams?.mrType);
   const approvalFrom = typeof resolvedSearchParams?.approvalFrom === "string" ? resolvedSearchParams.approvalFrom : "";
   const approvalTo = typeof resolvedSearchParams?.approvalTo === "string" ? resolvedSearchParams.approvalTo : "";
   const searchQuery = parseSearchQuery(resolvedSearchParams?.search);
@@ -31,6 +32,7 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
   const documents = data.documents
     .filter((doc) => !statusFilter || doc.status === statusFilter)
     .filter((doc) => !documentTypeFilter || doc.documentType === documentTypeFilter)
+    .filter((doc) => !mrTypeFilter || (doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === mrTypeFilter))
     .filter((doc) => !downloadStatusFilter || (downloadStatusFilter === "DOWNLOADED" ? doc.downloadedAt : !doc.downloadedAt))
     .filter((doc) => {
       const approvalTime = doc.approvals.find((approval) => approval.action === "APPROVED")?.performedAt?.getTime();
@@ -82,7 +84,7 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
           <h3 className="text-base font-semibold text-slate-900">All Documents</h3>
         </div>
         <div className="border-b border-slate-200 px-5 py-4">
-          <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} downloadStatus={downloadStatusFilter} approvalFrom={approvalFrom} approvalTo={approvalTo} showDownloadFilters />
+          <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} mrType={mrTypeFilter} showMrTypeFilter downloadStatus={downloadStatusFilter} approvalFrom={approvalFrom} approvalTo={approvalTo} showDownloadFilters />
         </div>
         <DocumentListTable documents={filteredDocuments} emptyMessage="No clerk documents found." showBulkActions allowBulkDelete showDownloadTracking />
       </section>
