@@ -78,6 +78,10 @@ model DocumentVersion {
   fileSize       Int
   uploadedAt     DateTime          @default(now())
   uploadedById   String
+  driveId        String?
+  itemId         String?
+  webUrl         String?
+  graphUploadedAt DateTime?
   approvalEvents ApprovalHistory[]
   document       Document          @relation(fields: [documentId], references: [id], onDelete: Cascade)
   uploadedBy     User              @relation("VersionsUploadedBy", fields: [uploadedById], references: [id])

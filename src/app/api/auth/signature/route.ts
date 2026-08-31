@@ -1,8 +1,9 @@
 import { UserRole } from "@prisma/client";
 import { readFile } from "fs/promises";
+import path from "path";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { deleteDocumentFiles, resolveStoredFilePath, saveUserSignatureFile } from "@/lib/files";
+import { deleteDocumentFiles, resolveStoredFilePath, saveUserSignatureFile, uploadSavedFileToGraph } from "@/lib/files";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
 
@@ -69,6 +70,15 @@ export async function POST(request: Request) {
   if (current?.signaturePath) {
     await deleteDocumentFiles({ filePaths: [current.signaturePath] });
   }
+
+  await uploadSavedFileToGraph({
+    relativePath: saved.relativePath,
+    fileName: path.basename(saved.relativePath),
+    folder: "Signatures",
+    documentId: null,
+    performedById: session.userId,
+    context: "SIGNATURE_UPDATED",
+  });
 
   await writeAuditLog({
     performedById: session.userId,

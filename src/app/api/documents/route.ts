@@ -1,6 +1,6 @@
 import { ApprovalActionType, DocumentStatus, DocumentType, MrType, Prisma, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { copyComparisonToMrFolder, saveDocumentVersionFile } from "@/lib/files";
+import { copyComparisonToMrFolder, saveDocumentVersionFile, uploadSavedFileToGraph } from "@/lib/files";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
@@ -90,6 +90,8 @@ export async function POST(request: Request) {
   }
 
   try {
+    const postSaveGraphUploads: Array<Parameters<typeof uploadSavedFileToGraph>[0]> = [];
+
     const result = await prisma.$transaction(async (tx) => {
       if (relatedComparisonId) {
         const comparison = await tx.document.findFirst({
@@ -138,7 +140,7 @@ export async function POST(request: Request) {
           data: documentData,
         });
 
-        const isMrLinked = normalizedDocumentType === DocumentType.MATERIAL_REQUISITION && !!relatedComparisonId && !!mrNumber;
+        const isMrLinked = normalizedDocumentType === DocumentType.MATERIAL_REQUISITION && !!relatedComparisonId;
         const saved = await saveDocumentVersionFile({
           documentId: document.id,
           versionNumber: 0,
@@ -172,6 +174,17 @@ export async function POST(request: Request) {
           },
         });
 
+        postSaveGraphUploads.push({
+          relativePath: saved.relativePath,
+          fileName: file.name,
+          folder: documentType === "COMPARISON" ? "Comparisons" : isMrLinked ? "MRs+Comparisons" : "MRs",
+          documentId: document.id,
+          versionId: version.id,
+          performedById: session.userId,
+          context: "DOCUMENT_SUBMISSION",
+          buffer: Buffer.from(await file.arrayBuffer()),
+        });
+
         await tx.approvalHistory.create({
           data: {
             documentId: document.id,
@@ -188,9 +201,9 @@ export async function POST(request: Request) {
       return createdDocuments;
     });
 
-    // Copy comparison files into MRs+Comparisons folder after transaction (file ops outside tx)
-    await Promise.all(
-      result.map(async (doc) => {
+    await Promise.all([
+      ...postSaveGraphUploads.map((upload) => uploadSavedFileToGraph(upload)),
+      ...result.map(async (doc) => {
         if (doc.compVersionForCopy && doc.mrNumberForCopy) {
           await copyComparisonToMrFolder({
             comparisonFilePath: doc.compVersionForCopy.filePath,
@@ -199,7 +212,7 @@ export async function POST(request: Request) {
           });
         }
       }),
-    );
+    ]);
 
     await queueWorkflowEmailEvents(
       result.map((document) => ({

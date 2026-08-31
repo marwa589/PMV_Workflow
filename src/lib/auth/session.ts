@@ -29,6 +29,11 @@ function sign(value: string): string {
   return createHmac("sha256", getAuthSecret()).update(value).digest("base64url");
 }
 
+function isSecureCookieEnvironment(): boolean {
+  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  return appUrl.startsWith("https://");
+}
+
 function createToken(payload: SessionPayload): string {
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signature = sign(encodedPayload);
@@ -77,8 +82,8 @@ export function attachSessionCookie(
 
   response.cookies.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
-    sameSite: "strict",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    secure: isSecureCookieEnvironment(),
     path: "/",
     maxAge: SESSION_TTL_SECONDS,
   });
@@ -88,7 +93,7 @@ export function clearSessionCookie(response: NextResponse): void {
   response.cookies.set(SESSION_COOKIE_NAME, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isSecureCookieEnvironment(),
     path: "/",
     maxAge: 0,
   });

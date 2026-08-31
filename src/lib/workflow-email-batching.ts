@@ -2,7 +2,7 @@ import { EmailEventType, DocumentStatus, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
 
-const EMAIL_DELAY_MS = 10 * 60 * 1000;
+const BATCH_WINDOW_MS = 10 * 60 * 1000;
 const REMINDER_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const CLAIM_TIMEOUT_MS = 15 * 60 * 1000;
 
@@ -20,14 +20,12 @@ export async function queueWorkflowEmailEvents(events: Array<{
 }>) {
   if (events.length === 0) return 0;
 
-  const createdAt = new Date();
-  const emailDueAt = new Date(createdAt.getTime() + EMAIL_DELAY_MS);
+  const emailDueAt = new Date(Date.now() + BATCH_WINDOW_MS);
   await prisma.emailNotificationEvent.createMany({
     data: events.map((event) => ({
       recipientId: event.recipientId,
       type: event.type,
       documentId: event.documentId ?? null,
-      createdAt,
       emailDueAt,
       emailSent: false,
     })),

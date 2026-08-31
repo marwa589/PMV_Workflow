@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { canAccessDocument } from "@/lib/auth/resource-access";
 import { resolveStoredFilePath } from "@/lib/files";
+import { downloadFileFromGraph } from "@/lib/graph-upload";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -46,6 +47,8 @@ export async function GET(
       filePath: true,
       originalName: true,
       mimeType: true,
+      driveId: true,
+      itemId: true,
     },
   });
 
@@ -53,18 +56,53 @@ export async function GET(
     return NextResponse.json({ message: "Document version not found." }, { status: 404 });
   }
 
+  const contentType = version.mimeType || "application/octet-stream";
+  const disposition = `${new URL(request.url).searchParams.get("inline") === "1" ? "inline" : "attachment"}; filename="${version.originalName}"`;
+
   try {
+    if (version.driveId && version.itemId) {
+      const graphBuffer = await downloadFileFromGraph(version.driveId, version.itemId);
+      return new NextResponse(Uint8Array.from(graphBuffer), {
+        status: 200,
+        headers: {
+          "Content-Type": contentType,
+          "Content-Disposition": disposition,
+        },
+      });
+    }
+
     const absolutePath = resolveStoredFilePath(version.filePath);
     const buffer = await readFile(absolutePath);
 
-    return new NextResponse(buffer, {
+    return new NextResponse(Uint8Array.from(buffer), {
       status: 200,
       headers: {
-        "Content-Type": version.mimeType || "application/octet-stream",
-        "Content-Disposition": `${new URL(request.url).searchParams.get("inline") === "1" ? "inline" : "attachment"}; filename="${version.originalName}"`,
+        "Content-Type": contentType,
+        "Content-Disposition": disposition,
       },
     });
-  } catch {
-    return NextResponse.json({ message: "File not found on server." }, { status: 404 });
+  } catch (error) {
+    try {
+      const absolutePath = resolveStoredFilePath(version.filePath);
+      const buffer = await readFile(absolutePath);
+
+      return new NextResponse(Uint8Array.from(buffer), {
+        status: 200,
+        headers: {
+          "Content-Type": contentType,
+          "Content-Disposition": disposition,
+        },
+      });
+    } catch {
+      console.error("Document download failed for Graph and local fallback", {
+        documentId,
+        versionNumber: document.currentVersion,
+        driveId: version.driveId,
+        itemId: version.itemId,
+        filePath: version.filePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return NextResponse.json({ message: "File not found on server or in Graph." }, { status: 404 });
+    }
   }
 }

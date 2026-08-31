@@ -1,6 +1,6 @@
 import { ApprovalActionType, DocumentStatus, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { deleteDocumentFiles, mergePdfFiles, saveDocumentVersionFile } from "@/lib/files";
+import { deleteDocumentFiles, mergePdfFiles, saveDocumentVersionFile, uploadSavedFileToGraph } from "@/lib/files";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { createNotification } from "@/lib/notifications";
@@ -8,6 +8,7 @@ import { APPROVER_WORKFLOW, getWorkflowAuthorizationPolicy, isApproverRole } fro
 import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 import { writeAuditLog } from "@/lib/audit";
 import { runInBackground } from "@/lib/background";
+import { downloadFileFromGraph } from "@/lib/graph-upload";
 
 export const runtime = "nodejs";
 
@@ -41,6 +42,8 @@ export async function POST(
   const startedAt = performance.now();
 
   try {
+    const postSaveGraphUploads: Array<Parameters<typeof uploadSavedFileToGraph>[0]> = [];
+
     const result = await prisma.$transaction(async (tx) => {
       const document = await tx.document.findUnique({
         where: { id: documentId },
@@ -233,6 +236,16 @@ export async function POST(
             },
           });
 
+          postSaveGraphUploads.push({
+            relativePath: saved.relativePath,
+            fileName: fileValue.name,
+            folder: document.documentType === "COMPARISON" ? "Comparisons" : document.mrNumber ? "MRs+Comparisons" : "MRs",
+            documentId: document.id,
+            versionId: newVersion.id,
+            performedById: session.userId,
+            context: "DOCUMENT_REVISION",
+          });
+
           revisionVersionId = newVersion.id;
         }
 
@@ -294,6 +307,24 @@ export async function POST(
       }
 
       const nextVersionNumber = document.currentVersion + 1;
+      const isMergedApproval = !workflow.nextApproverRole && document.documentType === "MATERIAL_REQUISITION" && !!document.relatedComparisonId;
+      const targetGraphFolder = document.documentType === "COMPARISON"
+        ? "Comparisons"
+        : isMergedApproval
+          ? "MRs+Comparisons"
+          : "MRs";
+      
+      // Fetch previous version's Graph metadata for replacement (signed versions should replace the file)
+      const previousVersion = await tx.documentVersion.findUnique({
+        where: {
+          documentId_versionNumber: {
+            documentId: document.id,
+            versionNumber: document.currentVersion,
+          },
+        },
+        select: { driveId: true, itemId: true },
+      });
+
       const saved = await saveDocumentVersionFile({
         documentId: document.id,
         versionNumber: nextVersionNumber,
@@ -307,29 +338,33 @@ export async function POST(
       let finalFilePath = saved.relativePath;
       let finalOriginalName = fileValue.name;
       let mergedSourcePaths: string[] = [];
-      if (!workflow.nextApproverRole && document.documentType === "MATERIAL_REQUISITION" && document.relatedComparisonId) {
+      let mergedPdfBuffer: Buffer | null = null;
+      if (isMergedApproval && document.relatedComparisonId) {
         const comparison = await tx.document.findUnique({
           where: { id: document.relatedComparisonId },
-          select: {
-            status: true,
-            title: true,
-            currentVersion: true,
-            versions: {
-              orderBy: { versionNumber: "desc" },
-              take: 1,
-              select: { filePath: true },
-            },
-          },
+          select: { status: true, title: true },
         });
-        const comparisonVersion = comparison?.versions[0];
+        const comparisonVersion = await tx.documentVersion.findFirst({
+          where: { documentId: document.relatedComparisonId },
+          orderBy: { versionNumber: "desc" },
+          select: { filePath: true, driveId: true, itemId: true },
+        });
+
         if (comparison?.status === DocumentStatus.APPROVED && comparisonVersion) {
+          const comparisonBuffer = comparisonVersion.driveId && comparisonVersion.itemId
+            ? await downloadFileFromGraph(comparisonVersion.driveId, comparisonVersion.itemId)
+            : undefined;
+
           const merged = await mergePdfFiles({
             firstFilePath: comparisonVersion.filePath,
             secondFilePath: saved.relativePath,
+            firstBuffer: comparisonBuffer,
+            secondBuffer: saved.buffer,
             fileName: `${document.title} + ${comparison.title}`,
           });
           finalFilePath = merged.relativePath;
           finalOriginalName = `${document.title} + ${comparison.title}.pdf`;
+          mergedPdfBuffer = merged.buffer;
           mergedSourcePaths = [saved.relativePath];
         }
       }
@@ -345,6 +380,24 @@ export async function POST(
           fileSize: fileValue.size,
           uploadedById: session.userId,
         },
+      });
+
+      const graphReplacementMetadata = !isMergedApproval && previousVersion?.driveId && previousVersion?.itemId
+        ? { driveId: previousVersion.driveId, itemId: previousVersion.itemId }
+        : null;
+      const graphUploadFolder = isMergedApproval ? "MRs+Comparisons" : targetGraphFolder;
+      const graphUploadContext = isMergedApproval ? "MERGED_PDF_UPLOAD" : "DOCUMENT_APPROVAL";
+
+      postSaveGraphUploads.push({
+        relativePath: finalFilePath,
+        fileName: finalOriginalName,
+        folder: graphUploadFolder,
+        documentId: document.id,
+        versionId: newVersion.id,
+        performedById: session.userId,
+        context: graphUploadContext,
+        replaceGraphMetadata: graphReplacementMetadata,
+        buffer: mergedPdfBuffer ?? Buffer.from(await fileValue.arrayBuffer()),
       });
 
       const versionsToDeleteAfterCommit = workflow.nextApproverRole
@@ -450,32 +503,6 @@ export async function POST(
       };
     });
 
-    console.info(`[actions] Transaction completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
-
-    if (result.status === DocumentStatus.APPROVED) {
-      const versionsToDeleteAfterCommit = (
-        result as typeof result & { versionsToDeleteAfterCommit?: { filePath: string }[] }
-      ).versionsToDeleteAfterCommit || [];
-      const currentFilePath = (
-        result as typeof result & { currentFilePath?: string }
-      ).currentFilePath;
-      const mergedSourcePaths = (
-        result as typeof result & { mergedSourcePaths?: string[] }
-      ).mergedSourcePaths || [];
-
-      await Promise.all(
-        [...versionsToDeleteAfterCommit.map((version) => version.filePath), ...mergedSourcePaths].map(async (filePath) => {
-          if (filePath === currentFilePath) return;
-          try {
-            await deleteDocumentFiles({ filePaths: [filePath] });
-          } catch {
-            // Ignore missing files so approval still succeeds.
-          }
-        }),
-      );
-      console.info(`[actions] File cleanup completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
-    }
-
     const documentForEmail = await prisma.document.findUnique({
       where: { id: documentId },
       select: {
@@ -489,6 +516,44 @@ export async function POST(
         createdBy: { select: { id: true, name: true, email: true } },
       },
     });
+
+    console.info(`[actions] Transaction completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
+
+    if (result.status === DocumentStatus.APPROVED) {
+      const versionsToDeleteAfterCommit = (
+        result as typeof result & { versionsToDeleteAfterCommit?: { filePath: string }[] }
+      ).versionsToDeleteAfterCommit || [];
+      const currentFilePath = (
+        result as typeof result & { currentFilePath?: string }
+      ).currentFilePath;
+      const mergedSourcePaths = (
+        result as typeof result & { mergedSourcePaths?: string[] }
+      ).mergedSourcePaths || [];
+
+      const legacyMrPathsForDelete: string[] = [];
+      if (documentForEmail?.documentType === "MATERIAL_REQUISITION" && documentForEmail?.mrType) {
+        const legacyVersions = await prisma.documentVersion.findMany({
+          where: {
+            documentId,
+            filePath: { startsWith: "MRs/" },
+          },
+          select: { filePath: true },
+        });
+        legacyMrPathsForDelete.push(...legacyVersions.map((version) => version.filePath));
+      }
+
+      await Promise.all(
+        [...versionsToDeleteAfterCommit.map((version) => version.filePath), ...mergedSourcePaths, ...legacyMrPathsForDelete].map(async (filePath) => {
+          if (filePath === currentFilePath) return;
+          try {
+            await deleteDocumentFiles({ filePaths: [filePath] });
+          } catch {
+            // Ignore missing files so approval still succeeds.
+          }
+        }),
+      );
+      console.info(`[actions] File cleanup completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
+    }
 
     if (
       documentForEmail?.currentApprover?.email &&
@@ -528,6 +593,11 @@ export async function POST(
     }
 
     console.info(`[actions] Queueing completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
+
+    // Execute all queued Graph uploads after local operations succeed
+    await Promise.all(postSaveGraphUploads.map((upload) => uploadSavedFileToGraph(upload)));
+
+    console.info(`[actions] Graph uploads completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
 
     const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
