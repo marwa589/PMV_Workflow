@@ -51,39 +51,12 @@ export async function GET(request: Request) {
     },
   });
 
-  const selectedIds = new Set(ids);
-  const selectedDocuments = new Map(documents.map((document) => [document.id, document]));
-  const comparisonIdsIncluded = new Set<string>();
   const orderedDocuments = documents.flatMap((document) => {
-    if (document.documentType === 'COMPARISON' && comparisonIdsIncluded.has(document.id)) return [];
-
     const group = document.documentType === 'MATERIAL_REQUISITION'
       ? document.mrType === 'CREDIT' ? 'credit-mrs' : 'cash-mrs'
       : 'comparisons';
-    const selected = [{ document, group }];
-    if (
-      document.documentType === 'MATERIAL_REQUISITION' &&
-      document.relatedComparison?.status === DocumentStatus.APPROVED &&
-      !comparisonIdsIncluded.has(document.relatedComparison.id)
-    ) {
-      comparisonIdsIncluded.add(document.relatedComparison.id);
-      const comparison = selectedDocuments.get(document.relatedComparison.id);
-      if (comparison && selectedIds.has(comparison.id)) {
-        return [...selected, { document: comparison, group }];
-      }
-      return [...selected, {
-        document: {
-          ...document,
-          id: document.relatedComparison.id,
-          documentType: 'COMPARISON' as const,
-          currentVersion: document.relatedComparison.currentVersion,
-          relatedComparison: null,
-        },
-        group,
-      }];
-    }
-    if (document.documentType === 'COMPARISON') comparisonIdsIncluded.add(document.id);
-    return selected;
+
+    return [{ document, group }];
   });
 
   const versionMap = new Map<string, { filePath: string; originalName: string }>();

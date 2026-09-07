@@ -27,7 +27,7 @@ const users = [
   },
   {
     name: "George Azzi",
-    email: "george.azzi@example.com",
+    email: "george.azzi@ahmadiah.com",
     password: "george123",
     role: UserRole.APPROVER_2,
   },
@@ -38,9 +38,15 @@ const users = [
     role: UserRole.APPROVER_3,
   },
   {
+    name: "Mohamed Mahmoud",
+    email: "mohamed.mahmoud@ahmadiah.com",
+    password: "mohamed123",
+    role: UserRole.CLERK,
+  },
+  {
     name: "Marwa Mehielddine",
     email: "marwameheddien2000@gmail.com",
-    password: "admin123",
+    password: process.env.SEED_ADMIN_PASSWORD,
     role: UserRole.ADMIN,
   },
 ];

@@ -52,24 +52,24 @@ export async function GET(
     return NextResponse.json({ message: "Document not found." }, { status: 404 });
   }
 
-  const filesToPackage = [
-    {
-      fileName: `${document.documentNumber || "MR"}.pdf`,
-      sourcePath: resolveStoredFilePath(document.versions.find((version) => version.versionNumber === document.currentVersion)?.filePath || ""),
-      mimeType: document.versions.find((version) => version.versionNumber === document.currentVersion)?.mimeType || "application/pdf",
-    },
-  ];
+  // const filesToPackage = [
+  //   {
+  //     fileName: `${document.documentNumber || "MR"}.pdf`,
+  //     sourcePath: resolveStoredFilePath(document.versions.find((version) => version.versionNumber === document.currentVersion)?.filePath || ""),
+  //     mimeType: document.versions.find((version) => version.versionNumber === document.currentVersion)?.mimeType || "application/pdf",
+  //   },
+  // ];
 
-  if (document.relatedComparison) {
-    const comparisonVersion = document.relatedComparison.versions.find(
-      (version) => version.versionNumber === document.relatedComparison?.currentVersion,
-    );
-    filesToPackage.push({
-      fileName: `${document.relatedComparison.documentNumber || "Comparison"}.pdf`,
-      sourcePath: comparisonVersion ? resolveStoredFilePath(comparisonVersion.filePath) : "",
-      mimeType: comparisonVersion?.mimeType || "application/pdf",
-    });
-  }
+  // if (document.relatedComparison) {
+  //   const comparisonVersion = document.relatedComparison.versions.find(
+  //     (version) => version.versionNumber === document.relatedComparison?.currentVersion,
+  //   );
+  //   filesToPackage.push({
+  //     fileName: `${document.relatedComparison.documentNumber || "Comparison"}.pdf`,
+  //     sourcePath: comparisonVersion ? resolveStoredFilePath(comparisonVersion.filePath) : "",
+  //     mimeType: comparisonVersion?.mimeType || "application/pdf",
+  //   });
+  // }
 
   const tempDir = path.join(process.cwd(), "tmp", `pkg-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   await mkdir(tempDir, { recursive: true });
@@ -79,15 +79,15 @@ export async function GET(
     const zipPath = path.join(tempDir, zipName);
     const zipEntries = [] as string[];
 
-    for (const file of filesToPackage) {
-      if (!file.sourcePath) {
-        continue;
-      }
-      const buffer = await readFile(file.sourcePath);
-      const targetPath = path.join(tempDir, file.fileName);
-      await writeFile(targetPath, buffer);
-      zipEntries.push(file.fileName);
-    }
+    // for (const file of filesToPackage) {
+    //   if (!file.sourcePath) {
+    //     continue;
+    //   }
+    //   const buffer = await readFile(file.sourcePath);
+    //   const targetPath = path.join(tempDir, file.fileName);
+    //   await writeFile(targetPath, buffer);
+    //   zipEntries.push(file.fileName);
+    // }
 
     const zipBuffer = Buffer.from([]);
     const response = new NextResponse(zipBuffer, {

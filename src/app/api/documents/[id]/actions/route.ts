@@ -452,6 +452,17 @@ export async function POST(
 
     console.info(`[actions] Transaction completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
 
+    if (result.status === DocumentStatus.REJECTED) {
+      await prisma.emailNotificationEvent.updateMany({
+        where: {
+          documentId,
+          emailSent: false,
+          type: { in: ["APPROVAL_PENDING", "APPROVAL_OVERDUE"] },
+        },
+        data: { emailSent: true, claimedAt: null },
+      });
+    }
+
     if (result.status === DocumentStatus.APPROVED) {
       const versionsToDeleteAfterCommit = (
         result as typeof result & { versionsToDeleteAfterCommit?: { filePath: string }[] }
@@ -496,31 +507,63 @@ export async function POST(
         result.status === DocumentStatus.PENDING_APPROVER_2 ||
         result.status === DocumentStatus.PENDING_APPROVER_3 ||
         result.status === DocumentStatus.REVISION_REQUIRED)
-    ) {
-      const recipients = new Set<string>();
-      if (result.status === DocumentStatus.REVISION_REQUIRED) {
-        if (result.emailRecipientId) recipients.add(result.emailRecipientId);
-      } else if (documentForEmail.currentApprover.id) {
-        recipients.add(documentForEmail.currentApprover.id);
-      }
-      await queueWorkflowEmailEvents([...recipients].map((recipientId) => ({
-        recipientId,
-        type: "APPROVAL_PENDING" as const,
-        documentId,
-      })));
-    }
+      ){
+  const recipients = new Set<string>();
+
+  if (result.status === DocumentStatus.REVISION_REQUIRED) {
+    const user = await prisma.user.findFirst({
+      where: {
+        email:
+          documentForEmail.documentType === "COMPARISON"
+            ? "mohamed.mahmoud@ahmadiah.com"
+            : "aqueel.sayed@ahmadiah.com",
+      },
+      select: { id: true },
+    });
+
+    if (user) recipients.add(user.id);
+  } else if (documentForEmail.currentApprover.id) {
+    recipients.add(documentForEmail.currentApprover.id);
+  }
+
+  await queueWorkflowEmailEvents(
+    [...recipients].map((recipientId) => ({
+      recipientId,
+      type: "APPROVAL_PENDING" as const,
+      documentId,
+    })),
+  );
+}
+    // ) {
+    //   const recipients = new Set<string>();
+    //   if (result.status === DocumentStatus.REVISION_REQUIRED) {
+    //     if (result.emailRecipientId) recipients.add(result.emailRecipientId);
+    //   } else if (documentForEmail.currentApprover.id) {
+    //     recipients.add(documentForEmail.currentApprover.id);
+    //   }
+    //   await queueWorkflowEmailEvents([...recipients].map((recipientId) => ({
+    //     recipientId,
+    //     type: "APPROVAL_PENDING" as const,
+    //     documentId,
+    //   })));
+    // }
 
     if (result.status === DocumentStatus.APPROVED || result.status === DocumentStatus.REJECTED) {
       const approvedRecipientEmail = documentForEmail?.documentType === "COMPARISON"
-        ? "aqueel.sayed@ahmadiah.com"
-        : "omar.merzek@ahmadiah.com";
+        ? ["aqueel.sayed@ahmadiah.com", "mohamed.mahmoud@ahmadiah.com"]
+        : ["omar.merzek@ahmadiah.com"];
+        const rejectedRecipientEmail = documentForEmail?.documentType === "COMPARISON"
+? ["mohamed.mahmoud@ahmadiah.com"]
+: ["aqueel.sayed@ahmadiah.com"];
       const clerkRecipients = await prisma.user.findMany({
         where: {
-          role: UserRole.CLERK,
-          email: result.status === DocumentStatus.APPROVED
-            ? approvedRecipientEmail
-            : "aqueel.sayed@ahmadiah.com",
-        },
+role: UserRole.CLERK,
+email: {
+in: result.status === DocumentStatus.APPROVED
+? approvedRecipientEmail
+: rejectedRecipientEmail,
+},
+},
         select: { id: true, email: true },
       });
       const emailType = result.status === DocumentStatus.APPROVED ? "WORKFLOW_APPROVED" : "WORKFLOW_REJECTED";
