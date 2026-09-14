@@ -15,11 +15,12 @@ import {
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 type FileKind = "pdf" | "docx" | "xlsx" | "image" | "unknown";
-type DocumentTypeOption = "COMPARISON" | "MATERIAL_REQUISITION";
+type DocumentTypeOption = "COMPARISON" | "MATERIAL_REQUISITION" | "ERR";
 type MrTypeOption = "CASH" | "CREDIT";
 type ComparisonTypeOption = "SPARE_PARTS" | "OTHER";
+type ErrTypeOption = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "PURCHASE";
 
-const ACCEPTED_EXTENSIONS = ["pdf", "docx", "xlsx", "jpg", "jpeg", "png"];
+const ACCEPTED_EXTENSIONS = ["pdf", "doc", "docx", "xls", "xlsx", "jpg", "jpeg", "png"];
 const ACCEPTED_MIME_TYPES = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -74,14 +75,23 @@ function FileTypeIcon({ file }: { file: File | null }) {
   }
 }
 
-export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { defaultRedirectPath?: string }) {
+type ErrDirector = { projectId: string; directorId?: string; name: string; projectName: string; country?: string };
+
+type ErrProjectOption = Pick<ErrDirector, "projectId" | "projectName" | "country"> & {
+  directorNames: string[];
+};
+
+export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDirectors = [], errOnly = false }: { defaultRedirectPath?: string; errDirectors?: ErrDirector[]; errOnly?: boolean }) {
   const router = useRouter();
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [documentType, setDocumentType] = useState<DocumentTypeOption | null>(null);
+  const [documentType, setDocumentType] = useState<DocumentTypeOption | null>(errOnly ? "ERR" : null);
   const [comparisonType, setComparisonType] = useState<ComparisonTypeOption | null>(null);
   const [mrType, setMrType] = useState<MrTypeOption | null>(null);
+  const [errType, setErrType] = useState<ErrTypeOption | null>(null);
+  const [errProjectId, setErrProjectId] = useState("");
+  const [quotation, setQuotation] = useState<File | null>(null);
   const [mrNumber, setMrNumber] = useState("");
   const [comparisonLinkChoice, setComparisonLinkChoice] = useState<"YES" | "NO" | null>(null);
   const [comparisonSearch, setComparisonSearch] = useState("");
@@ -103,18 +113,44 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
     }));
   }, [selectedFiles]);
 
+  const errProjectOptions = useMemo<ErrProjectOption[]>(
+    () => Array.from(
+      errDirectors.reduce((projects, director) => {
+        const existing = projects.get(director.projectId);
+        if (existing) {
+          if (!existing.directorNames.includes(director.name)) {
+            existing.directorNames.push(director.name);
+          }
+          return projects;
+        }
+
+        projects.set(director.projectId, {
+          projectId: director.projectId,
+          projectName: director.projectName,
+          country: director.country,
+          directorNames: [director.name],
+        });
+        return projects;
+      }, new Map<string, ErrProjectOption>()).values(),
+    ),
+    [errDirectors],
+  );
+
   function handleFileSelection(files: FileList | File[] | null) {
     const incomingFiles = Array.from(files ?? []);
     if (incomingFiles.length === 0) return;
 
     const invalid = incomingFiles.find((file) => !isAcceptedFile(file));
     if (invalid) {
-      setError("Unsupported file type. Allowed: PDF, DOCX, XLSX, JPG, JPEG, PNG.");
+      setError("Unsupported file type. Allowed: PDF, Word, Excel, JPG, JPEG, PNG.");
       return;
     }
 
     setError(null);
     const uniqueIncomingFiles = incomingFiles.filter((file) => !selectedFiles.some((existing) => existing.name === file.name && existing.size === file.size));
+    if (documentType === "ERR" && !title.trim() && selectedFiles.length === 0) {
+      setTitle(incomingFiles[0].name.replace(/\.[^.]+$/, ""));
+    }
     setSelectedFiles((current) => [...current, ...uniqueIncomingFiles]);
     setFileTitles((current) => [...current, ...uniqueIncomingFiles.map((file) => file.name.replace(/\.[^.]+$/, ""))]);
   }
@@ -139,9 +175,12 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
   function resetForm() {
     setTitle("");
     setDescription("");
-    setDocumentType(null);
+    setDocumentType(errOnly ? "ERR" : null);
     setComparisonType(null);
     setMrType(null);
+    setErrType(null);
+    setErrProjectId("");
+    setQuotation(null);
     setMrNumber("");
     setComparisonLinkChoice(null);
     setComparisonSearch("");
@@ -170,6 +209,11 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
       return;
     }
 
+    if (documentType === "ERR" && (!errType || !errProjectId)) {
+      setError("Please select an ERR type and project.");
+      return;
+    }
+
     if (selectedFiles.length === 0) {
       setError("Please upload at least one file before creating.");
       return;
@@ -179,6 +223,47 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
     setIsSubmitting(true);
 
     try {
+      if (documentType === "ERR") {
+        for (const [index, file] of selectedFiles.entries()) {
+          const errFormData = new FormData();
+          errFormData.set("title", file.name.replace(/\.[^.]+$/, ""));
+          errFormData.set("description", description);
+          errFormData.set("type", errType || "");
+
+          const [projId, dirId] = errProjectId.split("::");
+          errFormData.set("projectId", projId);
+          if (dirId) {
+            errFormData.set("projectDirectorId", dirId);
+          }
+
+          errFormData.set("submissionKey", crypto.randomUUID());
+          errFormData.append("files", file);
+          if (quotation && index === 0) errFormData.set("quotation", quotation);
+
+          const response = await fetch("/api/errs", {
+            method: "POST",
+            headers: { "x-csrf-token": getCsrfTokenFromBrowser() },
+            body: errFormData,
+          });
+          const result = (await response.json()) as { message?: string };
+          if (!response.ok) {
+            setError(result.message || `Failed to create ERR ${index + 1}.`);
+            setIsSubmitting(false);
+            return;
+          }
+        }
+
+        setIsSubmitting(false);
+        setShowToast(true);
+        resetForm();
+        window.setTimeout(() => {
+          setShowToast(false);
+          router.push(defaultRedirectPath);
+          router.refresh();
+        }, 1600);
+        return;
+      }
+
       const formData = new FormData();
       formData.set("title", title);
       formData.set("description", description);
@@ -247,14 +332,24 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
           <h2 className="text-base font-semibold text-slate-900">Document Details</h2>
 
           <div className="mt-4 grid grid-cols-1 gap-5">
-            <div>
+            {errOnly ? (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">
+                  Document Type
+                </label>
+                <div className="rounded-xl border-2 border-cyan-500 bg-cyan-50 px-4 py-3 text-sm font-medium text-cyan-700">
+                  ERR
+                </div>
+              </div>
+            ) : <div>
               <label className="mb-2 block text-sm font-medium text-slate-700">
                 Document Type <span className="text-rose-600">*</span>
               </label>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 {[
                   { value: "COMPARISON", label: "Comparison Sheet" },
                   { value: "MATERIAL_REQUISITION", label: "Material Requisition" },
+                  { value: "ERR", label: "ERR" },
                 ].map((option) => (
                   <button
                     key={option.value}
@@ -263,8 +358,13 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
                       setDocumentType(option.value as DocumentTypeOption);
                       if (option.value === "COMPARISON") {
                         setMrType(null);
+                        setErrType(null);
+                      } else if (option.value === "MATERIAL_REQUISITION") {
+                        setComparisonType(null);
+                        setErrType(null);
                       } else {
                         setComparisonType(null);
+                        setMrType(null);
                       }
                     }}
                     className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${
@@ -277,7 +377,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
                   </button>
                 ))}
               </div>
-            </div>
+            </div>}
 
             {documentType === "COMPARISON" ? (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -443,6 +543,47 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
               </div>
             ) : null}
 
+            {documentType === "ERR" ? (
+              <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">ERR Type <span className="text-rose-600">*</span></label>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    {[
+                      { value: "RENTAL_ACTC", label: "Rental ACTC" },
+                      { value: "RENTAL_EXTERNAL", label: "Rental External" },
+                      { value: "PURCHASE", label: "Purchase" },
+                    ].map((option) => (
+                      <button key={option.value} type="button" onClick={() => setErrType(option.value as ErrTypeOption)} className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${errType === option.value ? "border-cyan-500 bg-cyan-50 text-cyan-700" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="err-project" className="mb-2 block text-sm font-medium text-slate-700">Project Director and Project <span className="text-rose-600">*</span></label>
+                  <select id="err-project" value={errProjectId} onChange={(event) => setErrProjectId(event.target.value)} className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-500">
+                    <option value="">Select a project</option>
+                    {errProjectOptions.map((project) => {
+                      return (
+                        <option key={project.projectId} value={project.projectId}>
+                          {project.directorNames.join(", ")} - {project.projectName}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {errProjectId ? (
+                    <div className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700 border border-blue-200">
+                      <span className="font-medium">Country:</span> {errProjectOptions.find((project) => project.projectId === errProjectId)?.country || "KUWAIT"}
+                    </div>
+                  ) : null}
+                </div>
+                <div>
+                  <label htmlFor="err-quotation" className="mb-2 block text-sm font-medium text-slate-700">Quotation <span className="font-normal text-slate-500">(optional)</span></label>
+                  <input id="err-quotation" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => setQuotation(event.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-700" />
+                </div>
+              </div>
+            ) : null}
+
             <div>
               <label htmlFor="description" className="mb-2 block text-sm font-medium text-slate-700">
                 Description
@@ -461,7 +602,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
 
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
           <h2 className="text-base font-semibold text-slate-900">Upload File</h2>
-          <p className="mt-1 text-xs text-slate-500">Accepted: PDF, DOCX, XLSX, JPG, JPEG, PNG. You can upload multiple files.</p>
+          <p className="mt-1 text-xs text-slate-500">Accepted: PDF, Word, Excel, JPG, JPEG, PNG. You can upload multiple files.</p>
 
           <label
             htmlFor="file-input"
@@ -479,7 +620,9 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
                 <p className="mt-1 text-xs text-slate-500">
                   {documentType === "MATERIAL_REQUISITION"
                     ? "Choose the MR type above, then upload the file for this requisition."
-                    : "Upload one or more files. Each file will become its own document."}
+                    : documentType === "ERR"
+                      ? "Upload one primary ERR file. Add a quotation separately if needed."
+                      : "Upload one or more files. Each file will become its own document."}
                 </p>
               </div>
             </div>
@@ -487,7 +630,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk" }: { de
             <input
               id="file-input"
               type="file"
-              accept=".pdf,.docx,.xlsx,.jpg,.jpeg,.png"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
               className="sr-only"
               multiple
               onChange={(e) => handleFileSelection(e.target.files)}

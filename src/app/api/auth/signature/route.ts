@@ -1,4 +1,4 @@
-import { UserRole } from "@prisma/client";
+import { ErrAccessRole, UserRole } from "@prisma/client";
 import { readFile } from "fs/promises";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
@@ -8,14 +8,17 @@ import { writeAuditLog } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
-function isApprover(role: UserRole) {
-  return role === UserRole.APPROVER_1 || role === UserRole.APPROVER_2 || role === UserRole.APPROVER_3;
+async function canManageOwnSignature(
+  _userId: string,
+  _role: UserRole,
+): Promise<boolean> {
+  return true;
 }
 
 export async function GET() {
   const session = await getSession();
-  if (!session || !isApprover(session.role)) {
-    return NextResponse.json({ message: "Only approvers can access signatures." }, { status: 403 });
+  if (!session || !(await canManageOwnSignature(session.userId, session.role))) {
+    return NextResponse.json({ message: "You do not have access to this signature." }, { status: 403 });
   }
 
   const user = await prisma.user.findUnique({
@@ -43,8 +46,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const session = await getSession();
-  if (!session || !isApprover(session.role)) {
-    return NextResponse.json({ message: "Only approvers can manage signatures." }, { status: 403 });
+  if (
+  !session ||
+  !(await canManageOwnSignature(session.userId, session.role))
+) {
+    return NextResponse.json({ message: "You do not have access to manage this signature." }, { status: 403 });
   }
 
   const formData = await request.formData();
@@ -81,8 +87,11 @@ export async function POST(request: Request) {
 
 export async function DELETE() {
   const session = await getSession();
-  if (!session || !isApprover(session.role)) {
-    return NextResponse.json({ message: "Only approvers can manage signatures." }, { status: 403 });
+  if (
+  !session ||
+  !(await canManageOwnSignature(session.userId, session.role))
+) {
+    return NextResponse.json({ message: "You do not have access to manage this signature." }, { status: 403 });
   }
 
   const current = await prisma.user.findUnique({ where: { id: session.userId }, select: { signaturePath: true } });

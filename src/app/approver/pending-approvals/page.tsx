@@ -1,16 +1,57 @@
 import { UserRole } from "@prisma/client";
 import DashboardShell from "@/components/dashboard-shell";
 import ApproverPendingTable from "@/components/approver-pending-table";
+import DocumentStatusFilter from "@/components/document-status-filter";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
+import { parseDocumentStatusFilter, parseDocumentTypeFilter } from "@/lib/document-status";
 import { getDocumentsForApprover } from "@/lib/document-queries";
 import { roleLabel } from "@/lib/auth/roles";
+import { getModuleVisibility } from "@/lib/auth/module-visibility";
 
 export const dynamic = "force-dynamic";
 
-export default async function ApproverPendingApprovalsPage() {
+export default async function ApproverPendingApprovalsPage({ searchParams }: any) {
   const session = await requireRole([UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]);
-  const data = await getDocumentsForApprover(session.userId, session.role);
+  const resolvedSearchParams = await Promise.resolve(searchParams);
+  const statusFilter = parseDocumentStatusFilter(resolvedSearchParams?.status);
+  const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
+  const data = await getDocumentsForApprover(session.userId, session.role, session.name);
+
+  const pendingDocuments = [
+    ...data.pendingDocuments
+      .filter((doc) => !statusFilter || doc.status === statusFilter)
+      .filter((doc) => !documentTypeFilter || doc.documentType === documentTypeFilter)
+      .map((doc) => ({
+        id: doc.id,
+        documentNumber: doc.documentNumber,
+        title: doc.title,
+        documentType: doc.documentType,
+        mrType: doc.mrType,
+        currentVersion: doc.currentVersion,
+        latestComment: doc.approvals[0]?.comments ?? null,
+        uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+      })),
+    ...data.errPendingDocuments
+      .filter((doc) => !statusFilter || doc.status === statusFilter)
+      .map((doc) => ({
+        id: doc.id,
+        documentNumber: doc.documentNumber,
+        title: doc.title,
+        documentType: "ERR" as const,
+        mrType: null,
+        currentVersion: 1,
+        latestComment: null,
+        uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+      })),
+  ];
+
+  const cards = [
+    { label: "Assigned/Handled", value: String(pendingDocuments.length), tone: "bg-slate-900 text-white" },
+    { label: "MRs", value: String(pendingDocuments.filter((doc) => doc.documentType === "MATERIAL_REQUISITION").length), tone: "bg-slate-50 text-slate-900 ring-1 ring-slate-200" },
+    { label: "Comparison Sheets", value: String(pendingDocuments.filter((doc) => doc.documentType === "COMPARISON").length), tone: "bg-sky-50 text-sky-900 ring-1 ring-sky-200" },
+    ...(getModuleVisibility(session.name, session.role) === "ALL" ? [{ label: "ERRs", value: String((pendingDocuments as Array<{ documentType: string }>).filter((doc) => doc.documentType === "ERR").length), tone: "bg-violet-50 text-violet-900 ring-1 ring-violet-200" }] : []),
+  ];
 
   return (
     <DashboardShell
@@ -19,46 +60,16 @@ export default async function ApproverPendingApprovalsPage() {
       title="Pending Approvals"
       subtitle={`${roleLabel(session.role)} documents awaiting your action`}
     >
-      <PageSummaryCards
-        cards={[
-          { label: "Pending", value: String(data.pendingDocuments.length), tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200" },
-          { label: "Revision Required", value: String(data.revisionRequiredDocuments.length), tone: "bg-slate-50 text-slate-900 ring-1 ring-slate-200" },
-          { label: "Approved", value: String(data.approvedDocuments.length), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
-          { label: "Rejected", value: String(data.rejectedDocuments.length), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
-        ]}
-      />
+      <PageSummaryCards cards={cards} />
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">
           <h3 className="text-base font-semibold text-slate-900">Pending Approvals</h3>
         </div>
-        <div className="px-1 py-4">
-          <ApproverPendingTable documents={data.pendingDocuments.map((doc) => ({
-            id: doc.id,
-            documentNumber: doc.documentNumber,
-            title: doc.title,
-            documentType: doc.documentType,
-            mrType: doc.mrType,
-            currentVersion: doc.currentVersion,
-            latestComment: doc.approvals[0]?.comments ?? null,
-            uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
-          }))} />
-        </div>
-      </section>
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">
-          <h3 className="text-base font-semibold text-slate-900">Revision Required</h3>
+          <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} showDocumentTypeFilter={true} showErrDocumentType={getModuleVisibility(session.name, session.role) === "ALL"} showStatusFilter={false} />
         </div>
         <div className="px-1 py-4">
-          <ApproverPendingTable documents={data.revisionRequiredDocuments.map((doc) => ({
-            id: doc.id,
-            documentNumber: doc.documentNumber,
-            title: doc.title,
-            documentType: doc.documentType,
-            mrType: doc.mrType,
-            currentVersion: doc.currentVersion,
-            latestComment: doc.approvals[0]?.comments ?? null,
-            uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
-          }))} />
+          <ApproverPendingTable documents={pendingDocuments} />
         </div>
       </section>
     </DashboardShell>

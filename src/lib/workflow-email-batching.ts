@@ -1,6 +1,7 @@
 import { EmailEventType, DocumentStatus, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
+import { getPurchaseOrderRecipientIds } from "@/lib/po-access";
 
 const EMAIL_DELAY_MS = 10 * 60 * 1000;
 const REMINDER_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -20,10 +21,21 @@ export async function queueWorkflowEmailEvents(events: Array<{
 }>) {
   if (events.length === 0) return 0;
 
+  const dedupedEvents = Array.from(
+    new Map(
+      events.map((event) => [
+        `${event.recipientId}:${event.type}:${event.documentId ?? ""}`,
+        event,
+      ]),
+    ).values(),
+  );
+
+  if (dedupedEvents.length === 0) return 0;
+
   const createdAt = new Date();
   const emailDueAt = new Date(createdAt.getTime() + EMAIL_DELAY_MS);
   await prisma.emailNotificationEvent.createMany({
-    data: events.map((event) => ({
+    data: dedupedEvents.map((event) => ({
       recipientId: event.recipientId,
       type: event.type,
       documentId: event.documentId ?? null,
@@ -31,9 +43,45 @@ export async function queueWorkflowEmailEvents(events: Array<{
       emailDueAt,
       emailSent: false,
     })),
+    skipDuplicates: true,
   });
 
-  return events.length;
+  return dedupedEvents.length;
+}
+
+export async function queuePurchaseOrderAvailableEvents(purchaseOrderIds: string[]) {
+  const events: Array<{ recipientId: string; type: EmailEventType; documentId: string }> = [];
+  for (const purchaseOrderId of [...new Set(purchaseOrderIds)]) {
+    const recipientIds = await getPurchaseOrderRecipientIds(purchaseOrderId);
+    for (const recipientId of recipientIds) {
+      const existing = await prisma.emailNotificationEvent.findFirst({
+        where: {
+          recipientId,
+          documentId: purchaseOrderId,
+          type: EmailEventType.PURCHASE_ORDER_AVAILABLE,
+        },
+        select: { id: true },
+      });
+      if (!existing) {
+        events.push({ recipientId, type: EmailEventType.PURCHASE_ORDER_AVAILABLE, documentId: purchaseOrderId });
+      }
+    }
+  }
+  if (events.length === 0) return 0;
+  const createdAt = new Date();
+  const emailDueAt = new Date(createdAt.getTime() + EMAIL_DELAY_MS);
+  const result = await prisma.emailNotificationEvent.createMany({
+    data: events.map((event) => ({
+      recipientId: event.recipientId,
+      type: event.type,
+      documentId: event.documentId,
+      createdAt,
+      emailDueAt,
+      emailSent: false,
+    })),
+    skipDuplicates: true,
+  });
+  return result.count;
 }
 
 export async function queuePendingApprovalReminders() {
@@ -134,6 +182,8 @@ function summaryForType(type: EmailEventType) {
       return "rejected";
     case EmailEventType.COMPARISON_MR_OVERDUE:
       return "comparisonOverdue";
+    case EmailEventType.PURCHASE_ORDER_AVAILABLE:
+      return "purchaseOrderAvailable";
   }
 }
 
@@ -144,6 +194,7 @@ function renderSummary(counts: Record<string, number>) {
     counts.pending ? `<p>Pending documents: ${counts.pending}</p>` : "",
     counts.overdue ? `<p>Documents pending for more than 24 hours: ${counts.overdue}</p>` : "",
     counts.comparisonOverdue ? `<p>Approved Comparisons awaiting MR upload for more than 24 hours: ${counts.comparisonOverdue}</p>` : "",
+    counts.purchaseOrderAvailable ? `<p>New purchase orders are available for your related MRs.</p>` : "",
   ].join("");
 
   return `

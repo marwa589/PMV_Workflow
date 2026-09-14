@@ -15,6 +15,7 @@ type SessionPayload = {
   email: string;
   name: string;
   role: UserRole;
+  roles: UserRole[];
   sessionVersion: number;
   exp: number;
 };
@@ -61,14 +62,16 @@ export function verifyToken(token: string): SessionPayload | null {
 
 export function attachSessionCookie(
   response: NextResponse,
-  user: { id: string; email: string; name: string; role: UserRole },
+  user: { id: string; email: string; name: string; role: UserRole; roles?: UserRole[] },
   sessionVersion = 0,
 ): void {
+  const roles = user.roles && user.roles.length > 0 ? Array.from(new Set(user.roles)) : [user.role];
   const payload: SessionPayload = {
     userId: user.id,
     email: user.email,
     name: user.name,
     role: user.role,
+    roles,
     sessionVersion,
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
   };
@@ -102,30 +105,74 @@ export async function getSession(): Promise<AuthSession | null> {
   const payload = verifyToken(token);
   if (!payload) return null;
 
-  const user = await prisma.user.findUnique({
-    where: { id: payload.userId },
-    select: { id: true, email: true, name: true, role: true },
-    // TEMPORARY TEST OVERRIDE: the sessionVersion column is not currently available in the DB,
-    // and we want to allow rapid role switching while validating workflows.
-    // select: { id: true, email: true, name: true, role: true, sessionVersion: true },
-  });
+  // const user = await prisma.user.findUnique({
+  //   where: { id: payload.userId },
+  //   select: { id: true, email: true, name: true, role: true },
+  //   // TEMPORARY TEST OVERRIDE: the sessionVersion column is not currently available in the DB,
+  //   // and we want to allow rapid role switching while validating workflows.
+  //   // select: { id: true, email: true, name: true, role: true, sessionVersion: true },
+  // });
 
-  // TEMPORARY TEST OVERRIDE: keep the user session valid even if the version does not match.
-  // if (!user || user.sessionVersion !== payload.sessionVersion) {
+  // // TEMPORARY TEST OVERRIDE: keep the user session valid even if the version does not match.
+  // // if (!user || user.sessionVersion !== payload.sessionVersion) {
+  // //   return null;
+  // // }
+
+  // if (!user) {
   //   return null;
   // }
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        sessionVersion: true,
+        roleAssignments: { select: { role: true } },
+      },
+    });
 
-  if (!user) {
-    return null;
+    if (!user || user.sessionVersion !== payload.sessionVersion) {
+      return null;
+    }
+
+    const roles = Array.from(new Set([user.role, ...user.roleAssignments.map((assignment) => assignment.role)]));
+
+    return {
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      roles,
+      sessionVersion: payload.sessionVersion,
+    };
+  } catch (error) {
+    const fallbackUser = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        sessionVersion: true,
+      },
+    });
+
+    if (!fallbackUser || fallbackUser.sessionVersion !== payload.sessionVersion) {
+      return null;
+    }
+
+    return {
+      userId: fallbackUser.id,
+      email: fallbackUser.email,
+      name: fallbackUser.name,
+      role: fallbackUser.role,
+      roles: [fallbackUser.role],
+      sessionVersion: payload.sessionVersion,
+    };
   }
-
-  return {
-    userId: user.id,
-    email: user.email,
-    name: user.name,
-    role: user.role,
-    sessionVersion: payload.sessionVersion,
-  };
 }
 
 export function getSessionFromToken(token: string | undefined): AuthSession | null {
@@ -139,6 +186,7 @@ export function getSessionFromToken(token: string | undefined): AuthSession | nu
     email: payload.email,
     name: payload.name,
     role: payload.role,
+    roles: payload.roles ?? [payload.role],
     sessionVersion: payload.sessionVersion,
   };
 }

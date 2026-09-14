@@ -17,7 +17,20 @@ export default async function ApproverDocumentReviewPage({ params }: { params: P
   if (!document) notFound();
   if (document.currentApproverId !== session.userId) redirect("/unauthorized");
 
-  const user = await prisma.user.findUnique({ where: { id: session.userId }, select: { signaturePath: true } });
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { email: true, signaturePath: true },
+  });
 
-  return <DocumentReviewEditor documentId={document.id} documentNumber={document.documentNumber} title={document.title} hasSignature={Boolean(user?.signaturePath)} />;
+  const allowNoSignature = user?.email?.toLowerCase() === "mohammad.mehieddine@ahmadiah.com";
+
+  return (
+    <DocumentReviewEditor
+      documentId={document.id}
+      documentNumber={document.documentNumber}
+      title={document.title}
+      hasSignature={Boolean(user?.signaturePath)}
+      allowNoSignature={allowNoSignature}
+    />
+  );
 }

@@ -1,9 +1,10 @@
-import { ApprovalActionType, DocumentStatus, DocumentType, MrType, Prisma, UserRole } from "@prisma/client";
+import { ApprovalActionType, DocumentStatus, DocumentType, MrType, Prisma, UserRole, UserLocation } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { copyComparisonToMrFolder, saveDocumentVersionFile } from "@/lib/files";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
+import { resolveWorkflowApproverIdsForUploader } from "@/lib/workflow-locations";
 
 export const runtime = "nodejs";
 
@@ -65,28 +66,46 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Only material requisitions can link a comparison." }, { status: 400 });
   }
 
-  if (relatedComparisonId && files.length > 1) {
-    return NextResponse.json({ message: "A related comparison can only be linked to one MR." }, { status: 400 });
+  const uploader = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { email: true, location: true },
+  });
+
+  if (!uploader) {
+    return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  const approver2 = await prisma.user.findFirst({
-    where: { role: UserRole.APPROVER_2 },
-    select: { id: true, email: true, name: true },
-  });
-  const approver3 = await prisma.user.findFirst({
-    where: { role: UserRole.APPROVER_3 },
-    select: { id: true, email: true, name: true },
-  });
+  const workflowApprovers = await resolveWorkflowApproverIdsForUploader(prisma, uploader.email);
+  const { approver1Id, approver2Id, approver3Id, location } = workflowApprovers;
 
-  // if (!approver2) {
-  //   return NextResponse.json({ message: "Workshop Manager account is missing." }, { status: 400 });
-  // }
+  if (!location) {
+    return NextResponse.json({ message: "User location is not configured for this workflow." }, { status: 400 });
+  }
+
+  const requiresApprover1 = Boolean(approver1Id);
+  const approver1 = approver1Id ? await prisma.user.findUnique({ where: { id: approver1Id }, select: { id: true, email: true, name: true } }) : null;
+  const approver2 = approver2Id ? await prisma.user.findUnique({ where: { id: approver2Id }, select: { id: true, email: true, name: true } }) : null;
+  const approver3 = approver3Id ? await prisma.user.findUnique({ where: { id: approver3Id }, select: { id: true, email: true, name: true } }) : null;
+
+  if (requiresApprover1 && !approver1) {
+    return NextResponse.json({ message: "Approver 1 account is missing for the configured location." }, { status: 400 });
+  }
+
+  const requiresApprover2 = requiresApprover1 || location === UserLocation.KUWAIT || documentType === "MATERIAL_REQUISITION" || (documentType === "COMPARISON" && comparisonType === "SPARE_PARTS");
+
+  if (requiresApprover2 && !approver2) {
+    return NextResponse.json({ message: "Approver 2 account is missing for this workflow." }, { status: 400 });
+  }
+
   if (!approver3) {
     return NextResponse.json({ message: "PMV Manager account is missing." }, { status: 400 });
   }
-  const initialApprover = documentType === "COMPARISON" && comparisonType === "SPARE_PARTS" ? approver2 : approver3;
+
+  const initialApprover = requiresApprover1 ? approver1 : requiresApprover2 ? approver2 : approver3;
+  const initialStatus = requiresApprover1 ? DocumentStatus.PENDING_APPROVER_1 : requiresApprover2 ? DocumentStatus.PENDING_APPROVER_2 : DocumentStatus.PENDING_APPROVER_3;
+
   if (!initialApprover) {
-    return NextResponse.json({ message: "Workshop Manager account is missing for Spare Parts comparisons." }, { status: 400 });
+    return NextResponse.json({ message: "Initial approver account is missing." }, { status: 400 });
   }
 
   try {
@@ -97,12 +116,11 @@ export async function POST(request: Request) {
             id: relatedComparisonId,
             documentType: DocumentType.COMPARISON,
             status: DocumentStatus.APPROVED,
-            linkedMRs: { none: {} },
           },
           select: { id: true },
         });
         if (!comparison) {
-          throw new Error("The selected comparison is no longer available or is already linked to an MR.");
+          throw new Error("The selected comparison is no longer available or is not approved.");
         }
       }
 
@@ -119,10 +137,10 @@ export async function POST(request: Request) {
           documentNumber,
           title: perFileTitle,
           description: description || null,
-          status: initialApprover === approver2 ? DocumentStatus.PENDING_APPROVER_2 : DocumentStatus.PENDING_APPROVER_3,
+          status: initialStatus,
           currentVersion: 0,
           createdById: session.userId,
-          lastActiveStage: initialApprover === approver2 ? DocumentStatus.PENDING_APPROVER_2 : DocumentStatus.PENDING_APPROVER_3,
+          lastActiveStage: initialStatus,
           currentApproverId: initialApprover.id,
           currentApproverAssignedAt: new Date(),
           documentType: normalizedDocumentType,

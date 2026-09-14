@@ -2,7 +2,7 @@
 
 import { PDFDocument, degrees, rgb } from "pdf-lib";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { ArrowLeft, Check, Download, Loader2, PenLine, Plus, RotateCw, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Download, Loader2, PenLine, RotateCw, Trash2, Type } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
@@ -10,8 +10,10 @@ import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 type PageInfo = { pageNumber: number; width: number; height: number };
 type Placement = { id: string; pageNumber: number; x: number; y: number; width: number; height: number; rotation: number };
 type CirclePlacement = { id: string; pageNumber: number; x: number; y: number; width: number; height: number };
+type TextBoxPlacement = { id: string; pageNumber: number; x: number; y: number; width: number; height: number; text: string; color: string; fontSize: number };
 type DragState = { id: string; startX: number; startY: number; origin: Placement; mode: "drag" | "resize" };
 type CircleDragState = { id: string; pageNumber: number; startX: number; startY: number; rect: DOMRect };
+type TextBoxDragState = { id: string; pageNumber: number; startX: number; startY: number; rect: DOMRect };
 
 function clamp(value: number, min: number, max: number) { return Math.max(min, Math.min(max, value)); }
 function isPdf(file: File) { return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"); }
@@ -22,7 +24,31 @@ async function loadPdfJs() {
   return pdfjs;
 }
 
-export default function DocumentReviewEditor({ documentId, documentNumber, title, hasSignature }: { documentId: string; documentNumber: string; title: string; hasSignature: boolean }) {
+type DocumentReviewEditorProps = {
+  documentId: string;
+  documentNumber: string;
+  title: string;
+  errStage?: "PROJECT_DIRECTOR" | "PMV_MANAGER" | "ACTING_CEO" | "CEO";
+  hasSignature: boolean;
+  allowNoSignature?: boolean;
+  downloadUrl?: string;
+  actionUrl?: string;
+  returnUrl?: string;
+  allowHold?: boolean;
+};
+
+export default function DocumentReviewEditor({
+  documentId,
+  documentNumber,
+  title,
+  errStage,
+  hasSignature,
+  allowNoSignature = false,
+  downloadUrl = `/api/documents/${documentId}/download`,
+  actionUrl = `/api/documents/${documentId}/actions`,
+  returnUrl = "/approver/pending-approvals",
+  allowHold = false,
+}: DocumentReviewEditorProps) {
   const router = useRouter();
   const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const canvasRefs = useRef<Record<number, HTMLCanvasElement | null>>({});
@@ -33,11 +59,18 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
   const [signatureRatio, setSignatureRatio] = useState(3);
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [circles, setCircles] = useState<CirclePlacement[]>([]);
+  const [textBoxes, setTextBoxes] = useState<TextBoxPlacement[]>([]);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [circleMode, setCircleMode] = useState(false);
   const [circleDrag, setCircleDrag] = useState<CircleDragState | null>(null);
+  const [textBoxMode, setTextBoxMode] = useState(false);
+  const [textBoxDrag, setTextBoxDrag] = useState<TextBoxDragState | null>(null);
+  const [textBoxColor, setTextBoxColor] = useState("#0f172a");
+  const [textBoxFontSize, setTextBoxFontSize] = useState(12);
+  const [selectedTextBoxId, setSelectedTextBoxId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [decision, setDecision] = useState<"APPROVE" | "REJECT" | "COMMENT">("APPROVE");
+  const [decision, setDecision] = useState<"APPROVE" | "REJECT" | "COMMENT" | "HOLD">("APPROVE");
+  const [approvalRoute, setApprovalRoute] = useState<"FINALIZE" | "ACTING_CEO" | "CEO">("FINALIZE");
   const [comments, setComments] = useState("");
   const [saving, setSaving] = useState(false);
   const [signing, setSigning] = useState(false);
@@ -52,7 +85,9 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
       const startedAt = performance.now();
       try {
         const pdfjs = await loadPdfJs();
-        const response = await fetch(`/api/documents/${documentId}/download`);
+        const response = await fetch(downloadUrl, {
+  cache: "no-store",
+});
         if (!response.ok) throw new Error("Unable to load the current PDF version.");
         const pdfBytes = new Uint8Array(await response.arrayBuffer());
         const pdf = await pdfjs.getDocument({ data: pdfBytes.slice() }).promise;
@@ -72,7 +107,7 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
     }
     void load();
     return () => { cancelled = true; };
-  }, [documentId]);
+  }, [documentId, downloadUrl]);
 
   useEffect(() => {
     if (!hasSignature) return;
@@ -181,6 +216,31 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); };
   }, [circleDrag]);
 
+  useEffect(() => {
+    if (!textBoxDrag) return;
+    const activeTextBox = textBoxDrag;
+    function move(event: PointerEvent) {
+      const endX = clamp(((event.clientX - activeTextBox.rect.left) / activeTextBox.rect.width) * 100, 0, 100);
+      const endY = clamp(((event.clientY - activeTextBox.rect.top) / activeTextBox.rect.height) * 100, 0, 100);
+      const startX = (activeTextBox.startX / activeTextBox.rect.width) * 100;
+      const startY = (activeTextBox.startY / activeTextBox.rect.height) * 100;
+      setTextBoxes((current) => current.map((item) => item.id === activeTextBox.id ? {
+        ...item,
+        x: Math.min(startX, endX),
+        y: Math.min(startY, endY),
+        width: Math.abs(endX - startX),
+        height: Math.abs(endY - startY),
+      } : item));
+    }
+    const end = () => {
+      setTextBoxDrag(null);
+      setTextBoxMode(false);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); };
+  }, [textBoxDrag]);
+
   function startDrag(event: React.PointerEvent<HTMLElement>, placement: Placement, mode: DragState["mode"]) {
     event.preventDefault();
     event.stopPropagation();
@@ -200,7 +260,7 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
   }
 
   function startCircle(event: React.PointerEvent<HTMLDivElement>, pageNumber: number) {
-    if (!circleMode || circleDrag) return;
+    if (textBoxMode || !circleMode || circleDrag) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const x = ((event.clientX - rect.left) / rect.width) * 100;
     const y = ((event.clientY - rect.top) / rect.height) * 100;
@@ -210,8 +270,21 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
     event.preventDefault();
   }
 
+  function startTextBox(event: React.PointerEvent<HTMLDivElement>, pageNumber: number) {
+    if (!textBoxMode || textBoxDrag) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = clamp(((event.clientX - rect.left) / rect.width) * 100, 0, 100);
+    const y = clamp(((event.clientY - rect.top) / rect.height) * 100, 0, 100);
+    const id = `${Date.now()}-${Math.random()}`;
+    setTextBoxes((current) => [...current, { id, pageNumber, x, y, width: 0, height: 0, text: "", color: textBoxColor, fontSize: textBoxFontSize }]);
+    setSelectedTextBoxId(id);
+    setTextBoxDrag({ id, pageNumber, startX: event.clientX - rect.left, startY: event.clientY - rect.top, rect });
+    event.preventDefault();
+  }
+
   async function submit() {
-    if (decision === "APPROVE" && placements.length === 0) {
+    const requiresSignature = decision === "APPROVE" && !(allowNoSignature && placements.length === 0);
+    if (decision === "APPROVE" && placements.length === 0 && !allowNoSignature) {
       setError("Click Sign and place at least one signature before approving.");
       return;
     }
@@ -221,70 +294,104 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
     try {
       const formData = new FormData();
       formData.set("decision", decision);
+      if (errStage) formData.set("approvalRoute", approvalRoute);
       formData.set("comments", comments);
-      if (decision === "APPROVE" && placements.length && signatureUrl) {
+      if (decision === "APPROVE") {
         const pdfBytes = pdfBytesRef.current;
         const coordinatePdf = pdfJsDocumentRef.current;
         if (!pdfBytes || !coordinatePdf) throw new Error("The PDF is still loading. Please try again.");
-        const pdf = await PDFDocument.load(pdfBytes.slice());
-        const signatureResponse = await fetch(signatureUrl);
-        const signatureBlob = await signatureResponse.blob();
-        const signatureBytes = await signatureBlob.arrayBuffer();
-        const image = signatureBlob.type === "image/png" ? await pdf.embedPng(signatureBytes) : await pdf.embedJpg(signatureBytes);
-        for (const item of placements) {
-          const page = pdf.getPage(item.pageNumber - 1);
-          const coordinatePage = await coordinatePdf.getPage(item.pageNumber);
-          const viewport = coordinatePage.getViewport({ scale: 1 });
-          const topLeft = viewport.convertToPdfPoint((item.x / 100) * viewport.width, (item.y / 100) * viewport.height);
-          const topRight = viewport.convertToPdfPoint(((item.x + item.width) / 100) * viewport.width, (item.y / 100) * viewport.height);
-          const bottomLeft = viewport.convertToPdfPoint((item.x / 100) * viewport.width, ((item.y + item.height) / 100) * viewport.height);
-          const imageWidth = Math.hypot(topRight[0] - topLeft[0], topRight[1] - topLeft[1]);
-          const imageHeight = Math.hypot(bottomLeft[0] - topLeft[0], bottomLeft[1] - topLeft[1]);
-          const imageAngle = Math.atan2(topRight[1] - topLeft[1], topRight[0] - topLeft[0]) * (180 / Math.PI);
-          const totalAngle = imageAngle - item.rotation;
-          const totalRadians = totalAngle * (Math.PI / 180);
-          const centerX = (topRight[0] + bottomLeft[0]) / 2;
-          const centerY = (topRight[1] + bottomLeft[1]) / 2;
-          const drawX = centerX - (Math.cos(totalRadians) * imageWidth / 2 - Math.sin(totalRadians) * imageHeight / 2);
-          const drawY = centerY - (Math.sin(totalRadians) * imageWidth / 2 + Math.cos(totalRadians) * imageHeight / 2);
-          page.drawImage(image, {
-            x: item.rotation === 0 ? bottomLeft[0] : drawX,
-            y: item.rotation === 0 ? bottomLeft[1] : drawY,
-            width: imageWidth,
-            height: imageHeight,
-            rotate: degrees(totalAngle),
-          });
+
+        if (placements.length && signatureUrl) {
+          const pdf = await PDFDocument.load(pdfBytes.slice());
+          const signatureResponse = await fetch(signatureUrl);
+          const signatureBlob = await signatureResponse.blob();
+          const signatureBytes = await signatureBlob.arrayBuffer();
+          const image = signatureBlob.type === "image/png" ? await pdf.embedPng(signatureBytes) : await pdf.embedJpg(signatureBytes);
+          for (const item of placements) {
+            const page = pdf.getPage(item.pageNumber - 1);
+            const coordinatePage = await coordinatePdf.getPage(item.pageNumber);
+            const viewport = coordinatePage.getViewport({ scale: 1 });
+            const topLeft = viewport.convertToPdfPoint((item.x / 100) * viewport.width, (item.y / 100) * viewport.height);
+            const topRight = viewport.convertToPdfPoint(((item.x + item.width) / 100) * viewport.width, (item.y / 100) * viewport.height);
+            const bottomLeft = viewport.convertToPdfPoint((item.x / 100) * viewport.width, ((item.y + item.height) / 100) * viewport.height);
+            const imageWidth = Math.hypot(topRight[0] - topLeft[0], topRight[1] - topLeft[1]);
+            const imageHeight = Math.hypot(bottomLeft[0] - topLeft[0], bottomLeft[1] - topLeft[1]);
+            const imageAngle = Math.atan2(topRight[1] - topLeft[1], topRight[0] - topLeft[0]) * (180 / Math.PI);
+            const totalAngle = imageAngle - item.rotation;
+            const totalRadians = totalAngle * (Math.PI / 180);
+            const centerX = (topRight[0] + bottomLeft[0]) / 2;
+            const centerY = (topRight[1] + bottomLeft[1]) / 2;
+            const drawX = centerX - (Math.cos(totalRadians) * imageWidth / 2 - Math.sin(totalRadians) * imageHeight / 2);
+            const drawY = centerY - (Math.sin(totalRadians) * imageWidth / 2 + Math.cos(totalRadians) * imageHeight / 2);
+            page.drawImage(image, {
+              x: item.rotation === 0 ? bottomLeft[0] : drawX,
+              y: item.rotation === 0 ? bottomLeft[1] : drawY,
+              width: imageWidth,
+              height: imageHeight,
+              rotate: degrees(totalAngle),
+            });
+          }
+          for (const item of circles) {
+            const page = pdf.getPage(item.pageNumber - 1);
+            const coordinatePage = await coordinatePdf.getPage(item.pageNumber);
+            const viewport = coordinatePage.getViewport({ scale: 1 });
+            const topLeft = viewport.convertToPdfPoint((item.x / 100) * viewport.width, (item.y / 100) * viewport.height);
+            const bottomRight = viewport.convertToPdfPoint(((item.x + item.width) / 100) * viewport.width, ((item.y + item.height) / 100) * viewport.height);
+            const left = Math.min(topLeft[0], bottomRight[0]);
+            const right = Math.max(topLeft[0], bottomRight[0]);
+            const bottom = Math.min(topLeft[1], bottomRight[1]);
+            const top = Math.max(topLeft[1], bottomRight[1]);
+            page.drawEllipse({
+              x: (left + right) / 2,
+              y: (bottom + top) / 2,
+              xScale: (right - left) / 2,
+              yScale: (top - bottom) / 2,
+              borderColor: rgb(0.85, 0.1, 0.1),
+              borderWidth: 2,
+            });
+          }
+          for (const item of textBoxes) {
+            const page = pdf.getPage(item.pageNumber - 1);
+            const coordinatePage = await coordinatePdf.getPage(item.pageNumber);
+            const viewport = coordinatePage.getViewport({ scale: 1 });
+            const topLeft = viewport.convertToPdfPoint((item.x / 100) * viewport.width, (item.y / 100) * viewport.height);
+            const bottomRight = viewport.convertToPdfPoint(((item.x + item.width) / 100) * viewport.width, ((item.y + item.height) / 100) * viewport.height);
+            const left = Math.min(topLeft[0], bottomRight[0]);
+            const right = Math.max(topLeft[0], bottomRight[0]);
+            const bottom = Math.min(topLeft[1], bottomRight[1]);
+            const top = Math.max(topLeft[1], bottomRight[1]);
+            const red = Number.parseInt(item.color.slice(1, 3), 16) / 255;
+            const green = Number.parseInt(item.color.slice(3, 5), 16) / 255;
+            const blue = Number.parseInt(item.color.slice(5, 7), 16) / 255;
+            if (item.text.trim()) {
+              page.drawText(item.text, { x: left + 5, y: top - item.fontSize - 4, size: item.fontSize, maxWidth: Math.max(20, right - left - 10), color: rgb(red, green, blue) });
+            }
+          }
+          const signedBytes = await pdf.save();
+          const buffer = signedBytes.buffer.slice(signedBytes.byteOffset, signedBytes.byteOffset + signedBytes.byteLength) as ArrayBuffer;
+          formData.set("file", new File([buffer], `${title}-signed.pdf`, { type: "application/pdf" }));
+          formData.set("signatureCount", String(placements.length));
+        } else {
+          const buffer = pdfBytes.slice().buffer.slice(
+            pdfBytes.byteOffset,
+            pdfBytes.byteOffset + pdfBytes.byteLength,
+          ) as ArrayBuffer;
+          formData.set("file", new File([buffer], `${title}.pdf`, { type: "application/pdf" }));
+          formData.set("signatureCount", "0");
         }
-        for (const item of circles) {
-          const page = pdf.getPage(item.pageNumber - 1);
-          const coordinatePage = await coordinatePdf.getPage(item.pageNumber);
-          const viewport = coordinatePage.getViewport({ scale: 1 });
-          const topLeft = viewport.convertToPdfPoint((item.x / 100) * viewport.width, (item.y / 100) * viewport.height);
-          const bottomRight = viewport.convertToPdfPoint(((item.x + item.width) / 100) * viewport.width, ((item.y + item.height) / 100) * viewport.height);
-          const left = Math.min(topLeft[0], bottomRight[0]);
-          const right = Math.max(topLeft[0], bottomRight[0]);
-          const bottom = Math.min(topLeft[1], bottomRight[1]);
-          const top = Math.max(topLeft[1], bottomRight[1]);
-          page.drawEllipse({
-            x: (left + right) / 2,
-            y: (bottom + top) / 2,
-            xScale: (right - left) / 2,
-            yScale: (top - bottom) / 2,
-            borderColor: rgb(0.85, 0.1, 0.1),
-            borderWidth: 2,
-          });
-        }
-        const signedBytes = await pdf.save();
-        const buffer = signedBytes.buffer.slice(signedBytes.byteOffset, signedBytes.byteOffset + signedBytes.byteLength) as ArrayBuffer;
-        formData.set("file", new File([buffer], `${title}-signed.pdf`, { type: "application/pdf" }));
-        formData.set("signatureCount", String(placements.length));
       }
-      console.info(`[review] Action prepared in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
-      const response = await fetch(`/api/documents/${documentId}/actions`, { method: "POST", headers: { "x-csrf-token": getCsrfTokenFromBrowser() }, body: formData });
+      console.info(`[review] Action prepared in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision, requiresSignature });
+      const response = await fetch(actionUrl, {
+  method: "POST",
+  headers: {
+    "x-csrf-token": getCsrfTokenFromBrowser(),
+  },
+  body: formData,
+});
       const result = (await response.json()) as { message?: string };
       if (!response.ok) throw new Error(result.message || "Unable to process document action.");
       console.info(`[review] Action request completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
-      router.push("/approver/pending-approvals");
+      router.push(returnUrl);
       router.refresh();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to process document action.");
@@ -298,7 +405,7 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
       <div className="mx-auto max-w-6xl space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Document Review</p><h1 className="mt-2 text-2xl font-semibold">{documentNumber}</h1><p className="mt-1 text-sm text-slate-600">{title}</p></div>
-          <div className="flex flex-wrap gap-2"><button type="button" onClick={() => router.back()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><ArrowLeft className="h-4 w-4" />Back</button><a href={`/api/documents/${documentId}/download`} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><Download className="h-4 w-4" />Download</a></div>
+          <div className="flex flex-wrap gap-2"><button type="button" onClick={() => router.back()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><ArrowLeft className="h-4 w-4" />Back</button><a href={downloadUrl} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><Download className="h-4 w-4" />Download</a></div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap items-end gap-3">
@@ -308,8 +415,19 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
                 <option value="APPROVE">Approve</option>
                 <option value="REJECT">Reject</option>
                 <option value="COMMENT">Revision Required</option>
+                {allowHold ? <option value="HOLD">On Hold</option> : null}
               </select>
             </div>
+            {errStage === "PMV_MANAGER" || errStage === "ACTING_CEO" || errStage === "CEO" ? (
+              <div className="min-w-60 flex-1">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Approval path</label>
+                <select value={approvalRoute} onChange={(event) => setApprovalRoute(event.target.value as typeof approvalRoute)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                  <option value="FINALIZE">Finalize Approval</option>
+                  {errStage === "PMV_MANAGER" ? <option value="ACTING_CEO">Send to Acting CEO</option> : null}
+                  {errStage === "ACTING_CEO" ? <option value="CEO">Send to CEO</option> : null}
+                </select>
+              </div>
+            ) : null}
             <div className="min-w-72 flex-[2]">
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Comments</label>
               <input value={comments} onChange={(event) => setComments(event.target.value)} placeholder="Comments (optional)" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
@@ -320,10 +438,10 @@ export default function DocumentReviewEditor({ documentId, documentNumber, title
             </button>
           </div>
         </div>
-        <div className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex items-center gap-2"><button type="button" onClick={() => addSignature(activePlacement?.pageNumber || 1)} disabled={!hasSignature} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><PenLine className="h-4 w-4" />Sign</button><button type="button" onClick={() => setCircleMode((value) => !value)} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${circleMode ? "border-rose-600 bg-rose-600 text-white" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`} aria-pressed={circleMode} title="Circle markup tool"><span className="h-4 w-4 rounded-full border-2 border-current" />Circle</button><span className="text-sm text-slate-500">{circleMode ? "Drag around content to highlight it." : hasSignature ? `${placements.length} signature placement${placements.length === 1 ? "" : "s"}` : "Save a signature in Account Settings first."}</span></div><div className="flex items-center gap-2"><button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.1))} className="rounded-lg border px-3 py-2 text-sm">−</button><span className="min-w-16 text-center text-sm">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-2 text-sm">+</button></div></div>
+        <div className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => { setCircleMode(false); setTextBoxMode(false); addSignature(activePlacement?.pageNumber || 1); }} disabled={!hasSignature} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><PenLine className="h-4 w-4" />Sign</button><button type="button" onClick={() => { setTextBoxMode(false); setCircleMode((value) => !value); }} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${circleMode ? "border-rose-600 bg-rose-600 text-white" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`} aria-pressed={circleMode} title="Circle markup tool"><span className="h-4 w-4 rounded-full border-2 border-current" />Circle</button><button type="button" onClick={() => { setCircleMode(false); setTextBoxMode((value) => !value); }} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${textBoxMode ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`} aria-pressed={textBoxMode} title="Insert text box"><Type className="h-4 w-4" />Text Box</button>{textBoxMode || selectedTextBoxId ? <><div className="flex items-center gap-1">{["#0f172a", "#dc2626", "#2563eb", "#16a34a"].map((color) => <button key={color} type="button" aria-label={`Text color ${color}`} onClick={() => { setTextBoxColor(color); if (selectedTextBoxId) setTextBoxes((current) => current.map((item) => item.id === selectedTextBoxId ? { ...item, color } : item)); }} className={`h-7 w-7 rounded-full border-2 ${textBoxColor === color ? "border-slate-900" : "border-white shadow-sm"}`} style={{ backgroundColor: color }} />)}</div><select aria-label="Text box font size" value={selectedTextBoxId ? textBoxes.find((item) => item.id === selectedTextBoxId)?.fontSize || textBoxFontSize : textBoxFontSize} onChange={(event) => { const fontSize = Number(event.target.value); setTextBoxFontSize(fontSize); if (selectedTextBoxId) setTextBoxes((current) => current.map((item) => item.id === selectedTextBoxId ? { ...item, fontSize } : item)); }} className="rounded-lg border border-slate-300 px-2 py-2 text-sm"><option value="10">10 px</option><option value="12">12 px</option><option value="14">14 px</option><option value="16">16 px</option><option value="18">18 px</option><option value="24">24 px</option></select></> : null}<span className="text-sm text-slate-500">{textBoxMode ? "Drag a box around the text." : circleMode ? "Drag around content to highlight it." : hasSignature ? `${placements.length} signature placement${placements.length === 1 ? "" : "s"}` : "Save a signature in Account Settings first."}</span></div><div className="flex items-center gap-2"><button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.1))} className="rounded-lg border px-3 py-2 text-sm">−</button><span className="min-w-16 text-center text-sm">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-2 text-sm">+</button></div></div>
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</div> : null}{status ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{status}</div> : null}
-        <section className="space-y-5 rounded-2xl border border-slate-200 bg-slate-950 p-4 shadow-sm">
-          {pages.map((page) => <div key={page.pageNumber} ref={(element) => { pageRefs.current[page.pageNumber] = element; }} className={`relative mx-auto overflow-visible bg-white shadow-2xl ${circleMode ? "cursor-crosshair" : ""}`} style={{ width: `${page.width * zoom}px`, aspectRatio: `${page.width} / ${page.height}` }} onPointerDown={(event) => startCircle(event, page.pageNumber)}><canvas ref={(element) => { canvasRefs.current[page.pageNumber] = element; }} className="absolute inset-0 h-full w-full" />{circles.filter((item) => item.pageNumber === page.pageNumber && item.width > 0 && item.height > 0).map((item) => <div key={item.id} className="absolute rounded-[50%] border-2 border-rose-600 bg-rose-200/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, pointerEvents: "none" }} />)}{placements.filter((item) => item.pageNumber === page.pageNumber).map((item) => <div key={item.id} className="absolute border-2 border-cyan-500 bg-cyan-100/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, touchAction: "none", transform: `rotate(${item.rotation}deg)` }} onPointerDown={(event) => startDrag(event, item, "drag")}><img src={signatureUrl || ""} alt="Saved signature" className="h-full w-full select-none object-fill" draggable={false} /><button type="button" aria-label="Rotate signature" title="Rotate signature" className="absolute -left-2 -top-7 rounded bg-cyan-700 p-1 text-white" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setPlacements((current) => current.map((value) => value.id === item.id ? { ...value, rotation: (value.rotation + 90) % 360 } : value)); }}><RotateCw className="h-3 w-3" /></button><button type="button" aria-label="Resize signature" className="absolute -bottom-2 -right-2 h-5 w-5 rounded-full border-2 border-white bg-cyan-700" onPointerDown={(event) => startDrag(event, item, "resize")} /><button type="button" aria-label="Remove signature placement" className="absolute -right-2 -top-7 rounded bg-rose-600 p-1 text-white" onClick={() => setPlacements((current) => current.filter((value) => value.id !== item.id))}><Trash2 className="h-3 w-3" /></button></div>)}</div>)}
+          <section className="space-y-5 rounded-2xl border border-slate-200 bg-slate-950 p-4 shadow-sm">
+          {pages.map((page) => <div key={page.pageNumber} ref={(element) => { pageRefs.current[page.pageNumber] = element; }} className={`relative mx-auto overflow-visible bg-white shadow-2xl ${circleMode || textBoxMode ? "cursor-crosshair" : ""}`} style={{ width: `${page.width * zoom}px`, aspectRatio: `${page.width} / ${page.height}` }} onPointerDown={(event) => { if (textBoxMode) startTextBox(event, page.pageNumber); else startCircle(event, page.pageNumber); }}><canvas ref={(element) => { canvasRefs.current[page.pageNumber] = element; }} className="absolute inset-0 h-full w-full" />{circles.filter((item) => item.pageNumber === page.pageNumber && item.width > 0 && item.height > 0).map((item) => <div key={item.id} className="absolute rounded-[50%] border-2 border-rose-600 bg-rose-200/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, pointerEvents: "none" }}><button type="button" aria-label="Delete circle" title="Delete circle" className="pointer-events-auto absolute -right-2 -top-7 rounded bg-rose-700 p-1 text-white" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setCircles((current) => current.filter((value) => value.id !== item.id)); }}><Trash2 className="h-3 w-3" /></button></div>)}{textBoxes.filter((item) => item.pageNumber === page.pageNumber && item.width > 0 && item.height > 0).map((item) => <div key={item.id} className={`absolute border border-slate-300 bg-white/70 ${selectedTextBoxId === item.id ? "ring-2 ring-slate-900" : ""}`} style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, touchAction: "none" }} onPointerDown={(event) => { event.stopPropagation(); setSelectedTextBoxId(item.id); }}><textarea value={item.text} onChange={(event) => setTextBoxes((current) => current.map((value) => value.id === item.id ? { ...value, text: event.target.value } : value))} placeholder="Text" className="h-full w-full resize-none border-0 bg-transparent p-1 outline-none" style={{ color: item.color, fontSize: `${item.fontSize}px` }} /><button type="button" aria-label="Remove text box" className="absolute -right-2 -top-7 rounded bg-rose-600 p-1 text-white" onPointerDown={(event) => event.stopPropagation()} onClick={() => { setSelectedTextBoxId(null); setTextBoxes((current) => current.filter((value) => value.id !== item.id)); }}><Trash2 className="h-3 w-3" /></button></div>)}{placements.filter((item) => item.pageNumber === page.pageNumber).map((item) => <div key={item.id} className="absolute border-2 border-cyan-500 bg-cyan-100/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, touchAction: "none", transform: `rotate(${item.rotation}deg)` }} onPointerDown={(event) => startDrag(event, item, "drag")}><img src={signatureUrl || ""} alt="Saved signature" className="h-full w-full select-none object-fill" draggable={false} /><button type="button" aria-label="Rotate signature" title="Rotate signature" className="absolute -left-2 -top-7 rounded bg-cyan-700 p-1 text-white" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setPlacements((current) => current.map((value) => value.id === item.id ? { ...value, rotation: (value.rotation + 90) % 360 } : value)); }}><RotateCw className="h-3 w-3" /></button><button type="button" aria-label="Resize signature" className="absolute -bottom-2 -right-2 h-5 w-5 rounded-full border-2 border-white bg-cyan-700" onPointerDown={(event) => startDrag(event, item, "resize")} /><button type="button" aria-label="Remove signature placement" className="absolute -right-2 -top-7 rounded bg-rose-600 p-1 text-white" onClick={() => setPlacements((current) => current.filter((value) => value.id !== item.id))}><Trash2 className="h-3 w-3" /></button></div>)}</div>)}
         </section>
       </div>
     </main>

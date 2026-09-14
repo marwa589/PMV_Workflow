@@ -85,7 +85,9 @@ export async function middleware(request: NextRequest) {
   //
   // return response;
 
-  return NextResponse.next();
+  const response = NextResponse.next();
+  ensureCsrfCookie(response, request);
+  return response;
 }
 
 export const config = {

@@ -5,6 +5,7 @@ import { compare, hash as hashPassword } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
 import { writeAuditLog } from "@/lib/audit";
+import { appConfig } from "@/lib/env";
 
 export const OTP_CHALLENGE_COOKIE = "docflow_otp_challenge";
 export const TRUSTED_DEVICE_COOKIE = "docflow_trusted_device";
@@ -28,7 +29,18 @@ function createOtpCode(): string {
   return randomInt(0, 1_000_000).toString().padStart(6, "0");
 }
 
+function assertOtpEmailIsConfigured() {
+  if (!appConfig.emailDeliveryEnabled()) {
+    throw new Error("OTP authentication is currently unavailable because email delivery is disabled.");
+  }
+
+  if (!appConfig.smtpHost() || !appConfig.smtpUser() || !appConfig.smtpPass()) {
+    throw new Error("OTP authentication is currently unavailable because email delivery is not configured.");
+  }
+}
+
 export async function createAdminOtpChallenge(user: { id: string; email: string; name: string }) {
+  assertOtpEmailIsConfigured();
   const windowStart = new Date(Date.now() - CHALLENGE_WINDOW_MS);
   const recentChallenges = await prisma.otpChallenge.count({
     where: { userId: user.id, createdAt: { gte: windowStart } },
@@ -131,7 +143,7 @@ export async function verifyAdminOtp(challengeToken: string, code: string) {
 export async function completeAdminOtpLogin(challengeToken: string, rememberDevice: boolean) {
   const challenge = await prisma.otpChallenge.findUnique({
     where: { challengeTokenHash: hashToken(challengeToken) },
-    include: { user: { select: { id: true, email: true, name: true, role: true } } },
+    include: { user: { select: { id: true, email: true, name: true, role: true, sessionVersion: true, } } },
   });
 
   if (!challenge || challenge.consumedAt || !challenge.verifiedAt || challenge.expiresAt.getTime() <= Date.now()) {

@@ -20,6 +20,11 @@ export async function sendEmail({
   subject: string;
   html: string;
 }) {
+  if (!appConfig.emailDeliveryEnabled()) {
+    console.warn("Email delivery is disabled by configuration. Skipping email send.");
+    return null;
+  }
+
   if (!appConfig.smtpHost() || !appConfig.smtpUser() || !appConfig.smtpPass()) {
     console.warn("SMTP credentials are not configured. Skipping email send.");
     return null;

@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, unlink, writeFile } from "fs/promises";
 import { PDFDocument } from "pdf-lib";
 import path from "path";
+import { randomUUID } from "node:crypto";
 
 export function getUploadRoot(): string {
   const uploadPath = process.env.UPLOAD_PATH?.trim();
@@ -9,7 +10,52 @@ export function getUploadRoot(): string {
   }
   return uploadPath;
 }
+export async function saveStoredFile(params: {
+  relativePath: string;
+  bytes: Uint8Array;
+  overwrite?: boolean;
+}): Promise<{ relativePath: string }> {
+  const normalized = params.relativePath.replaceAll("\\", "/");
 
+  const segments = normalized.split("/");
+
+  if (
+    !normalized ||
+    path.isAbsolute(normalized) ||
+    segments.some(
+      (segment) =>
+        !segment ||
+        segment === "." ||
+        segment === ".." ||
+        /[:*?"<>|\u0000-\u001f]/.test(segment),
+    )
+  ) {
+    throw new Error("Invalid storage path.");
+  }
+
+  const root = path.resolve(getUploadRoot());
+  const fullPath = path.resolve(root, ...segments);
+  const relativeToRoot = path.relative(root, fullPath);
+
+  if (
+    !relativeToRoot ||
+    relativeToRoot === ".." ||
+    relativeToRoot.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeToRoot)
+  ) {
+    throw new Error("File must remain inside the upload directory.");
+  }
+
+  await mkdir(path.dirname(fullPath), { recursive: true });
+
+  await writeFile(fullPath, params.bytes, {
+    flag: params.overwrite ? "w" : "wx",
+  });
+
+  return {
+    relativePath: relativeToRoot.replaceAll("\\", "/"),
+  };
+}
 export function resolveStoredFilePath(storedPath: string): string {
   if (path.isAbsolute(storedPath)) return storedPath;
 
@@ -56,19 +102,62 @@ function safeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, "_");
 }
 
-function documentFileName(fileName: string, identifier: string, extension: string): string {
-  const baseName = fileName.replace(/\.[^.]+$/, "");
-  return safeFileName(`${baseName}-${identifier}`) + (extension ? `.${extension}` : "");
+function documentFileName(params: {
+  fileName: string;
+  documentNumber?: string;
+  documentId: string;
+  versionNumber: number;
+  extension: string;
+}): string {
+  let baseName = params.fileName.replace(/\.[^.]+$/, "");
+  // Clean up any trailing -v[0-9]+, -signed, or existing document numbers from previous saves
+  baseName = baseName
+    .replace(/-(?:v\d+|DOC-\d+|signed)(?=-|$)/gi, "")
+    .replace(/-+$/, "")
+    .trim();
+
+  if (!baseName) {
+    baseName = "Document";
+  }
+
+  const docIdentifier = params.documentNumber || params.documentId;
+  const isSigned = params.versionNumber > 0;
+  const signedSuffix = isSigned ? "-signed" : "";
+
+  return safeFileName(`${baseName}${signedSuffix}-${docIdentifier}`) + (params.extension ? `.${params.extension}` : "");
 }
 
-export async function saveUserSignatureFile(params: { userId: string; userName: string; file: File }): Promise<{ relativePath: string }> {
-  const extension = params.file.name.includes(".") ? params.file.name.slice(params.file.name.lastIndexOf(".")) : "";
-  const fileName = safeFileName(`${params.userName}${extension}`);
-  const dir = path.join(getUploadRoot(), "Signatures", params.userId);
-  await mkdir(dir, { recursive: true });
-  const fullPath = path.join(dir, fileName);
-  await writeFile(fullPath, Buffer.from(await params.file.arrayBuffer()));
-  return { relativePath: path.relative(getUploadRoot(), fullPath).replaceAll("\\", "/") };
+export async function saveUserSignatureFile(params: {
+  userId: string;
+  userName: string;
+  file: File;
+}): Promise<{ relativePath: string }> {
+  const extension = params.file.name.includes(".")
+    ? params.file.name.slice(params.file.name.lastIndexOf("."))
+    : "";
+
+  const fileName = safeFileName(
+    `${params.userName}-${randomUUID()}${extension}`,
+  );
+
+  return saveStoredFile({
+    relativePath: `Signatures/${params.userId}/${fileName}`,
+    bytes: Buffer.from(await params.file.arrayBuffer()),
+  });
+}
+
+export async function savePurchaseOrderFile(file: File): Promise<{ relativePath: string }> {
+  const extension = file.name.includes(".")
+    ? file.name.slice(file.name.lastIndexOf("."))
+    : "";
+  const baseName = safeFileName(file.name.slice(0, file.name.length - extension.length)) || "Purchase-Order";
+  const fileName = `${baseName}${extension}`;
+
+  return saveStoredFile({
+    relativePath: `POs/${fileName}`,
+    bytes: new Uint8Array(await file.arrayBuffer()),
+    overwrite: false,
+  });
 }
 
 // Compute the structured storage directory based on document type and relationship.
@@ -111,11 +200,23 @@ export async function saveDocumentVersionFile(params: {
       mrNumber: params.mrNumber,
       hasLinkedComparison: params.hasLinkedComparison ?? false,
     });
-    fileName = documentFileName(params.file.name, `${params.documentNumber}-v${params.versionNumber}`, extension);
+    fileName = documentFileName({
+      fileName: params.file.name,
+      documentNumber: params.documentNumber,
+      documentId: params.documentId,
+      versionNumber: params.versionNumber,
+      extension,
+    });
   } else {
     // Keep approval uploads in the permanent root when document details are unavailable.
     dir = path.join(getUploadRoot(), "documents", params.documentId);
-    fileName = documentFileName(params.file.name, params.documentId, extension);
+    fileName = documentFileName({
+      fileName: params.file.name,
+      documentNumber: params.documentNumber,
+      documentId: params.documentId,
+      versionNumber: params.versionNumber,
+      extension,
+    });
   }
 
   await mkdir(dir, { recursive: true });

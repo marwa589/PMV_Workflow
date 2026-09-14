@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
+import { canAccessMrModuleForSession, isErroUser } from "@/lib/auth/resource-access";
 
 export const runtime = "nodejs";
 
@@ -10,6 +11,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
+  if (!canAccessMrModuleForSession(session)) {
+    return NextResponse.json(
+      { message: "You do not have access to MR documents." },
+      { status: 403 },
+    );
+  }
+
+  const isErro = isErroUser(session);
   const { searchParams } = new URL(request.url);
   const search = searchParams.get("search")?.trim() || "";
 
@@ -17,7 +26,7 @@ export async function GET(request: Request) {
     where: {
       documentType: "COMPARISON",
       status: "APPROVED",
-      linkedMRs: { none: {} },
+      ...(isErro ? { createdById: session.userId } : {}),
       OR: [
         { documentNumber: { contains: search, mode: "insensitive" } },
         { title: { contains: search, mode: "insensitive" } },

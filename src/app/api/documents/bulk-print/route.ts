@@ -1,11 +1,23 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { prisma } from '@/lib/prisma';
+import { canAccessMrModuleForSession } from "@/lib/auth/resource-access";
 
 export async function GET(request: Request) {
   const session = await getSession();
+
   if (!session) {
-    return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(
+      { message: "Unauthorized" },
+      { status: 401 },
+    );
+  }
+
+  if (!canAccessMrModuleForSession(session)) {
+    return NextResponse.json(
+      { message: "You do not have access to MR documents." },
+      { status: 403 },
+    );
   }
 
   const { searchParams } = new URL(request.url);

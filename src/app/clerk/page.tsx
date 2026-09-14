@@ -4,12 +4,16 @@ import DashboardShell from "@/components/dashboard-shell";
 import DocumentListTable from "@/components/document-list-table";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
+import { isErroUser } from "@/lib/auth/resource-access";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
 export default async function ClerkDashboardPage() {
   const session = await requireRole([UserRole.CLERK]);
+
+  const isErro = isErroUser(session);
+  const clerkWhere = isErro ? { createdById: session.userId } : {};
 
   let totalDocuments = 0;
   let recentDocuments: {
@@ -28,14 +32,17 @@ export default async function ClerkDashboardPage() {
   }[] = [];
   let statusCounts = {
     pending: 0,
+    revisionRequired: 0,
     approved: 0,
     rejected: 0,
   };
+  let activities: { id: string; action: string; performedAt: Date; document: { documentNumber: string; title: string } }[] = [];
 
   try {
-    const [total, recent, pendingCount, approvedCount, rejectedCount] = await Promise.all([
-      prisma.document.count(),
+    const [total, recent, pendingCount, approvedCount, rejectedCount, recentActivity] = await Promise.all([
+      prisma.document.count({ where: clerkWhere }),
       prisma.document.findMany({
+        where: clerkWhere,
         include: {
           currentApprover: { select: { name: true } },
           relatedComparison: { select: { id: true, documentNumber: true } },
@@ -51,6 +58,7 @@ export default async function ClerkDashboardPage() {
       }),
       prisma.document.count({
         where: {
+          ...clerkWhere,
           status: {
             in: [
               DocumentStatus.PENDING_APPROVER_1,
@@ -60,11 +68,13 @@ export default async function ClerkDashboardPage() {
           },
         },
       }),
-      prisma.document.count({
-        where: { status: DocumentStatus.APPROVED },
-      }),
-      prisma.document.count({
-        where: { status: DocumentStatus.REJECTED },
+      prisma.document.count({ where: { ...clerkWhere, status: DocumentStatus.APPROVED } }),
+      prisma.document.count({ where: { ...clerkWhere, status: DocumentStatus.REJECTED } }),
+      prisma.approvalHistory.findMany({
+        where: { document: { createdById: session.userId } },
+        include: { document: { select: { documentNumber: true, title: true } } },
+        orderBy: { performedAt: "desc" },
+        take: 8,
       }),
     ]);
 
@@ -72,12 +82,37 @@ export default async function ClerkDashboardPage() {
     recentDocuments = recent;
     statusCounts = {
       pending: pendingCount,
+      revisionRequired: 0,
       approved: approvedCount,
       rejected: rejectedCount,
     };
+    activities = recentActivity.map((item) => ({ ...item, action: String(item.action) }));
   } catch {
     totalDocuments = 0;
   }
+
+  const pendingDocuments = recentDocuments.filter((doc) => doc.status === DocumentStatus.PENDING_APPROVER_1 || doc.status === DocumentStatus.PENDING_APPROVER_2 || doc.status === DocumentStatus.PENDING_APPROVER_3);
+
+  return (
+    <DashboardShell role={session.role} userName={session.name} title="Dashboard" subtitle="Submit and track document workflows">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Document Dashboard</p>
+        <h2 className="mt-2 text-2xl font-semibold text-slate-900">Welcome, {session.name}</h2>
+        <p className="mt-1 text-sm text-slate-600">Review pending approvals and track your workflow activity.</p>
+      </div>
+      <PageSummaryCards cards={[
+        { label: "Pending Approval", value: String(statusCounts.pending), tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200" },
+        { label: "Revision Required", value: String(statusCounts.revisionRequired), tone: "bg-violet-50 text-violet-900 ring-1 ring-violet-200" },
+        { label: "Approved", value: String(statusCounts.approved), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
+        { label: "Rejected", value: String(statusCounts.rejected), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
+      ]} />
+      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 px-5 py-4"><h3 className="text-base font-semibold text-slate-900">Pending Approvals</h3></div>
+        <DocumentListTable documents={pendingDocuments.map((doc) => ({ id: doc.id, documentNumber: doc.documentNumber, title: doc.title, status: doc.status, documentType: doc.documentType, mrType: doc.mrType, currentVersion: doc.currentVersion, currentApproverName: doc.currentApprover?.name || null, relatedComparisonId: doc.relatedComparison?.id || null, relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null, downloadedAt: doc.downloadedAt, approvalDate: doc.approvals[0]?.performedAt || null, dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt) }))} emptyMessage="No pending approvals." showDownloadTracking />
+      </section>
+      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 px-5 py-4"><h3 className="text-base font-semibold text-slate-900">Workflow Activity</h3></div><div className="divide-y divide-slate-100">{activities.length === 0 ? <div className="px-5 py-6 text-sm text-slate-500">No workflow activity found.</div> : activities.map((item) => <div key={item.id} className="px-5 py-4"><p className="text-sm font-semibold text-slate-900">{item.document.documentNumber} - {item.document.title}</p><p className="mt-1 text-sm text-slate-700">Action: {item.action.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-slate-500">{new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(item.performedAt)}</p></div>)}</div></section>
+    </DashboardShell>
+  );
 
   return (
     <DashboardShell

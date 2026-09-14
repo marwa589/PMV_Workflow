@@ -1,7 +1,7 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient, UserRole } from "@prisma/client";
+import { PrismaClient, UserRole, ErrAccessRole } from "@prisma/client";
 
 const adapter = new PrismaPg(process.env.DATABASE_URL);
 const prisma = new PrismaClient({ adapter });
@@ -21,7 +21,7 @@ const users = [
   },
   {
     name: "Mohammad Mehieddine",
-    email: "mohammad.mehieddine@example.com",
+    email: "mohammad.mehieddine@ahmadiah.com",
     password: "mohammad123",
     role: UserRole.APPROVER_1,
   },
@@ -44,10 +44,29 @@ const users = [
     role: UserRole.CLERK,
   },
   {
+    name: "Mohamed Shawky",
+    email: "mohamed.shawky@ahmadiah.com",
+    password: "shawky123",
+    role: UserRole.CLERK,
+  },
+  {
     name: "Marwa Mehielddine",
     email: "marwameheddien2000@gmail.com",
     password: process.env.SEED_ADMIN_PASSWORD,
     role: UserRole.ADMIN,
+  },
+  {
+    name: "Reine Al Souki",
+    email: "reine.alsouki@ahmadiah.com",
+    password: process.env.SEED_ERR_UPLOADER_PASSWORD || "ReineErr123!",
+    role: UserRole.ERR_USER,
+    errAccess: [ErrAccessRole.UPLOADER],
+  },
+  {
+    name: "Jad Kabalan",
+    email: "jad.kabalan@ahmadiah.com",
+    password: "jad123",
+    role: UserRole.CLERK,
   },
 ];
 
@@ -56,74 +75,76 @@ async function main() {
   //   where: { email: "samira_rajab86@yahoo.com" },
   // });
 
-  const accountPasswords = {
-    [UserRole.APPROVER_1]: "miara123",
-    [UserRole.APPROVER_2]: "george123",
-    [UserRole.APPROVER_3]: "marc123",
-    [UserRole.ADMIN]: "admin123",
-  };
-
-  const managedUsers = users.filter((item) => item.role !== UserRole.CLERK);
-  const existingManagedUsers = [];
-  for (const user of managedUsers) {
-    const existing = await prisma.user.findFirst({ where: { role: user.role } });
-    if (existing) {
-      existingManagedUsers.push({ user, existing });
-      await prisma.user.update({
-        where: { id: existing.id },
-        data: { email: `${existing.id}@role-migration.local` },
-      });
-    }
-  }
-
-  for (const { user, existing } of existingManagedUsers) {
-    await prisma.user.update({
-      where: { id: existing.id },
-      data: {
-        name: user.name,
-        email: user.email,
-        passwordHash: await bcrypt.hash(accountPasswords[user.role], 10),
-      },
-    });
-  }
-
   for (const user of users) {
-    const passwordHash = await bcrypt.hash(user.password, 10);
+  const existingUser = await prisma.user.findUnique({
+    where: { email: user.email },
+    select: { id: true },
+  });
 
-    await prisma.user.upsert({
-      where: { email: user.email },
-      update: {
-        name: user.name,
-        role: user.role,
-        passwordHash,
-      },
-      create: {
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        passwordHash,
-      },
+  if (typeof user.password !== "string" || !user.password) {
+    throw new Error(`Missing initial password for ${user.email}`);
+  }
+
+  const passwordHash = await bcrypt.hash(user.password, 12);
+
+  if (existingUser) {
+    console.log(`Skipped existing user: ${user.email}`);
+
+    if (user.errAccess?.length) {
+      const userRecord = await prisma.user.findUnique({
+        where: { email: user.email },
+        select: { id: true },
+      });
+
+      if (userRecord) {
+        for (const role of user.errAccess) {
+          await prisma.errUserAccess.upsert({
+            where: {
+              userId_role_projectId: {
+                userId: userRecord.id,
+                role,
+                projectId: null,
+              },
+            },
+            update: { isActive: true },
+            create: {
+              userId: userRecord.id,
+              role,
+              projectId: null,
+              isActive: true,
+            },
+          });
+        }
+      }
+    }
+
+    continue;
+  }
+
+  const createdUser = await prisma.user.create({
+    data: {
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      passwordHash,
+    },
+  });
+
+  if (user.errAccess?.length) {
+    await prisma.errUserAccess.createMany({
+      data: user.errAccess.map((role) => ({
+        userId: createdUser.id,
+        role,
+        projectId: null,
+        isActive: true,
+      })),
     });
   }
 
-  const oldClerk = await prisma.user.findUnique({ where: { email: "clerk@example.com" }, select: { id: true } });
-  const aqueel = await prisma.user.findUnique({ where: { email: "aqueel.sayed@ahmadiah.com" }, select: { id: true } });
-  if (oldClerk && aqueel) {
-    await prisma.$transaction(async (tx) => {
-      await tx.document.updateMany({ where: { createdById: oldClerk.id }, data: { createdById: aqueel.id } });
-      await tx.documentVersion.updateMany({ where: { uploadedById: oldClerk.id }, data: { uploadedById: aqueel.id } });
-      await tx.approvalHistory.updateMany({ where: { performedById: oldClerk.id }, data: { performedById: aqueel.id } });
-      await tx.deletionRequest.updateMany({ where: { requestedById: oldClerk.id }, data: { requestedById: aqueel.id } });
-      await tx.notification.updateMany({ where: { userId: oldClerk.id }, data: { userId: aqueel.id } });
-      await tx.emailNotificationEvent.updateMany({ where: { recipientId: oldClerk.id }, data: { recipientId: aqueel.id } });
-      await tx.auditLog.updateMany({ where: { performedById: oldClerk.id }, data: { performedById: aqueel.id } });
-      await tx.trustedDevice.updateMany({ where: { userId: oldClerk.id }, data: { userId: aqueel.id } });
-      await tx.otpChallenge.updateMany({ where: { userId: oldClerk.id }, data: { userId: aqueel.id } });
-      await tx.user.delete({ where: { id: oldClerk.id } });
-    });
-  }
+  console.log(`Ensured account exists: ${user.email}`);
+}
 
-  console.log(`Seeded ${users.length} users.`);
+  console.log("Seed complete. Existing accounts were left unchanged.");
 }
 
 main()

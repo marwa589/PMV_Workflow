@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ApproverArchivePage() {
   const session = await requireRole([UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]);
-  const data = await getDocumentsForApprover(session.userId, session.role);
+  const data = await getDocumentsForApprover(session.userId, session.role, session.name);
 
   const documents = data.myDocuments
     .filter((doc) => doc.status === DocumentStatus.ARCHIVED)
@@ -41,7 +41,7 @@ export default async function ApproverArchivePage() {
         <div className="border-b border-slate-200 px-5 py-4">
           <h3 className="text-base font-semibold text-slate-900">Archive</h3>
         </div>
-        <DocumentListTable documents={documents} emptyMessage="No archived documents found." />
+        <DocumentListTable documents={documents} emptyMessage="No archived documents found." showBulkActions />
       </section>
     </DashboardShell>
   );

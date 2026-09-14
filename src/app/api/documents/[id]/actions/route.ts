@@ -8,6 +8,7 @@ import { APPROVER_WORKFLOW, getWorkflowAuthorizationPolicy, isApproverRole } fro
 import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 import { writeAuditLog } from "@/lib/audit";
 import { runInBackground } from "@/lib/background";
+import { canAccessMrModuleForSession } from "@/lib/auth/resource-access";
 
 export const runtime = "nodejs";
 
@@ -22,7 +23,7 @@ export async function POST(
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  if (!isApproverRole(session.role)) {
+  if (!isApproverRole(session.role) || !canAccessMrModuleForSession(session)) {
     return NextResponse.json({ message: "Only approvers can perform this action." }, { status: 403 });
   }
 
@@ -326,13 +327,18 @@ export async function POST(
           const merged = await mergePdfFiles({
             firstFilePath: comparisonVersion.filePath,
             secondFilePath: saved.relativePath,
-            fileName: `${document.title} + ${comparison.title}`,
+            fileName: `${document.mrNumber || document.documentNumber} - ${document.title} + ${comparison.title}`,
           });
           finalFilePath = merged.relativePath;
-          finalOriginalName = `${document.title} + ${comparison.title}.pdf`;
+          finalOriginalName = `${document.mrNumber || document.documentNumber} - ${document.title} + ${comparison.title}.pdf`;
           mergedSourcePaths = [saved.relativePath];
         }
       }
+
+      const previousVersions = await tx.documentVersion.findMany({
+        where: { documentId: document.id },
+        select: { id: true, filePath: true },
+      });
 
       const newVersion = await tx.documentVersion.create({
         data: {
@@ -346,16 +352,6 @@ export async function POST(
           uploadedById: session.userId,
         },
       });
-
-      const versionsToDeleteAfterCommit = workflow.nextApproverRole
-        ? []
-        : await tx.documentVersion.findMany({
-            where: {
-              documentId: document.id,
-              versionNumber: { lt: nextVersionNumber },
-            },
-            select: { filePath: true },
-          });
 
       let nextApproverId: string | null = null;
       if (workflow.nextApproverRole) {
@@ -382,14 +378,12 @@ export async function POST(
         },
       });
 
-      if (!workflow.nextApproverRole) {
-        await tx.documentVersion.deleteMany({
-          where: {
-            documentId: document.id,
-            versionNumber: { lt: nextVersionNumber },
-          },
-        });
-      }
+      await tx.documentVersion.deleteMany({
+        where: {
+          documentId: document.id,
+          versionNumber: { lt: nextVersionNumber },
+        },
+      });
 
       await tx.approvalHistory.create({
         data: {
@@ -443,7 +437,7 @@ export async function POST(
       return {
         status: workflow.nextStatus,
         currentVersion: nextVersionNumber,
-        versionsToDeleteAfterCommit,
+        previousFilePaths: previousVersions.map((v) => v.filePath),
         currentFilePath: finalFilePath,
         mergedSourcePaths,
         emailRecipientId: nextApproverId || document.createdById,
@@ -463,29 +457,23 @@ export async function POST(
       });
     }
 
-    if (result.status === DocumentStatus.APPROVED) {
-      const versionsToDeleteAfterCommit = (
-        result as typeof result & { versionsToDeleteAfterCommit?: { filePath: string }[] }
-      ).versionsToDeleteAfterCommit || [];
-      const currentFilePath = (
-        result as typeof result & { currentFilePath?: string }
-      ).currentFilePath;
-      const mergedSourcePaths = (
-        result as typeof result & { mergedSourcePaths?: string[] }
-      ).mergedSourcePaths || [];
+    // Clean up all previous version files on disk at every stage so only one file remains
+    const filesToClean = [
+      ...(result.previousFilePaths || []),
+      ...(result.mergedSourcePaths || []),
+    ];
 
-      await Promise.all(
-        [...versionsToDeleteAfterCommit.map((version) => version.filePath), ...mergedSourcePaths].map(async (filePath) => {
-          if (filePath === currentFilePath) return;
-          try {
-            await deleteDocumentFiles({ filePaths: [filePath] });
-          } catch {
-            // Ignore missing files so approval still succeeds.
-          }
-        }),
-      );
-      console.info(`[actions] File cleanup completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
-    }
+    await Promise.all(
+      filesToClean.map(async (filePath) => {
+        if (filePath === result.currentFilePath) return;
+        try {
+          await deleteDocumentFiles({ filePaths: [filePath] });
+        } catch {
+          // Ignore missing files so approval still succeeds.
+        }
+      }),
+    );
+    console.info(`[actions] File cleanup completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
 
     const documentForEmail = await prisma.document.findUnique({
       where: { id: documentId },
@@ -552,18 +540,35 @@ export async function POST(
       const approvedRecipientEmail = documentForEmail?.documentType === "COMPARISON"
         ? ["aqueel.sayed@ahmadiah.com", "mohamed.mahmoud@ahmadiah.com"]
         : ["omar.merzek@ahmadiah.com"];
-        const rejectedRecipientEmail = documentForEmail?.documentType === "COMPARISON"
-? ["mohamed.mahmoud@ahmadiah.com"]
-: ["aqueel.sayed@ahmadiah.com"];
+      const rejectedRecipientEmail = documentForEmail?.documentType === "COMPARISON"
+        ? ["mohamed.mahmoud@ahmadiah.com"]
+        : ["aqueel.sayed@ahmadiah.com"];
+
+      const targetEmails = result.status === DocumentStatus.APPROVED
+        ? [...approvedRecipientEmail]
+        : [...rejectedRecipientEmail];
+
+      if (
+        result.status === DocumentStatus.APPROVED &&
+        documentForEmail?.documentType === "COMPARISON" &&
+        documentForEmail?.createdBy?.email
+      ) {
+        const creatorEmail = documentForEmail.createdBy.email.trim().toLowerCase();
+        const creatorName = documentForEmail.createdBy.name?.trim().toLowerCase().replace(/\s+/g, " ");
+        if (creatorEmail === "dispatcher.pmv@ahmadiah.com" || creatorName === "erro almacen") {
+          if (!targetEmails.includes(documentForEmail.createdBy.email)) {
+            targetEmails.push(documentForEmail.createdBy.email);
+          }
+        }
+      }
+
       const clerkRecipients = await prisma.user.findMany({
         where: {
-role: UserRole.CLERK,
-email: {
-in: result.status === DocumentStatus.APPROVED
-? approvedRecipientEmail
-: rejectedRecipientEmail,
-},
-},
+          role: UserRole.CLERK,
+          email: {
+            in: targetEmails,
+          },
+        },
         select: { id: true, email: true },
       });
       const emailType = result.status === DocumentStatus.APPROVED ? "WORKFLOW_APPROVED" : "WORKFLOW_REJECTED";

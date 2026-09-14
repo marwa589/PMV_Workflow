@@ -22,12 +22,26 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
   const approvalTo = typeof resolvedSearchParams?.approvalTo === "string" ? resolvedSearchParams.approvalTo : "";
   const searchQuery = parseSearchQuery(resolvedSearchParams?.search);
 
-  const pageTitle = documentTypeFilter === "MATERIAL_REQUISITION" ? "MRs" : documentTypeFilter === "COMPARISON" ? "Comparison Sheets" : "Documents";
-  const pageSubtitle = documentTypeFilter === "MATERIAL_REQUISITION"
-    ? "Clerk material requisition submissions"
-    : documentTypeFilter === "COMPARISON"
-      ? "Clerk comparison sheet submissions"
-      : "All workflow documents";
+  const isStatusSpecificPage = statusFilter === "REVISION_REQUIRED" || statusFilter === "REJECTED";
+  const isRevisionOrRejectedPage = statusFilter === "REVISION_REQUIRED" || statusFilter === "REJECTED";
+
+  const pageTitle = statusFilter === "REVISION_REQUIRED"
+      ? "Revision Required"
+      : statusFilter === "REJECTED"
+        ? "Rejected Documents"
+      : documentTypeFilter === "MATERIAL_REQUISITION"
+        ? "MRs"
+        : documentTypeFilter === "COMPARISON"
+          ? "Comparison Sheets"
+          : "Documents";
+
+  const pageSubtitle = statusFilter === "REVISION_REQUIRED"
+      ? "Clerk revision required documents"
+      : documentTypeFilter === "MATERIAL_REQUISITION"
+        ? "Clerk material requisition submissions"
+        : documentTypeFilter === "COMPARISON"
+          ? "Clerk comparison sheet submissions"
+          : "All workflow documents";
 
   const documents = data.documents
     .filter((doc) => !statusFilter || doc.status === statusFilter)
@@ -68,23 +82,48 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
     rejected: documents.filter((doc) => doc.status === DocumentStatus.REJECTED).length,
   };
 
+  const cards = isStatusSpecificPage
+    ? isRevisionOrRejectedPage
+      ? [
+        { label: "Assigned/Handled", value: String(summaryCounts.total), tone: "bg-slate-900 text-white" },
+        { label: "MR Credits", value: String(documents.filter((doc) => doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === "CREDIT").length), tone: "bg-violet-50 text-violet-900 ring-1 ring-violet-200" },
+        { label: "MR Cash", value: String(documents.filter((doc) => doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === "CASH").length), tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200" },
+        { label: "Comparisons", value: String(documents.filter((doc) => doc.documentType === "COMPARISON").length), tone: "bg-sky-50 text-sky-900 ring-1 ring-sky-200" },
+      ]
+      : [
+        { label: "Assigned/Handled", value: String(summaryCounts.total), tone: "bg-slate-900 text-white" },
+        { label: "MRs", value: String(documents.filter((doc) => doc.documentType === "MATERIAL_REQUISITION").length), tone: "bg-slate-50 text-slate-900 ring-1 ring-slate-200" },
+        { label: "Comparison Sheets", value: String(documents.filter((doc) => doc.documentType === "COMPARISON").length), tone: "bg-sky-50 text-sky-900 ring-1 ring-sky-200" },
+      ]
+    : [
+        { label: "Assigned/Handled", value: String(summaryCounts.total), tone: "bg-slate-900 text-white" },
+        { label: "Pending", value: String(summaryCounts.pending), tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200" },
+        { label: "Approved", value: String(summaryCounts.approved), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
+        { label: "Rejected", value: String(summaryCounts.rejected), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
+      ];
+
   return (
     <DashboardShell role={session.role} userName={session.name} title={pageTitle} subtitle={pageSubtitle}>
-      <PageSummaryCards
-        cards={[
-          { label: "Total Documents", value: String(summaryCounts.total), tone: "bg-slate-900 text-white" },
-          { label: "Pending", value: String(summaryCounts.pending), tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200" },
-          { label: "Approved", value: String(summaryCounts.approved), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
-          { label: "Rejected", value: String(summaryCounts.rejected), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
-        ]}
-      />
+      <PageSummaryCards cards={cards} />
 
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">
-          <h3 className="text-base font-semibold text-slate-900">All Documents</h3>
+          <h3 className="text-base font-semibold text-slate-900">{pageTitle}</h3>
         </div>
         <div className="border-b border-slate-200 px-5 py-4">
-          <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} mrType={mrTypeFilter} showMrTypeFilter downloadStatus={downloadStatusFilter} approvalFrom={approvalFrom} approvalTo={approvalTo} showDownloadFilters />
+          <DocumentStatusFilter
+            value={statusFilter}
+            documentType={documentTypeFilter}
+            mrType={mrTypeFilter}
+            showMrTypeFilter
+            downloadStatus={downloadStatusFilter}
+            approvalFrom={approvalFrom}
+            approvalTo={approvalTo}
+            showDownloadFilters
+            showDocumentTypeFilter={isStatusSpecificPage || !documentTypeFilter}
+            showErrDocumentType={false}
+            showStatusFilter={!isStatusSpecificPage}
+          />
         </div>
         <DocumentListTable documents={filteredDocuments} emptyMessage="No clerk documents found." showBulkActions allowBulkDelete showDownloadTracking />
       </section>
