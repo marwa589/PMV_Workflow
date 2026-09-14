@@ -58,7 +58,7 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "My Documents", href: "/clerk/my-documents", icon: FileText },
     { label: "MRs", href: "/clerk/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "Comparison Sheets", href: "/clerk/my-documents?documentType=COMPARISON", icon: FileText },
-    { label: "Rejected Documents", href: "/clerk/my-documents?status=REJECTED", icon: FileCheck2 },
+    { label: "Rejected Documents", href: "/clerk/rejected-documents", icon: FileCheck2 },
     { label: "Revision Required", href: "/clerk/my-documents?status=REVISION_REQUIRED", icon: ClipboardCheck },
     { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
   ],

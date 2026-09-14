@@ -51,7 +51,7 @@ model Document {
   currentApproverAssignedAt DateTime?
   downloadedAt             DateTime?
   mrNumber                  String?
-  relatedComparisonId       String?           @unique
+  relatedComparisonId       String?
   lastActiveStage           DocumentStatus?
   approvals                 ApprovalHistory[]
   deletionRequests          DeletionRequest[] @relation("DeletionRequests")

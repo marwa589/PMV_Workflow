@@ -326,10 +326,10 @@ export async function POST(
           const merged = await mergePdfFiles({
             firstFilePath: comparisonVersion.filePath,
             secondFilePath: saved.relativePath,
-            fileName: `${document.title} + ${comparison.title}`,
+            fileName: `${document.mrNumber || document.documentNumber} - ${document.title} + ${comparison.title}`,
           });
           finalFilePath = merged.relativePath;
-          finalOriginalName = `${document.title} + ${comparison.title}.pdf`;
+          finalOriginalName = `${document.mrNumber || document.documentNumber} - ${document.title} + ${comparison.title}.pdf`;
           mergedSourcePaths = [saved.relativePath];
         }
       }
@@ -553,17 +553,16 @@ export async function POST(
         ? ["aqueel.sayed@ahmadiah.com", "mohamed.mahmoud@ahmadiah.com"]
         : ["omar.merzek@ahmadiah.com"];
         const rejectedRecipientEmail = documentForEmail?.documentType === "COMPARISON"
-? ["mohamed.mahmoud@ahmadiah.com"]
-: ["aqueel.sayed@ahmadiah.com"];
+? ["mohamed.mahmoud@ahmadiah.com","george.azzi@ahmadiah.com"]
+: ["aqueel.sayed@ahmadiah.com", "george.azzi@ahmadiah.com"];
       const clerkRecipients = await prisma.user.findMany({
         where: {
-role: UserRole.CLERK,
-email: {
-in: result.status === DocumentStatus.APPROVED
-? approvedRecipientEmail
-: rejectedRecipientEmail,
-},
-},
+          email: {
+            in: result.status === DocumentStatus.APPROVED
+              ? approvedRecipientEmail
+              : rejectedRecipientEmail,
+          },
+        },
         select: { id: true, email: true },
       });
       const emailType = result.status === DocumentStatus.APPROVED ? "WORKFLOW_APPROVED" : "WORKFLOW_REJECTED";

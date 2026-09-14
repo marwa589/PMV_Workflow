@@ -44,6 +44,12 @@ const users = [
     role: UserRole.CLERK,
   },
   {
+    name: "Mohamed Shawky",
+    email: "mohamed.shawky@ahmadiah.com",
+    password: "shawky123",
+    role: UserRole.CLERK,
+  },
+  {
     name: "Marwa Mehielddine",
     email: "marwameheddien2000@gmail.com",
     password: process.env.SEED_ADMIN_PASSWORD,
@@ -52,40 +58,12 @@ const users = [
 ];
 
 async function main() {
-  // await prisma.user.deleteMany({
-  //   where: { email: "samira_rajab86@yahoo.com" },
-  // });
-
   const accountPasswords = {
     [UserRole.APPROVER_1]: "miara123",
     [UserRole.APPROVER_2]: "george123",
     [UserRole.APPROVER_3]: "marc123",
     [UserRole.ADMIN]: "admin123",
   };
-
-  const managedUsers = users.filter((item) => item.role !== UserRole.CLERK);
-  const existingManagedUsers = [];
-  for (const user of managedUsers) {
-    const existing = await prisma.user.findFirst({ where: { role: user.role } });
-    if (existing) {
-      existingManagedUsers.push({ user, existing });
-      await prisma.user.update({
-        where: { id: existing.id },
-        data: { email: `${existing.id}@role-migration.local` },
-      });
-    }
-  }
-
-  for (const { user, existing } of existingManagedUsers) {
-    await prisma.user.update({
-      where: { id: existing.id },
-      data: {
-        name: user.name,
-        email: user.email,
-        passwordHash: await bcrypt.hash(accountPasswords[user.role], 10),
-      },
-    });
-  }
 
   for (const user of users) {
     const passwordHash = await bcrypt.hash(user.password, 10);

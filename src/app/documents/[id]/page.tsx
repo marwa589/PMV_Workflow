@@ -255,16 +255,24 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
         </div>
       ) : null}
 
-      {document.documentType === "COMPARISON" && document.linkedMRs[0] ? (
+      {document.documentType === "COMPARISON" && document.linkedMRs.length > 0 ? (
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold text-slate-900">Linked MR</p>
-              <p className="mt-1 text-sm text-slate-600">{document.linkedMRs[0].title}</p>
+              <p className="text-sm font-semibold text-slate-900">Linked MRs</p>
+              <div className="mt-1 space-y-1 text-sm text-slate-600">
+                {document.linkedMRs.map((linkedMr) => (
+                  <p key={linkedMr.id}>{linkedMr.documentNumber}: {linkedMr.title}</p>
+                ))}
+              </div>
             </div>
-            <Link href={`/documents/${document.linkedMRs[0].id}`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-              Open MR
-            </Link>
+            <div className="flex flex-wrap gap-2">
+              {document.linkedMRs.map((linkedMr) => (
+                <Link key={linkedMr.id} href={`/documents/${linkedMr.id}`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                  Open {linkedMr.documentNumber}
+                </Link>
+              ))}
+            </div>
           </div>
         </div>
       ) : null}

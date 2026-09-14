@@ -65,10 +65,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Only material requisitions can link a comparison." }, { status: 400 });
   }
 
-  if (relatedComparisonId && files.length > 1) {
-    return NextResponse.json({ message: "A related comparison can only be linked to one MR." }, { status: 400 });
-  }
-
   const approver2 = await prisma.user.findFirst({
     where: { role: UserRole.APPROVER_2 },
     select: { id: true, email: true, name: true },
@@ -84,9 +80,13 @@ export async function POST(request: Request) {
   if (!approver3) {
     return NextResponse.json({ message: "PMV Manager account is missing." }, { status: 400 });
   }
-  const initialApprover = documentType === "COMPARISON" && comparisonType === "SPARE_PARTS" ? approver2 : approver3;
+
+  // MRS ALSO APPROVER 2
+  const requiresApprover2 = documentType ==='MATERIAL_REQUISITION' || (documentType === "COMPARISON" && comparisonType === "SPARE_PARTS");
+  const initialApprover = requiresApprover2 ? approver2 : approver3;
+
   if (!initialApprover) {
-    return NextResponse.json({ message: "Workshop Manager account is missing for Spare Parts comparisons." }, { status: 400 });
+    return NextResponse.json({ message: requiresApprover2 ? "Workshop Manager account is missing for Spare Parts comparisons." : "PMV Manager account is missing." }, { status: 400 });
   }
 
   try {
@@ -97,12 +97,11 @@ export async function POST(request: Request) {
             id: relatedComparisonId,
             documentType: DocumentType.COMPARISON,
             status: DocumentStatus.APPROVED,
-            linkedMRs: { none: {} },
           },
           select: { id: true },
         });
         if (!comparison) {
-          throw new Error("The selected comparison is no longer available or is already linked to an MR.");
+          throw new Error("The selected comparison is no longer available or is not approved.");
         }
       }
 
