@@ -22,7 +22,10 @@ export default async function ApproverDocumentReviewPage({ params }: { params: P
     select: { email: true, signaturePath: true },
   });
 
-  const allowNoSignature = user?.email?.toLowerCase() === "mohammad.mehieddine@ahmadiah.com";
+  const allowNoSignature = [
+    "mohammad.mehieddine@ahmadiah.com",
+    "joemar.paraiso@ahmadiah.com",
+  ].includes(user?.email?.trim().toLowerCase() || "");
 
   return (
     <DocumentReviewEditor

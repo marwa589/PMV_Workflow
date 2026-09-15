@@ -1,10 +1,11 @@
 import { ApprovalActionType, DocumentStatus, DocumentType, MrType, Prisma, UserRole, UserLocation } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { copyComparisonToMrFolder, saveDocumentVersionFile } from "@/lib/files";
+import { saveDocumentVersionFile } from "@/lib/files";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 import { resolveWorkflowApproverIdsForUploader } from "@/lib/workflow-locations";
+import { documentStorageFolder } from "@/lib/storage-layout";
 
 export const runtime = "nodejs";
 
@@ -124,7 +125,7 @@ export async function POST(request: Request) {
         }
       }
 
-      const createdDocuments = [] as Array<{ id: string; documentNumber: string; title: string; compVersionForCopy: { filePath: string; originalName: string } | null; mrNumberForCopy: string | null }>;
+      const createdDocuments = [] as Array<{ id: string; documentNumber: string; title: string }>;
 
       for (const [index, file] of files.entries()) {
         const documentNumber = await nextDocumentNumber(tx);
@@ -156,7 +157,13 @@ export async function POST(request: Request) {
           data: documentData,
         });
 
-        const isMrLinked = normalizedDocumentType === DocumentType.MATERIAL_REQUISITION && !!relatedComparisonId && !!mrNumber;
+        const isMrLinked = normalizedDocumentType === DocumentType.MATERIAL_REQUISITION && !!relatedComparisonId;
+        const storageFolder = documentStorageFolder({
+          uploaderEmail: uploader.email,
+          documentType: normalizedDocumentType === DocumentType.COMPARISON ? "COMPARISON" : "MATERIAL_REQUISITION",
+          mrType: normalizedMrType === MrType.CREDIT ? "CREDIT" : normalizedMrType === MrType.CASH ? "CASH" : null,
+          hasLinkedComparison: isMrLinked,
+        });
         const saved = await saveDocumentVersionFile({
           documentId: document.id,
           versionNumber: 0,
@@ -165,23 +172,17 @@ export async function POST(request: Request) {
           documentNumber,
           mrNumber: documentType === "MATERIAL_REQUISITION" ? mrNumber || null : null,
           hasLinkedComparison: isMrLinked,
+          uploaderEmail: uploader.email,
+          mrType: normalizedMrType === MrType.CREDIT ? "CREDIT" : normalizedMrType === MrType.CASH ? "CASH" : null,
+          storageFolder,
         });
-
-        // If MR links a comparison, record its comparison path for post-transaction copy
-        let compVersionForCopy: { filePath: string; originalName: string } | null = null;
-        if (isMrLinked) {
-          compVersionForCopy = await tx.documentVersion.findFirst({
-            where: { documentId: relatedComparisonId },
-            orderBy: { versionNumber: "desc" },
-            select: { filePath: true, originalName: true },
-          });
-        }
 
         const version = await tx.documentVersion.create({
           data: {
             documentId: document.id,
             versionNumber: 0,
             filePath: saved.relativePath,
+            storageFolder: saved.storageFolder,
             originalName: file.name,
             extension: saved.extension,
             mimeType: file.type || "application/octet-stream",
@@ -200,24 +201,11 @@ export async function POST(request: Request) {
           },
         });
 
-        createdDocuments.push({ id: document.id, documentNumber: document.documentNumber, title: perFileTitle, compVersionForCopy, mrNumberForCopy: isMrLinked ? mrNumber : null });
+        createdDocuments.push({ id: document.id, documentNumber: document.documentNumber, title: perFileTitle });
       }
 
       return createdDocuments;
     });
-
-    // Copy comparison files into MRs+Comparisons folder after transaction (file ops outside tx)
-    await Promise.all(
-      result.map(async (doc) => {
-        if (doc.compVersionForCopy && doc.mrNumberForCopy) {
-          await copyComparisonToMrFolder({
-            comparisonFilePath: doc.compVersionForCopy.filePath,
-            comparisonOriginalName: doc.compVersionForCopy.originalName,
-            mrNumber: doc.mrNumberForCopy,
-          });
-        }
-      }),
-    );
 
     await queueWorkflowEmailEvents(
       result.map((document) => ({

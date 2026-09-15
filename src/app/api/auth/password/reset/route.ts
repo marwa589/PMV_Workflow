@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { hash } from "bcryptjs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getRequestOrigin } from "@/lib/request-origin";
 import { clearSessionCookie } from "@/lib/auth/session";
 import {
   OTP_CHALLENGE_COOKIE,
@@ -23,9 +24,7 @@ function invalidLinkResponse() {
 
 export async function POST(request: Request) {
   try {
-    const expectedOrigin = new URL(
-      process.env.APP_URL || "http://localhost:3001",
-    ).origin;
+    const expectedOrigin = getRequestOrigin(request);
 
     if (request.headers.get("origin") !== expectedOrigin) {
       return NextResponse.json(

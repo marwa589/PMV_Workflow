@@ -4,9 +4,9 @@ import DocumentListTable from "@/components/document-list-table";
 import DocumentStatusFilter from "@/components/document-status-filter";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
-import { parseDocumentStatusFilter, parseDocumentTypeFilter, parseMrTypeFilter } from "@/lib/document-status";
+import { getPoStatus, parseDocumentStatusFilter, parseDocumentTypeFilter, parseMrTypeFilter, parsePoStatusFilter } from "@/lib/document-status";
 import { parseSearchQuery, matchesDocumentSearch } from "@/lib/document-search";
-import { getDocumentsForAdmin } from "@/lib/document-queries";
+import { getDocumentsForAdmin, getPurchaseOrderStatuses } from "@/lib/document-queries";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +17,8 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
   const statusFilter = parseDocumentStatusFilter(resolvedSearchParams?.status);
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
   const mrTypeFilter = parseMrTypeFilter(resolvedSearchParams?.mrType);
+  const poStatusFilter = parsePoStatusFilter(resolvedSearchParams?.poStatus);
+  const poStatuses = await getPurchaseOrderStatuses(data.documents.map((doc) => doc.id));
   const searchQuery = parseSearchQuery(resolvedSearchParams?.search);
 
   const isStatusSpecificPage = statusFilter === "REVISION_REQUIRED";
@@ -50,6 +52,7 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
       .filter((doc) => !statusFilter || doc.status === statusFilter)
       .filter((doc) => !documentTypeFilter || doc.documentType === documentTypeFilter)
       .filter((doc) => !mrTypeFilter || (doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === mrTypeFilter))
+      .filter((doc) => !poStatusFilter || getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id)) === poStatusFilter)
       .map((doc) => ({
     id: doc.id,
     documentNumber: doc.documentNumber,
@@ -57,6 +60,7 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
     status: doc.status,
     documentType: doc.documentType,
     mrType: doc.mrType,
+    poStatus: getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id)),
     currentVersion: doc.currentVersion,
     currentApproverName: doc.currentApprover?.name || null,
     relatedComparisonId: doc.relatedComparison?.id || null,
@@ -75,6 +79,7 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
         status: doc.status,
         documentType: "ERR" as const,
         mrType: null,
+        poStatus: "NOT_APPLICABLE" as const,
         currentVersion: 1,
         currentApproverName: doc.currentApprover?.name || null,
         relatedComparisonId: null,
@@ -101,7 +106,7 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
       ]
     : [
         { label: "Assigned/Handled", value: String(summaryCounts.total), tone: "bg-slate-900 text-white" },
-        { label: "Pending", value: String(summaryCounts.pending), tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200" },
+        { label: "Pending", value: String(summaryCounts.pending), tone: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200" },
         { label: "Approved", value: String(summaryCounts.approved), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
         { label: "Rejected", value: String(summaryCounts.rejected), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
       ];
@@ -119,6 +124,8 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
             documentType={documentTypeFilter}
             mrType={mrTypeFilter}
             showMrTypeFilter
+            showPoStatusFilter
+            poStatus={poStatusFilter}
             showDocumentTypeFilter={isStatusSpecificPage || !documentTypeFilter}
             showStatusFilter={!isStatusSpecificPage}
           />

@@ -34,6 +34,7 @@ export async function saveErrPdf(params: {
 
   return {
     filePath: saved.relativePath,
+    storageFolder: params.storageFolder ?? null,
     originalName: params.pdf.originalName,
     mimeType: params.pdf.mimeType,
     fileSize: params.pdf.fileSize,
@@ -67,6 +68,7 @@ export async function saveErrFile(params: {
 
   return {
     filePath: saved.relativePath,
+    storageFolder: params.storageFolder ?? null,
     originalName: params.file.name,
     mimeType: params.file.type || "application/octet-stream",
     fileSize: params.file.size,

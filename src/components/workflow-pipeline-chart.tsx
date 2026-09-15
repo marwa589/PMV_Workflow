@@ -85,11 +85,11 @@ export default function WorkflowPipelineChart({ stages, documents }: Props) {
                 className={`rounded-2xl border p-3 text-left transition ${
                   isActive
                     ? stage.key === 'APPROVER_1'
-                      ? 'border-amber-200 bg-amber-50 text-amber-900 shadow-sm ring-1 ring-amber-200'
+                      ? 'border-yellow-200 bg-yellow-50 text-yellow-900 shadow-sm ring-1 ring-yellow-200'
                       : stage.key === 'APPROVER_2'
-                        ? 'border-sky-200 bg-sky-50 text-sky-900 shadow-sm ring-1 ring-sky-200'
+                        ? 'border-yellow-200 bg-yellow-50 text-yellow-900 shadow-sm ring-1 ring-yellow-200'
                         : stage.key === 'APPROVER_3'
-                          ? 'border-violet-200 bg-violet-50 text-violet-900 shadow-sm ring-1 ring-violet-200'
+                          ? 'border-yellow-200 bg-yellow-50 text-yellow-900 shadow-sm ring-1 ring-yellow-200'
                           : stage.key === 'REVISION_REQUIRED'
                             ? 'border-orange-200 bg-orange-50 text-orange-900 shadow-sm ring-1 ring-orange-200'
                             : stage.key === 'APPROVED'

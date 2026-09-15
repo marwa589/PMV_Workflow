@@ -232,7 +232,7 @@ export default async function ApproverDashboardPage() {
       </div>
 
       <div className={`grid grid-cols-1 gap-4 ${session.role === UserRole.APPROVER_3 ? "md:grid-cols-5" : "md:grid-cols-4"}`}>
-        <article className="rounded-2xl bg-slate-50 p-5 text-slate-900 ring-1 ring-slate-200 shadow-sm">
+        <article className="rounded-2xl bg-yellow-50 p-5 text-yellow-900 ring-1 ring-yellow-200 shadow-sm">
           <p className="text-sm font-medium">Pending Approval</p>
           <p className="mt-3 text-3xl font-semibold">{pendingCount}</p>
         </article>

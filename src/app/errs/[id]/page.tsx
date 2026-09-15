@@ -52,8 +52,8 @@ const actionLabels: Record<string, string> = {
   RESUMED: "Resumed",
   RESUBMITTED: "Resubmitted",
   COMMENTED: "Commented",
-  RELEASE_VOUCHER_ADDED: "Release voucher added & merged",
-  RECEIPT_VOUCHER_ADDED: "Receipt voucher added & merged",
+  RELEASE_VOUCHER_ADDED: "Release voucher added",
+  RECEIPT_VOUCHER_ADDED: "Receipt voucher added",
 };
 
 function formatDate(date: Date) {
@@ -186,13 +186,14 @@ export default async function ErrDetailsPage({ params }: Props) {
           className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
           target="_blank"
           rel="noopener noreferrer"
+          download
         >
           <Download className="h-4 w-4" />
           Download current file
         </a>
 
         <a
-          href={`/api/errs/${id}/download?kind=ERR_PDF`}
+          href={`/api/errs/${id}/download?kind=ERR_PDF&inline=1`}
           className="inline-flex items-center gap-2 rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-medium text-cyan-800 hover:bg-cyan-100"
           target="_blank"
           rel="noopener noreferrer"
@@ -390,7 +391,7 @@ export default async function ErrDetailsPage({ params }: Props) {
                 </span>
                 {hasReleaseVoucher ? (
                   <span className="inline-flex items-center gap-1 text-xs font-medium text-sky-700">
-                    <CheckCircle2 className="h-4 w-4" /> Merged in ERR+Release
+                    <CheckCircle2 className="h-4 w-4" /> Uploaded
                   </span>
                 ) : isApproved ? (
                   <span className="text-xs font-medium text-amber-600">Awaiting Upload</span>
@@ -401,9 +402,9 @@ export default async function ErrDetailsPage({ params }: Props) {
               <h3 className="mt-2 text-sm font-semibold text-slate-900">Release Voucher</h3>
               <p className="mt-1 text-xs text-slate-600">
                 {hasReleaseVoucher
-                  ? `Merged: ${releaseVoucherFile?.originalName}`
+                  ? `Uploaded: ${releaseVoucherFile?.originalName}`
                   : isApproved
-                  ? "Upload to generate ERR+Release package"
+                  ? "Upload a release voucher"
                   : "Available after ERR approval"}
               </p>
               {isApproved && !hasReleaseVoucher && (
@@ -434,7 +435,7 @@ export default async function ErrDetailsPage({ params }: Props) {
                 </span>
                 {hasReceiptVoucher ? (
                   <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
-                    <CheckCircle2 className="h-4 w-4" /> Final in ERR+Release+Receipt
+                    <CheckCircle2 className="h-4 w-4" /> Uploaded
                   </span>
                 ) : hasReleaseVoucher ? (
                   <span className="text-xs font-medium text-amber-600">Awaiting Upload</span>
@@ -445,9 +446,9 @@ export default async function ErrDetailsPage({ params }: Props) {
               <h3 className="mt-2 text-sm font-semibold text-slate-900">Receipt Voucher</h3>
               <p className="mt-1 text-xs text-slate-600">
                 {hasReceiptVoucher
-                  ? `Merged: ${receiptVoucherFile?.originalName}`
+                  ? `Uploaded: ${receiptVoucherFile?.originalName}`
                   : hasReleaseVoucher
-                  ? "Upload to finalize package"
+                  ? "Upload a receipt voucher"
                   : "Available after Release Voucher"}
               </p>
               {hasReleaseVoucher && !hasReceiptVoucher && (
@@ -513,6 +514,7 @@ export default async function ErrDetailsPage({ params }: Props) {
                     className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
                     target="_blank"
                     rel="noopener noreferrer"
+                    download
                   >
                     Download
                   </a>

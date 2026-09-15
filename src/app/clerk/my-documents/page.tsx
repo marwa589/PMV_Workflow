@@ -4,9 +4,9 @@ import DocumentListTable from "@/components/document-list-table";
 import DocumentStatusFilter from "@/components/document-status-filter";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
-import { parseDocumentStatusFilter, parseDocumentTypeFilter, parseDownloadStatusFilter, parseMrTypeFilter } from "@/lib/document-status";
+import { getPoStatus, parseDocumentStatusFilter, parseDocumentTypeFilter, parseDownloadStatusFilter, parseMrTypeFilter, parsePoStatusFilter } from "@/lib/document-status";
 import { parseSearchQuery, matchesDocumentSearch } from "@/lib/document-search";
-import { getDocumentsForClerk } from "@/lib/document-queries";
+import { getDocumentsForClerk, getPurchaseOrderStatuses } from "@/lib/document-queries";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +18,8 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
   const downloadStatusFilter = parseDownloadStatusFilter(resolvedSearchParams?.downloadStatus);
   const mrTypeFilter = parseMrTypeFilter(resolvedSearchParams?.mrType);
+  const poStatusFilter = parsePoStatusFilter(resolvedSearchParams?.poStatus);
+  const poStatuses = await getPurchaseOrderStatuses(data.documents.map((doc) => doc.id));
   const approvalFrom = typeof resolvedSearchParams?.approvalFrom === "string" ? resolvedSearchParams.approvalFrom : "";
   const approvalTo = typeof resolvedSearchParams?.approvalTo === "string" ? resolvedSearchParams.approvalTo : "";
   const searchQuery = parseSearchQuery(resolvedSearchParams?.search);
@@ -47,6 +49,7 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
     .filter((doc) => !statusFilter || doc.status === statusFilter)
     .filter((doc) => !documentTypeFilter || doc.documentType === documentTypeFilter)
     .filter((doc) => !mrTypeFilter || (doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === mrTypeFilter))
+    .filter((doc) => !poStatusFilter || getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id)) === poStatusFilter)
     .filter((doc) => !downloadStatusFilter || (downloadStatusFilter === "DOWNLOADED" ? doc.downloadedAt : !doc.downloadedAt))
     .filter((doc) => {
       const approvalTime = doc.approvals.find((approval) => approval.action === "APPROVED")?.performedAt?.getTime();
@@ -61,6 +64,7 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
     status: doc.status,
     documentType: doc.documentType,
     mrType: doc.mrType,
+    poStatus: getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id)),
     rejectionComments: doc.approvals[0]?.comments || null,
     currentVersion: doc.currentVersion,
     currentApproverName: doc.currentApprover?.name || null,
@@ -97,7 +101,7 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
       ]
     : [
         { label: "Assigned/Handled", value: String(summaryCounts.total), tone: "bg-slate-900 text-white" },
-        { label: "Pending", value: String(summaryCounts.pending), tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200" },
+        { label: "Pending", value: String(summaryCounts.pending), tone: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200" },
         { label: "Approved", value: String(summaryCounts.approved), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
         { label: "Rejected", value: String(summaryCounts.rejected), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
       ];
@@ -116,6 +120,8 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
             documentType={documentTypeFilter}
             mrType={mrTypeFilter}
             showMrTypeFilter
+            showPoStatusFilter
+            poStatus={poStatusFilter}
             downloadStatus={downloadStatusFilter}
             approvalFrom={approvalFrom}
             approvalTo={approvalTo}

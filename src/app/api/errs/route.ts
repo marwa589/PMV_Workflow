@@ -6,7 +6,8 @@ import { getErrAccess } from "@/lib/err/permissions";
 import { saveErrFile } from "@/lib/err/files";
 import { deleteDocumentFiles } from "@/lib/files";
 import { isErrUploaderAccount } from "@/lib/err/uploader-access";
-import { projectStorageFolder } from "@/lib/err-storage";
+import { errDocumentStorageFolder } from "@/lib/err-storage";
+import { getRequestOrigin } from "@/lib/request-origin";
 
 export const runtime = "nodejs";
 
@@ -20,11 +21,7 @@ export async function POST(request: Request) {
   let documentNumber = "";
 
   try {
-    const appUrl = process.env.APP_URL;
-
-    if (!appUrl) {
-      throw new Error("APP_URL is missing.");
-    }
+    const appUrl = getRequestOrigin(request);
 
     if (request.headers.get("origin") !== new URL(appUrl).origin) {
       return NextResponse.json(
@@ -182,6 +179,7 @@ export async function POST(request: Request) {
   },
   select: {
     name: true,
+    country: true,
   },
 });
 
@@ -189,8 +187,13 @@ if (!storageProject) {
   throw new SubmissionError("Select an existing, active project.");
 }
 
-const storageFolder = projectStorageFolder(storageProject.name);
     const errId = randomUUID();
+    const storageFolder = errDocumentStorageFolder(
+      storageProject.country,
+      storageProject.name,
+      uploadedFiles[0].name,
+      errId,
+    );
 
     const errFile = await saveErrFile({
       errId,

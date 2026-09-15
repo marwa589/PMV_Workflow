@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { OTP_CHALLENGE_COOKIE, verifyAdminOtp } from "@/lib/auth/otp";
-import { appConfig } from "@/lib/env";
+import { isOtpAuthenticationEnabled, OTP_CHALLENGE_COOKIE, verifyAdminOtp } from "@/lib/auth/otp";
 
 function getCookie(request: Request, name: string): string | undefined {
   const cookie = request.headers.get("cookie")?.split(";").find((entry) => entry.trim().startsWith(`${name}=`));
@@ -9,7 +8,7 @@ function getCookie(request: Request, name: string): string | undefined {
 
 export async function POST(request: Request) {
   try {
-    if (!appConfig.otpAuthenticationEnabled()) {
+    if (!isOtpAuthenticationEnabled()) {
       return NextResponse.json(
         { message: "OTP authentication is currently disabled." },
         { status: 403 },

@@ -8,7 +8,7 @@ import { canViewErr, getErrAccess } from "@/lib/err/permissions";
 export const runtime = "nodejs";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const access = await getErrAccess();
@@ -90,7 +90,7 @@ export async function GET(
     return new NextResponse(buffer, {
       headers: {
         "Content-Type": file.mimeType || "application/pdf",
-        "Content-Disposition": `inline; filename="${file.originalName}"`,
+        "Content-Disposition": `${new URL(request.url).searchParams.get("inline") === "1" ? "inline" : "attachment"}; filename="${file.originalName}"`,
         "Cache-Control": "no-store",
       },
     });

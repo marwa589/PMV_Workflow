@@ -18,6 +18,7 @@ export type DocumentListItem = {
   statusLabel?: string;
   documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | "ERR" | null;
   mrType?: "CASH" | "CREDIT" | null;
+  poStatus?: "UPLOADED" | "PENDING" | "NOT_APPLICABLE";
   currentVersion: number;
   currentApproverName?: string | null;
   canReview?: boolean;
@@ -53,7 +54,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
   const pagedDocuments = visibleDocuments.slice(0, visibleCount);
   const approvedDocuments = useMemo(() => visibleDocuments.filter((doc) => doc.status === "APPROVED"), [visibleDocuments]);
   const selectedDocuments = useMemo(() => visibleDocuments.filter((doc) => selectedIds.includes(doc.id)), [selectedIds, visibleDocuments]);
-  const columnCount = (showBulkActions ? 1 : 0) + (showDownloadTracking ? 12 : 9);
+  const columnCount = (showBulkActions ? 1 : 0) + (showDownloadTracking ? 13 : 10);
 
   function toggleSelection(id: string) {
     setSelectedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
@@ -197,6 +198,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
             <th className="px-5 py-3 font-semibold">Title</th>
             <th className="px-5 py-3 font-semibold">Status</th>
             <th className="px-5 py-3 font-semibold">Type</th>
+            <th className="px-5 py-3 font-semibold">PO Status</th>
             <th className="px-5 py-3 font-semibold">Related Comparison</th>
             {showDownloadTracking ? <><th className="px-5 py-3 font-semibold">Download Status</th><th className="px-5 py-3 font-semibold">Download Timestamp</th><th className="px-5 py-3 font-semibold">Approval Date/Time</th></> : null}
             <th className="px-5 py-3 font-semibold">Version</th>
@@ -258,6 +260,11 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                       {getDocumentTypeLabel(doc)}
                     </span>
                   </td>
+                  <td className="px-5 py-4">
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${doc.poStatus === "UPLOADED" ? "bg-emerald-50 text-emerald-700" : doc.poStatus === "PENDING" ? "bg-yellow-50 text-yellow-800" : "bg-slate-100 text-slate-600"}`}>
+                      {doc.poStatus === "UPLOADED" ? "PO Uploaded" : doc.poStatus === "PENDING" ? "PO Pending" : "Not Applicable"}
+                    </span>
+                  </td>
                   <td className="px-5 py-4 text-slate-700">
                     {doc.relatedComparisonId && doc.relatedComparisonDocumentNumber ? (
                       <Link
@@ -286,18 +293,13 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                   <td className="px-5 py-4 text-slate-500">{doc.dateLabel}</td>
                   <td className="px-5 py-4">
                     <div className="flex gap-2">
-                      <Link
-                        href={detailUrl}
-                        className="inline-flex rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                      >
-                        Details
-                      </Link>
                       <a
                         href={
                           doc.documentType === "ERR"
                             ? `/api/errs/${doc.id}/download?kind=ERR_PDF`
                             : `/api/documents/${doc.id}/download`
                         }
+                        download
                         className="inline-flex rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                       >
                         Download

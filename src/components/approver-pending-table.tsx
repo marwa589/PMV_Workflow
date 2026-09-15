@@ -90,18 +90,13 @@ export default function ApproverPendingTable({ documents }: { documents: Pending
                 <td className="px-5 py-4 text-slate-500">{document.uploadedAt}</td>
                 <td className="px-5 py-4">
                   <div className="flex gap-2">
-                    <Link
-                      href={detailUrl}
-                      className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                    >
-                      Details
-                    </Link>
                     <a
                       href={
                         document.documentType === "ERR"
                           ? `/api/errs/${document.id}/download?kind=ERR_PDF`
                           : `/api/documents/${document.id}/download`
                       }
+                      download
                       className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                     >
                       Download

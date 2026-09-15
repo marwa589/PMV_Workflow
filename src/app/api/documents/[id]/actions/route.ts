@@ -489,6 +489,84 @@ export async function POST(
       },
     });
 
+    const workflowRecipientEmails = new Set<string>();
+    const creatorEmail = documentForEmail?.createdBy?.email?.trim().toLowerCase();
+    const creatorName = documentForEmail?.createdBy?.name?.trim().toLowerCase().replace(/\s+/g, " ");
+    const isDispatcherErro = creatorEmail === "dispatcher.pmv@ahmadiah.com" || creatorName === "erro almacen";
+    const isAvkUploader = [
+      "joemar.paraiso@ahmadiah.com",
+      "bernabie.rocha@ahmadiah.com",
+      "mohamed.mahran@ahmadiah.com",
+    ].includes(creatorEmail || "");
+
+    if (result.status === DocumentStatus.REJECTED) {
+      const existingRejectedEmails = documentForEmail?.documentType === "COMPARISON"
+        ? ["mohamed.mahmoud@ahmadiah.com", "george.azzi@ahmadiah.com"]
+        : ["aqueel.sayed@ahmadiah.com", "george.azzi@ahmadiah.com"];
+      existingRejectedEmails.forEach((email) => workflowRecipientEmails.add(email));
+
+      if (documentForEmail?.documentType === "COMPARISON" && creatorEmail) {
+        workflowRecipientEmails.add(creatorEmail);
+      }
+
+      if (documentForEmail?.documentType === "MATERIAL_REQUISITION") {
+        if (isDispatcherErro && creatorEmail) {
+          workflowRecipientEmails.add(creatorEmail);
+          workflowRecipientEmails.add("mohammad.mehieddine@ahmadiah.com");
+        } else if (isAvkUploader && creatorEmail) {
+          workflowRecipientEmails.add(creatorEmail);
+          workflowRecipientEmails.add("joemar.paraiso@ahmadiah.com");
+        }
+      }
+    }
+
+    if (result.status === DocumentStatus.REVISION_REQUIRED) {
+      if (documentForEmail?.currentApprover?.email) {
+        workflowRecipientEmails.add(documentForEmail.currentApprover.email.trim().toLowerCase());
+      }
+
+      if (documentForEmail?.documentType === "COMPARISON") {
+        workflowRecipientEmails.add("mohamed.mahmoud@ahmadiah.com");
+      } else if (isDispatcherErro && creatorEmail) {
+        workflowRecipientEmails.add(creatorEmail);
+        workflowRecipientEmails.add("mohammad.mehieddine@ahmadiah.com");
+      } else if (isAvkUploader && creatorEmail) {
+        workflowRecipientEmails.add(creatorEmail);
+        workflowRecipientEmails.add("joemar.paraiso@ahmadiah.com");
+      } else {
+        workflowRecipientEmails.add("aqueel.sayed@ahmadiah.com");
+      }
+    }
+
+    if (workflowRecipientEmails.size > 0) {
+      const notificationRecipients = await prisma.user.findMany({
+        where: { email: { in: [...workflowRecipientEmails] } },
+        select: { id: true },
+      });
+      const existingNotificationRecipients = new Set<string>([
+        result.emailRecipientId,
+        documentForEmail?.currentApprover?.id,
+      ].filter((userId): userId is string => Boolean(userId)));
+      const notificationType = result.status === DocumentStatus.REJECTED
+        ? "DOCUMENT_REJECTED" as const
+        : "DOCUMENT_REVISED" as const;
+      const notificationTitle = result.status === DocumentStatus.REJECTED ? "Document rejected" : "Revision requested";
+
+      runInBackground(async () => {
+        await Promise.all(
+          notificationRecipients
+            .filter((recipient) => !existingNotificationRecipients.has(recipient.id))
+            .map((recipient) => createNotification({
+              userId: recipient.id,
+              type: notificationType,
+              title: notificationTitle,
+              message: `${documentForEmail?.documentNumber} - ${documentForEmail?.title}`,
+              documentId,
+            })),
+        );
+      });
+    }
+
     if (
       documentForEmail?.currentApprover?.email &&
       (result.status === DocumentStatus.PENDING_APPROVER_1 ||
@@ -496,75 +574,44 @@ export async function POST(
         result.status === DocumentStatus.PENDING_APPROVER_3 ||
         result.status === DocumentStatus.REVISION_REQUIRED)
       ){
-  const recipients = new Set<string>();
+      const recipients = result.status === DocumentStatus.REVISION_REQUIRED
+        ? await prisma.user.findMany({
+            where: { email: { in: [...workflowRecipientEmails] } },
+            select: { id: true },
+          })
+        : documentForEmail.currentApprover.id
+          ? [{ id: documentForEmail.currentApprover.id }]
+          : [];
 
-  if (result.status === DocumentStatus.REVISION_REQUIRED) {
-    const user = await prisma.user.findFirst({
-      where: {
-        email:
-          documentForEmail.documentType === "COMPARISON"
-            ? "mohamed.mahmoud@ahmadiah.com"
-            : "aqueel.sayed@ahmadiah.com",
-      },
-      select: { id: true },
-    });
-
-    if (user) recipients.add(user.id);
-  } else if (documentForEmail.currentApprover.id) {
-    recipients.add(documentForEmail.currentApprover.id);
-  }
-
-  await queueWorkflowEmailEvents(
-    [...recipients].map((recipientId) => ({
-      recipientId,
-      type: "APPROVAL_PENDING" as const,
-      documentId,
-    })),
-  );
-}
-    // ) {
-    //   const recipients = new Set<string>();
-    //   if (result.status === DocumentStatus.REVISION_REQUIRED) {
-    //     if (result.emailRecipientId) recipients.add(result.emailRecipientId);
-    //   } else if (documentForEmail.currentApprover.id) {
-    //     recipients.add(documentForEmail.currentApprover.id);
-    //   }
-    //   await queueWorkflowEmailEvents([...recipients].map((recipientId) => ({
-    //     recipientId,
-    //     type: "APPROVAL_PENDING" as const,
-    //     documentId,
-    //   })));
-    // }
-
+      await queueWorkflowEmailEvents(
+        recipients.map((recipient) => ({
+          recipientId: recipient.id,
+          type: "APPROVAL_PENDING" as const,
+          documentId,
+        })),
+      );
+    }
     if (result.status === DocumentStatus.APPROVED || result.status === DocumentStatus.REJECTED) {
       const approvedRecipientEmail = documentForEmail?.documentType === "COMPARISON"
         ? ["aqueel.sayed@ahmadiah.com", "mohamed.mahmoud@ahmadiah.com"]
         : ["omar.merzek@ahmadiah.com"];
-      const rejectedRecipientEmail = documentForEmail?.documentType === "COMPARISON"
-        ? ["mohamed.mahmoud@ahmadiah.com"]
-        : ["aqueel.sayed@ahmadiah.com"];
 
       const targetEmails = result.status === DocumentStatus.APPROVED
         ? [...approvedRecipientEmail]
-        : [...rejectedRecipientEmail];
+        : [...workflowRecipientEmails];
 
       if (
         result.status === DocumentStatus.APPROVED &&
         documentForEmail?.documentType === "COMPARISON" &&
         documentForEmail?.createdBy?.email
       ) {
-        const creatorEmail = documentForEmail.createdBy.email.trim().toLowerCase();
-        const creatorName = documentForEmail.createdBy.name?.trim().toLowerCase().replace(/\s+/g, " ");
-        if (creatorEmail === "dispatcher.pmv@ahmadiah.com" || creatorName === "erro almacen") {
-          if (!targetEmails.includes(documentForEmail.createdBy.email)) {
-            targetEmails.push(documentForEmail.createdBy.email);
-          }
+        if (creatorEmail && !targetEmails.includes(creatorEmail)) {
+          targetEmails.push(creatorEmail);
         }
       }
 
       const clerkRecipients = await prisma.user.findMany({
         where: {
-          role: UserRole.CLERK,
           email: {
             in: targetEmails,
           },

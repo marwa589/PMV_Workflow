@@ -93,6 +93,7 @@ export default async function ClerkDashboardPage() {
 
   const pendingDocuments = recentDocuments.filter((doc) => doc.status === DocumentStatus.PENDING_APPROVER_1 || doc.status === DocumentStatus.PENDING_APPROVER_2 || doc.status === DocumentStatus.PENDING_APPROVER_3);
 
+  if (isErro) {
   return (
     <DashboardShell role={session.role} userName={session.name} title="Dashboard" subtitle="Submit and track document workflows">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -101,7 +102,7 @@ export default async function ClerkDashboardPage() {
         <p className="mt-1 text-sm text-slate-600">Review pending approvals and track your workflow activity.</p>
       </div>
       <PageSummaryCards cards={[
-        { label: "Pending Approval", value: String(statusCounts.pending), tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200" },
+        { label: "Pending Approval", value: String(statusCounts.pending), tone: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200" },
         { label: "Revision Required", value: String(statusCounts.revisionRequired), tone: "bg-violet-50 text-violet-900 ring-1 ring-violet-200" },
         { label: "Approved", value: String(statusCounts.approved), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
         { label: "Rejected", value: String(statusCounts.rejected), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
@@ -113,6 +114,7 @@ export default async function ClerkDashboardPage() {
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 px-5 py-4"><h3 className="text-base font-semibold text-slate-900">Workflow Activity</h3></div><div className="divide-y divide-slate-100">{activities.length === 0 ? <div className="px-5 py-6 text-sm text-slate-500">No workflow activity found.</div> : activities.map((item) => <div key={item.id} className="px-5 py-4"><p className="text-sm font-semibold text-slate-900">{item.document.documentNumber} - {item.document.title}</p><p className="mt-1 text-sm text-slate-700">Action: {item.action.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-slate-500">{new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(item.performedAt)}</p></div>)}</div></section>
     </DashboardShell>
   );
+  }
 
   return (
     <DashboardShell
@@ -140,7 +142,7 @@ export default async function ClerkDashboardPage() {
       <PageSummaryCards
         cards={[
           { label: "Total Documents", value: String(totalDocuments), tone: "bg-slate-900 text-white" },
-          { label: "Pending", value: String(statusCounts.pending), tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200" },
+          { label: "Pending", value: String(statusCounts.pending), tone: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200" },
           { label: "Approved", value: String(statusCounts.approved), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
           { label: "Rejected", value: String(statusCounts.rejected), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
         ]}
@@ -174,9 +176,9 @@ export default async function ClerkDashboardPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="text-base font-semibold text-slate-900">Document Status Overview</h3>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="rounded-xl bg-blue-50 px-4 py-3 ring-1 ring-blue-200">
-            <p className="text-xs uppercase tracking-wide text-blue-700">Pending</p>
-            <p className="mt-1 text-2xl font-semibold text-blue-900">{statusCounts.pending}</p>
+          <div className="rounded-xl bg-yellow-50 px-4 py-3 ring-1 ring-yellow-200">
+            <p className="text-xs uppercase tracking-wide text-yellow-700">Pending</p>
+            <p className="mt-1 text-2xl font-semibold text-yellow-900">{statusCounts.pending}</p>
           </div>
           <div className="rounded-xl bg-emerald-50 px-4 py-3 ring-1 ring-emerald-200">
             <p className="text-xs uppercase tracking-wide text-emerald-700">Approved</p>

@@ -245,7 +245,7 @@ export async function POST(request: Request) {
               project = await tx.errProject.create({
                 data: {
                   name: grant.newProjectName,
-                  country: grant.country || ErrProjectCountry.KUWAIT,
+                  country: grant.country as ErrProjectCountry,
                   isActive: true,
                   directorId: grant.role === ErrAccessRole.PROJECT_DIRECTOR ? created.id : null,
                 },
@@ -368,7 +368,7 @@ export async function PATCH(request: Request) {
               project = await tx.errProject.create({
                 data: {
                   name: grant.newProjectName,
-                  country: grant.country || ErrProjectCountry.KUWAIT,
+                  country: grant.country as ErrProjectCountry,
                   isActive: true,
                   directorId: grant.role === ErrAccessRole.PROJECT_DIRECTOR ? id : null,
                 },

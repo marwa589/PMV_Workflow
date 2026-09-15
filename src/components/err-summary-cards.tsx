@@ -22,7 +22,7 @@ export default function ErrSummaryCards({ counts, personal }: Props) {
     {
       label: "Pending",
       value: String(counts.pending),
-      tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200",
+      tone: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200",
     },
     {
       label: "Approved",

@@ -79,7 +79,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
     notFound();
   }
 
-  const latestComment = document.approvals.find((item) => item.comments)?.comments || null;
+  const hasPurchaseOrder = document.purchaseOrderLinks.length > 0;
   return (
     <DashboardShell
       role={session.role}
@@ -156,6 +156,12 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
                       <span className="font-semibold text-slate-900">None</span>
                     )}
                   </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-slate-500">PO status</span>
+                    <span className={`font-semibold ${document.mrType === "CREDIT" ? hasPurchaseOrder ? "text-emerald-700" : "text-amber-700" : "text-slate-600"}`}>
+                      {document.mrType === "CREDIT" ? hasPurchaseOrder ? "PO Uploaded" : "PO Pending" : "Not Applicable"}
+                    </span>
+                  </div>
                 </>
               ) : null}
               {document.documentType === "COMPARISON" ? (
@@ -188,10 +194,6 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
               <div className="flex items-center justify-between gap-3">
                 <span className="font-medium text-slate-500">Created</span>
                 <span className="font-semibold text-slate-900">{formatDate(document.createdAt)}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-medium text-slate-500">Latest comment</span>
-                <span className="font-semibold text-slate-900">{latestComment || "No comments yet"}</span>
               </div>
             </div>
           </div>

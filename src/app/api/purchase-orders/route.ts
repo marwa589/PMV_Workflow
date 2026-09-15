@@ -6,6 +6,7 @@ import { canViewPurchaseOrdersSidebar, isOmar, resolvePurchaseOrderRecipients } 
 import { savePurchaseOrderFile, deleteDocumentFiles } from "@/lib/files";
 import { validateCsrf } from "@/lib/csrf";
 import { queuePurchaseOrderAvailableEvents } from "@/lib/workflow-email-batching";
+import { purchaseOrderStorageFolder } from "@/lib/storage-layout";
 
 export const runtime = "nodejs";
 
@@ -51,11 +52,12 @@ export async function POST(request: Request) {
 
   const approvedMrs = await prisma.document.findMany({
     where: { id: { in: [...new Set(fileMrIds)] }, documentType: "MATERIAL_REQUISITION", status: DocumentStatus.APPROVED },
-    select: { id: true },
+    select: { id: true, createdBy: { select: { email: true } } },
   });
   if (approvedMrs.length !== new Set(fileMrIds).size) {
     return NextResponse.json({ message: "Every related MR must be approved." }, { status: 400 });
   }
+  const mrUploaderEmails = new Map(approvedMrs.map((mr) => [mr.id, mr.createdBy.email]));
 
   const savedPaths: string[] = [];
   try {
@@ -63,7 +65,11 @@ export async function POST(request: Request) {
       const created: Array<{ id: string; poNumber: string; originalName: string }> = [];
 
       for (const [fileIndex, file] of files.entries()) {
-        const saved = await savePurchaseOrderFile(file);
+        const mrUploaderEmail = mrUploaderEmails.get(fileMrIds[fileIndex]);
+        const saved = await savePurchaseOrderFile(
+          file,
+          mrUploaderEmail ? purchaseOrderStorageFolder(mrUploaderEmail) : "POs",
+        );
         savedPaths.push(saved.relativePath);
 
         const sequence = await tx.purchaseOrderSequence.upsert({

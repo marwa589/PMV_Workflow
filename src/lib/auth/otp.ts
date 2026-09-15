@@ -10,12 +10,26 @@ import { appConfig } from "@/lib/env";
 export const OTP_CHALLENGE_COOKIE = "docflow_otp_challenge";
 export const TRUSTED_DEVICE_COOKIE = "docflow_trusted_device";
 
+// Change this one value to "OFF" to disable OTP, or to "ALL" to require it for every user.
+const OTP_ROLLOUT: "OFF" | "TEST_USER" | "ALL" = "TEST_USER";
+const OTP_TEST_USER_EMAIL = "reine.alsouki@ahmadiah.com";
+
 const OTP_TTL_MS = 5 * 60 * 1000;
 const TRUSTED_DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
 const OTP_LOCKOUT_MS = 15 * 60 * 1000;
 const MAX_CHALLENGES_PER_WINDOW = 5;
 const CHALLENGE_WINDOW_MS = 15 * 60 * 1000;
+
+export function isOtpRequiredForUser(email: string): boolean {
+  if (OTP_ROLLOUT === "OFF") return false;
+  if (OTP_ROLLOUT === "ALL") return true;
+  return email.trim().toLowerCase() === OTP_TEST_USER_EMAIL;
+}
+
+export function isOtpAuthenticationEnabled(): boolean {
+  return OTP_ROLLOUT !== "OFF";
+}
 
 function hashToken(value: string): string {
   return createHash("sha256").update(value).digest("hex");

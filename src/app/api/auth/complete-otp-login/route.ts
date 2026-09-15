@@ -4,10 +4,10 @@ import { attachSessionCookie } from "@/lib/auth/session";
 import {
   clearOtpChallengeCookie,
   completeAdminOtpLogin,
+  isOtpAuthenticationEnabled,
   OTP_CHALLENGE_COOKIE,
   setTrustedDeviceCookie,
 } from "@/lib/auth/otp";
-import { appConfig } from "@/lib/env";
 
 function getCookie(request: Request, name: string): string | undefined {
   const cookie = request.headers.get("cookie")?.split(";").find((entry) => entry.trim().startsWith(`${name}=`));
@@ -16,7 +16,7 @@ function getCookie(request: Request, name: string): string | undefined {
 
 export async function POST(request: Request) {
   try {
-    if (!appConfig.otpAuthenticationEnabled()) {
+    if (!isOtpAuthenticationEnabled()) {
       return NextResponse.json(
         { message: "OTP authentication is currently disabled." },
         { status: 403 },

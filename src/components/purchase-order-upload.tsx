@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { CheckCircle2, UploadCloud } from "lucide-react";
+import { CheckCircle2, Trash2, UploadCloud } from "lucide-react";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 type ApprovedMr = { id: string; documentNumber: string; title: string; mrNumber: string | null };
@@ -16,17 +16,12 @@ type SelectedFile = { file: File; mrId: string };
 
 export default function PurchaseOrderUpload({ approvedMrs, initialMrId, showMrSelection = true }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [selectedMrIds, setSelectedMrIds] = useState<string[]>(initialMrId ? [initialMrId] : []);
   const [files, setFiles] = useState<SelectedFile[]>([]);
   const [description, setDescription] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-
-  function toggleMr(id: string) {
-    setSelectedMrIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
-  }
 
   async function submit() {
     if (files.length === 0 || files.some((item) => !item.mrId)) {
@@ -69,7 +64,7 @@ export default function PurchaseOrderUpload({ approvedMrs, initialMrId, showMrSe
       </button>
       {open ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <section className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+          <section className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Upload Purchase Order</h2>
@@ -79,8 +74,8 @@ export default function PurchaseOrderUpload({ approvedMrs, initialMrId, showMrSe
             </div>
             <div className="mt-5 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-medium text-cyan-800">Document Type: Purchase Order (PO)</div>
             <label className="mt-4 block text-sm font-medium text-slate-700">Description<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="PO description" className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-normal" /></label>
-            <input ref={inputRef} type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => { const selected = Array.from(event.target.files || []); const fallbackMr = initialMrId || selectedMrIds[0] || ""; setFiles(selected.map((file) => ({ file, mrId: fallbackMr }))); }} className="mt-4 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-            {files.length > 0 ? <div className="mt-3 space-y-2">{files.map((item, index) => <div key={`${item.file.name}-${index}`} className="grid gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-[1fr,1fr]"><span className="self-center text-sm text-slate-700">{item.file.name}</span><select value={item.mrId} onChange={(event) => setFiles((current) => current.map((value, valueIndex) => valueIndex === index ? { ...value, mrId: event.target.value } : value))} disabled={!showMrSelection} className="rounded-lg border border-slate-300 px-2 py-2 text-sm"><option value="">Select related approved MR</option>{approvedMrs.map((mr) => <option key={mr.id} value={mr.id}>{mr.documentNumber}{mr.mrNumber ? ` (${mr.mrNumber})` : ""} - {mr.title}</option>)}</select></div>)}</div> : null}
+            <input ref={inputRef} type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => { const selected = Array.from(event.target.files || []); setFiles(selected.map((file) => ({ file, mrId: initialMrId || "" }))); }} className="mt-4 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+            {files.length > 0 ? <div className="mt-3 space-y-2">{files.map((item, index) => <div key={`${item.file.name}-${index}`} className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-slate-200 p-3"><span className="min-w-0 truncate text-sm text-slate-700" title={item.file.name}>{item.file.name}</span><select value={item.mrId} onChange={(event) => setFiles((current) => current.map((value, valueIndex) => valueIndex === index ? { ...value, mrId: event.target.value } : value))} disabled={!showMrSelection} className="min-w-0 rounded-lg border border-slate-300 px-2 py-2 text-sm"><option value="">Select related approved MR</option>{approvedMrs.map((mr) => <option key={mr.id} value={mr.id}>{mr.documentNumber}{mr.mrNumber ? ` (${mr.mrNumber})` : ""} - {mr.title}</option>)}</select><button type="button" onClick={() => setFiles((current) => current.filter((_, valueIndex) => valueIndex !== index))} disabled={submitting} className="inline-flex items-center justify-center rounded-lg p-2 text-rose-700 hover:bg-rose-50 disabled:opacity-50" aria-label={`Remove ${item.file.name}`} title="Remove file"><Trash2 className="h-4 w-4" /></button></div>)}</div> : null}
             {error ? <p className="mt-3 text-sm text-rose-700">{error}</p> : null}
             {message ? <p className="mt-3 flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 className="h-4 w-4" />{message}</p> : null}
             <div className="mt-5 flex justify-end gap-2">

@@ -7,13 +7,16 @@ import {
 } from "@/lib/err/permissions";
 import {
   isRentalErr,
-  mergeErrWithReceiptVoucher,
-  mergeErrWithReleaseVoucher,
   saveVoucherFile,
 } from "@/lib/err/vouchers";
 import { PdfValidationError } from "@/lib/pdf-validation";
+import { projectStorageFolderFromFile } from "@/lib/err-storage";
 
 export const runtime = "nodejs";
+
+export async function GET() {
+  return NextResponse.json({ message: "Select an approved ERR from the Attach Vouchers page." }, { status: 400 });
+}
 
 export async function POST(
   request: Request,
@@ -80,6 +83,7 @@ export async function POST(
           id: true,
           kind: true,
           filePath: true,
+          storageFolder: true,
           versionNumber: true,
           originalName: true,
         },
@@ -119,14 +123,7 @@ export async function POST(
   const hasReleaseVoucher = err.files.some((f) => f.kind === "RELEASE_VOUCHER");
   const hasReceiptVoucher = err.files.some((f) => f.kind === "RECEIPT_VOUCHER");
 
-  if (voucherType === "RELEASE_VOUCHER") {
-    if (hasReleaseVoucher) {
-      return NextResponse.json(
-        { message: "A release voucher has already been added to this ERR." },
-        { status: 400 },
-      );
-    }
-  } else if (voucherType === "RECEIPT_VOUCHER") {
+  if (voucherType === "RECEIPT_VOUCHER") {
     if (!hasReleaseVoucher) {
       return NextResponse.json(
         { message: "A release voucher must be added before adding a receipt voucher." },
@@ -148,6 +145,7 @@ export async function POST(
       { status: 400 },
     );
   }
+  const storageFolder = latestErrPdf.storageFolder || projectStorageFolderFromFile(latestErrPdf.filePath);
 
   try {
     if (voucherType === "RELEASE_VOUCHER") {
@@ -157,41 +155,21 @@ export async function POST(
         voucherType: "RELEASE_VOUCHER",
         file: fileValue,
         documentNumber: err.documentNumber,
+        storageFolder,
       });
 
-      // 2. Merge approved ERR PDF with release voucher
-      const merged = await mergeErrWithReleaseVoucher({
-        errPdfPath: latestErrPdf.filePath,
-        voucherBytes: savedVoucher.bytes,
-        documentNumber: err.documentNumber,
-        title: err.title,
-      });
-
-      // 3. Database transaction
       await prisma.$transaction(async (tx) => {
         const voucherRecord = await tx.errFile.create({
           data: {
             errId: err.id,
             kind: "RELEASE_VOUCHER",
-            versionNumber: 1,
+            versionNumber: err.files.filter((file) => file.kind === "RELEASE_VOUCHER").length + 1,
             revisionNumber: err.revisionNumber,
             filePath: savedVoucher.filePath,
+            storageFolder: savedVoucher.storageFolder,
             originalName: savedVoucher.originalName,
             mimeType: savedVoucher.mimeType,
             fileSize: savedVoucher.fileSize,
-            uploadedById: access.userId,
-          },
-        });
-
-        const nextVersion = latestErrPdf.versionNumber + 1;
-        const updatedErrPdf = await tx.errFile.update({
-          where: { id: latestErrPdf.id },
-          data: {
-            versionNumber: nextVersion,
-            filePath: merged.relativePath,
-            originalName: merged.originalName,
-            mimeType: "application/pdf",
-            fileSize: merged.fileSize,
             uploadedById: access.userId,
           },
         });
@@ -201,17 +179,16 @@ export async function POST(
             errId: err.id,
             performedById: access.userId,
             action: "RELEASE_VOUCHER_ADDED",
-            comments: comments || "Release voucher added and merged into ERR+Release package.",
+            comments: comments || "Release voucher added.",
             revisionNumber: err.revisionNumber,
             inputFileId: voucherRecord.id,
-            outputFileId: updatedErrPdf.id,
           },
         });
       });
 
       return NextResponse.json({
         success: true,
-        message: "Release voucher uploaded and merged successfully into ERR+Release.",
+        message: "Release voucher uploaded successfully.",
       });
     } else {
       // voucherType === "RECEIPT_VOUCHER"
@@ -221,42 +198,21 @@ export async function POST(
         voucherType: "RECEIPT_VOUCHER",
         file: fileValue,
         documentNumber: err.documentNumber,
+        storageFolder,
       });
 
-      // 2. Merge ERR+Release PDF with receipt voucher
-      const merged = await mergeErrWithReceiptVoucher({
-        errReleasePdfPath: latestErrPdf.filePath,
-        voucherBytes: savedVoucher.bytes,
-        documentNumber: err.documentNumber,
-        title: err.title,
-        previousGeneratedPath: latestErrPdf.filePath,
-      });
-
-      // 3. Database transaction
       await prisma.$transaction(async (tx) => {
         const voucherRecord = await tx.errFile.create({
           data: {
             errId: err.id,
             kind: "RECEIPT_VOUCHER",
-            versionNumber: 1,
+            versionNumber: err.files.filter((file) => file.kind === "RECEIPT_VOUCHER").length + 1,
             revisionNumber: err.revisionNumber,
             filePath: savedVoucher.filePath,
+            storageFolder: savedVoucher.storageFolder,
             originalName: savedVoucher.originalName,
             mimeType: savedVoucher.mimeType,
             fileSize: savedVoucher.fileSize,
-            uploadedById: access.userId,
-          },
-        });
-
-        const nextVersion = latestErrPdf.versionNumber + 1;
-        const updatedErrPdf = await tx.errFile.update({
-          where: { id: latestErrPdf.id },
-          data: {
-            versionNumber: nextVersion,
-            filePath: merged.relativePath,
-            originalName: merged.originalName,
-            mimeType: "application/pdf",
-            fileSize: merged.fileSize,
             uploadedById: access.userId,
           },
         });
@@ -266,17 +222,16 @@ export async function POST(
             errId: err.id,
             performedById: access.userId,
             action: "RECEIPT_VOUCHER_ADDED",
-            comments: comments || "Receipt voucher added and merged into ERR+Release+Receipt package.",
+            comments: comments || "Receipt voucher added.",
             revisionNumber: err.revisionNumber,
             inputFileId: voucherRecord.id,
-            outputFileId: updatedErrPdf.id,
           },
         });
       });
 
       return NextResponse.json({
         success: true,
-        message: "Receipt voucher uploaded and merged successfully into ERR+Release+Receipt.",
+        message: "Receipt voucher uploaded successfully.",
       });
     }
   } catch (error) {

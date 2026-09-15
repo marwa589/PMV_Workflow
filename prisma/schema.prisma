@@ -112,6 +112,7 @@ model DocumentVersion {
   documentId     String
   versionNumber  Int
   filePath       String
+  storageFolder  String?
   originalName   String
   extension      String?
   mimeType       String
@@ -435,6 +436,7 @@ model ErrFile {
   revisionNumber Int         @default(1)
 
   filePath     String @unique
+  storageFolder String?
   originalName String
   mimeType     String
   fileSize     Int

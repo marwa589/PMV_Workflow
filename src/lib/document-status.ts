@@ -1,6 +1,12 @@
 export type DocumentTypeFilter = "COMPARISON" | "MATERIAL_REQUISITION" | "ERR" | "";
 export type DownloadStatusFilter = "DOWNLOADED" | "NOT_DOWNLOADED" | "";
 export type MrTypeFilter = "CASH" | "CREDIT" | "";
+export type PoStatusFilter = "UPLOADED" | "PENDING" | "NOT_APPLICABLE" | "";
+
+export function getPoStatus(documentType: string, mrType: string | null | undefined, hasPurchaseOrder: boolean): "UPLOADED" | "PENDING" | "NOT_APPLICABLE" {
+  if (documentType !== "MATERIAL_REQUISITION" || mrType !== "CREDIT") return "NOT_APPLICABLE";
+  return hasPurchaseOrder ? "UPLOADED" : "PENDING";
+}
 export type ErrTypeFilter = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "PURCHASE" | "";
 export type ErrStatusFilter = "PENDING" | "ON_HOLD" | "REVISION_REQUIRED" | "REJECTED" | "APPROVED" | "";
 export type DocumentStatusFilterValue =
@@ -68,6 +74,11 @@ export function parseMrTypeFilter(value: unknown): MrTypeFilter {
     return value;
   }
 
+  return "";
+}
+
+export function parsePoStatusFilter(value: unknown): PoStatusFilter {
+  if (value === "UPLOADED" || value === "PENDING" || value === "NOT_APPLICABLE") return value;
   return "";
 }
 

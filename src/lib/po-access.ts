@@ -33,7 +33,7 @@ async function resolvePurchaseOrderRecipientIds(tx: PoAccessDb, poId: string) {
     where: { purchaseOrderId: poId },
     select: { document: { select: { createdBy: { select: { email: true } } } } },
   });
-  if (links.length === 0) throw new Error("Purchase order has no related MR.");
+  if (links.length === 0) return [];
 
   const emails = new Set<string>();
   for (const link of links) {
@@ -51,8 +51,15 @@ async function resolvePurchaseOrderRecipientIds(tx: PoAccessDb, poId: string) {
 
 export async function getPurchaseOrderRecipientIds(poId: string) { return resolvePurchaseOrderRecipientIds(prisma, poId); }
 
-export async function canViewPurchaseOrder(user: { userId: string; role: UserRole }, poId: string) {
+export async function canViewPurchaseOrder(user: { userId: string; role: UserRole; email?: string | null }, poId: string) {
   if (user.role === UserRole.ADMIN) return true;
+  if (isOmar(user)) {
+    const purchaseOrder = await prisma.purchaseOrder.findUnique({
+      where: { id: poId },
+      select: { uploadedById: true },
+    });
+    if (purchaseOrder?.uploadedById === user.userId) return true;
+  }
   return (await getPurchaseOrderRecipientIds(poId)).includes(user.userId);
 }
 

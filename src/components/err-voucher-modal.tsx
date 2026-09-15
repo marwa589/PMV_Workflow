@@ -40,7 +40,7 @@ export default function ErrVoucherModal({
   const title = isRelease
     ? "Upload Release Voucher"
     : "Upload Receipt Voucher";
-  const targetFolder = isRelease ? "ERR+Release" : "ERR+Release+Receipt";
+  const targetFolder = isRelease ? "release-vouchers" : "receipt-vouchers";
 
   if (!canUpload) {
     return null;
@@ -107,7 +107,7 @@ export default function ErrVoucherModal({
         throw new Error(data.message || "Failed to upload voucher.");
       }
 
-      setSuccessMessage(data.message || "Voucher uploaded and merged successfully!");
+      setSuccessMessage(data.message || "Voucher uploaded successfully!");
       setTimeout(() => {
         setIsOpen(false);
         setFile(null);
@@ -167,7 +167,7 @@ export default function ErrVoucherModal({
                 <div>
                   <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
                   <p className="text-xs text-slate-500">
-                    Will be merged into the ERR package and saved in{" "}
+                    Saved separately in{" "}
                     <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-slate-700">
                       {targetFolder}
                     </code>

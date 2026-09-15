@@ -3,6 +3,15 @@ import { prisma } from "@/lib/prisma";
 import { getModuleVisibility } from "@/lib/auth/module-visibility";
 import { isErroUser } from "@/lib/auth/resource-access";
 
+export async function getPurchaseOrderStatuses(documentIds: string[]) {
+  if (documentIds.length === 0) return new Map<string, boolean>();
+  const links = await prisma.purchaseOrderMrLink.findMany({
+    where: { documentId: { in: documentIds } },
+    select: { documentId: true },
+  });
+  return new Map(links.map((link) => [link.documentId, true]));
+}
+
 type ApproverRole = "APPROVER_1" | "APPROVER_2" | "APPROVER_3";
 
 export type DocumentRow = {

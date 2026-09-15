@@ -148,6 +148,7 @@ function getVisibleNavItems(role: AppRole, userName: string, isUploader?: boolea
       { label: "My Documents", href: "/errs?view=all&section=my-documents", icon: FileText },
       ...(canUpload ? [{ label: "New Document", href: "/new-document", icon: FilePlus2 }] : []),
       { label: "ERRs", href: "/errs", icon: FileText },
+      ...(canUpload ? [{ label: "Attach Vouchers", href: "/errs/vouchers", icon: FilePlus2 }] : []),
       { label: "Pending Approvals", href: "/errs?view=pending", icon: ClipboardCheck },
       { label: "Revision Required", href: "/errs?view=revision-required", icon: RotateCcw },
       { label: "On Hold", href: "/errs?view=on-hold", icon: PauseCircle },

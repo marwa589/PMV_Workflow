@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getRequestOrigin } from "@/lib/request-origin";
 import { sendEmail } from "@/lib/mail";
 import { appConfig } from "@/lib/env";
 
@@ -16,9 +17,7 @@ function acceptedResponse() {
 
 export async function POST(request: Request) {
   // Only allow requests originating from this application.
-  const expectedOrigin = new URL(
-    process.env.APP_URL || "http://localhost:3001",
-  ).origin;
+  const expectedOrigin = getRequestOrigin(request);
 
   if (request.headers.get("origin") !== expectedOrigin) {
     return NextResponse.json(

@@ -1,5 +1,5 @@
 import { DocumentStatus } from "@prisma/client";
-import { DOCUMENT_STATUS_FILTER_OPTIONS, DownloadStatusFilter, ErrStatusFilter, ErrTypeFilter, MrTypeFilter, ERR_STATUS_FILTER_OPTIONS } from "@/lib/document-status";
+import { DOCUMENT_STATUS_FILTER_OPTIONS, DownloadStatusFilter, ErrStatusFilter, ErrTypeFilter, MrTypeFilter, PoStatusFilter, ERR_STATUS_FILTER_OPTIONS } from "@/lib/document-status";
 
 type Props = {
   value?: string;
@@ -10,9 +10,11 @@ type Props = {
   approvalTo?: string;
   showDownloadFilters?: boolean;
   mrType?: MrTypeFilter;
+  poStatus?: PoStatusFilter;
   errType?: ErrTypeFilter;
   errStatus?: ErrStatusFilter;
   showMrTypeFilter?: boolean;
+  showPoStatusFilter?: boolean;
   showErrTypeFilter?: boolean;
   showErrStatusFilter?: boolean;
   showDocumentTypeFilter?: boolean;
@@ -21,7 +23,7 @@ type Props = {
   statusFilterOptions?: Array<{ value: string; label: string }>;
 };
 
-export default function DocumentStatusFilter({ value = "", title = "Status", documentType = "", downloadStatus = "", approvalFrom = "", approvalTo = "", showDownloadFilters = false, mrType = "", errType = "", errStatus = "", showMrTypeFilter = false, showErrTypeFilter = false, showErrStatusFilter = false, showDocumentTypeFilter = false, showErrDocumentType = true, showStatusFilter = true, statusFilterOptions = DOCUMENT_STATUS_FILTER_OPTIONS }: Props) {
+export default function DocumentStatusFilter({ value = "", title = "Status", documentType = "", downloadStatus = "", approvalFrom = "", approvalTo = "", showDownloadFilters = false, mrType = "", poStatus = "", errType = "", errStatus = "", showMrTypeFilter = false, showPoStatusFilter = false, showErrTypeFilter = false, showErrStatusFilter = false, showDocumentTypeFilter = false, showErrDocumentType = true, showStatusFilter = true, statusFilterOptions = DOCUMENT_STATUS_FILTER_OPTIONS }: Props) {
   return (
     <form method="get" className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       {showDocumentTypeFilter ? (
@@ -42,6 +44,17 @@ export default function DocumentStatusFilter({ value = "", title = "Status", doc
             <option value="">All MR Types</option>
             <option value="CASH">Cash</option>
             <option value="CREDIT">Credit</option>
+          </select>
+        </div>
+      ) : null}
+      {showPoStatusFilter && documentType === "MATERIAL_REQUISITION" ? (
+        <div className="min-w-0 flex-1">
+          <label htmlFor="po-status" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">PO Status</label>
+          <select id="po-status" name="poStatus" defaultValue={poStatus} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400">
+            <option value="">All PO Statuses</option>
+            <option value="UPLOADED">PO Uploaded</option>
+            <option value="PENDING">PO Pending</option>
+            <option value="NOT_APPLICABLE">Not Applicable</option>
           </select>
         </div>
       ) : null}

@@ -13,6 +13,14 @@ import {
 } from "@/lib/pdf-validation";
 import { getNextErrStage, resolveErrApprover } from "@/lib/err/workflow";
 import { projectStorageFolderFromFile } from "@/lib/err-storage";
+import { getRequestOrigin } from "@/lib/request-origin";
+import { sendEmail } from "@/lib/mail";
+import {
+  buildDocumentRejectedEmail,
+  buildErrOnHoldEmail,
+  buildFinalApprovalEmail,
+  buildRevisionRequiredEmail,
+} from "@/lib/email-templates";
 
 export const runtime = "nodejs";
 
@@ -54,7 +62,7 @@ export async function POST(
         { createdAt: "desc" },
       ],
       take: 1,
-      select: { filePath: true },
+      select: { filePath: true, storageFolder: true },
     },
   },
 });
@@ -116,9 +124,7 @@ export async function POST(
         kind: "ERR_PDF",
         pdf: validatedSignedPdf,
         storageName: errForStorage?.title || id,
-        storageFolder: projectStorageFolderFromFile(
-  errForStorage?.files[0]?.filePath,
-),
+        storageFolder: errForStorage?.files[0]?.storageFolder || projectStorageFolderFromFile(errForStorage?.files[0]?.filePath),
         overwrite: true,
       });
       savedPaths.push(savedSignedPdf.filePath);
@@ -242,6 +248,7 @@ export async function POST(
                 versionNumber: nextVersionNumber,
                 revisionNumber: err.revisionNumber,
                 filePath: savedSignedPdf.filePath,
+                  storageFolder: savedSignedPdf.storageFolder,
                 originalName: savedSignedPdf.originalName,
                 mimeType: savedSignedPdf.mimeType,
                 fileSize: savedSignedPdf.fileSize,
@@ -255,6 +262,7 @@ export async function POST(
             versionNumber: nextVersionNumber,
             revisionNumber: err.revisionNumber,
             filePath: savedSignedPdf.filePath,
+            storageFolder: savedSignedPdf.storageFolder,
             originalName: savedSignedPdf.originalName,
             mimeType: savedSignedPdf.mimeType,
             fileSize: savedSignedPdf.fileSize,
@@ -432,6 +440,49 @@ export async function POST(
         message: "ERR returned for revision.",
       };
     });
+
+    if (result.status !== "PENDING") {
+      try {
+        const uploader = await prisma.err.findUnique({
+          where: { id },
+          select: {
+            documentNumber: true,
+            title: true,
+            type: true,
+            projectNameSnapshot: true,
+            createdBy: { select: { name: true, email: true } },
+          },
+        });
+
+        if (uploader?.createdBy.email) {
+          const emailContext = {
+            recipientName: uploader.createdBy.name,
+            docNumber: uploader.documentNumber,
+            title: uploader.title,
+            workflowType: `ERR - ${uploader.type}`,
+            projectName: uploader.projectNameSnapshot,
+            currentStatus: result.status,
+            actorName: access.name,
+            documentUrl: `${getRequestOrigin(request)}/errs/${id}`,
+          };
+          const template = result.status === "APPROVED"
+            ? buildFinalApprovalEmail(emailContext)
+            : result.status === "REJECTED"
+              ? buildDocumentRejectedEmail(emailContext)
+              : result.status === "REVISION_REQUIRED"
+                ? buildRevisionRequiredEmail(emailContext)
+                : buildErrOnHoldEmail(emailContext);
+
+          await sendEmail({
+            to: uploader.createdBy.email,
+            subject: template.subject,
+            html: template.html,
+          });
+        }
+      } catch (error) {
+        console.error("ERR uploader email could not be sent.", error);
+      }
+    }
 
     return NextResponse.json(
       { message: result.message, status: result.status },

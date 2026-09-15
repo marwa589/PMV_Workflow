@@ -10,14 +10,14 @@ type WorkflowStatus =
   | "ON_HOLD";
 
 const badgeClasses: Record<WorkflowStatus, string> = {
-  PENDING_APPROVER_1: "bg-amber-50 text-amber-900 ring-1 ring-amber-200",
-  PENDING_APPROVER_2: "bg-sky-50 text-sky-900 ring-1 ring-sky-200",
-  PENDING_APPROVER_3: "bg-violet-50 text-violet-900 ring-1 ring-violet-200",
+  PENDING_APPROVER_1: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200",
+  PENDING_APPROVER_2: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200",
+  PENDING_APPROVER_3: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200",
   APPROVED: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200",
   REJECTED: "bg-rose-50 text-rose-900 ring-1 ring-rose-200",
   REVISION_REQUIRED: "bg-orange-50 text-orange-900 ring-1 ring-orange-200",
   ARCHIVED: "bg-slate-100 text-slate-800 ring-1 ring-slate-300",
-  PENDING: "bg-amber-50 text-amber-900 ring-1 ring-amber-200",
+  PENDING: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200",
   ON_HOLD: "bg-sky-50 text-sky-900 ring-1 ring-sky-200",
 };
 
