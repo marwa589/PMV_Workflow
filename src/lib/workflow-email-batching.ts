@@ -76,7 +76,7 @@ export async function queuePendingApprovalReminders() {
 
 export async function queueComparisonMrReminders() {
   const admins = await prisma.user.findMany({
-    where: { role: UserRole.ADMIN },
+    where: { role: UserRole.ADMIN, isActive: true },
     select: { id: true },
   });
   if (admins.length === 0) return 0;

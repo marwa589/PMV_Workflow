@@ -51,8 +51,14 @@ const users = [
   },
   {
     name: "Marwa Mehielddine",
-    email: "marwameheddien2000@gmail.com",
+    email: "marwa.mehieddine@ahmadiah.com",
     password: process.env.SEED_ADMIN_PASSWORD,
+    role: UserRole.ADMIN,
+  },
+  {
+    name: "Ahmad Mero",
+    email: "ahmad.mero@ahmadiah.com",
+    password: "ahmadmero123",
     role: UserRole.ADMIN,
   },
 ];

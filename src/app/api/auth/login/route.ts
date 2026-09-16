@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       where: { email },
     });
 
-    if (!user) {
+    if (!user || !user.isActive) {
       return NextResponse.json({ message: "Invalid credentials." }, { status: 401 });
     }
 

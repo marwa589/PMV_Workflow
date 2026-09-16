@@ -66,11 +66,11 @@ export async function POST(request: Request) {
   }
 
   const approver2 = await prisma.user.findFirst({
-    where: { role: UserRole.APPROVER_2 },
+    where: { role: UserRole.APPROVER_2, isActive: true },
     select: { id: true, email: true, name: true },
   });
   const approver3 = await prisma.user.findFirst({
-    where: { role: UserRole.APPROVER_3 },
+    where: { role: UserRole.APPROVER_3, isActive: true },
     select: { id: true, email: true, name: true },
   });
 

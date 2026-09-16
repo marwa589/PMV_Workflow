@@ -80,10 +80,10 @@ export async function createAdminOtpChallenge(user: { id: string; email: string;
 export async function verifyAdminOtp(challengeToken: string, code: string) {
   const challenge = await prisma.otpChallenge.findUnique({
     where: { challengeTokenHash: hashToken(challengeToken) },
-    include: { user: { select: { id: true, email: true, name: true, role: true } } },
+    include: { user: { select: { id: true, email: true, name: true, role: true, isActive: true } } },
   });
 
-  if (!challenge || challenge.consumedAt || challenge.verifiedAt) {
+  if (!challenge || !challenge.user.isActive || challenge.consumedAt || challenge.verifiedAt) {
     throw new Error("This OTP challenge is no longer valid.");
   }
 
@@ -131,10 +131,10 @@ export async function verifyAdminOtp(challengeToken: string, code: string) {
 export async function completeAdminOtpLogin(challengeToken: string, rememberDevice: boolean) {
   const challenge = await prisma.otpChallenge.findUnique({
     where: { challengeTokenHash: hashToken(challengeToken) },
-    include: { user: { select: { id: true, email: true, name: true, role: true } } },
+    include: { user: { select: { id: true, email: true, name: true, role: true, isActive: true } } },
   });
 
-  if (!challenge || challenge.consumedAt || !challenge.verifiedAt || challenge.expiresAt.getTime() <= Date.now()) {
+  if (!challenge || !challenge.user.isActive || challenge.consumedAt || !challenge.verifiedAt || challenge.expiresAt.getTime() <= Date.now()) {
     throw new Error("OTP verification has expired. Please sign in again.");
   }
 

@@ -104,18 +104,10 @@ export async function getSession(): Promise<AuthSession | null> {
 
   const user = await prisma.user.findUnique({
     where: { id: payload.userId },
-    select: { id: true, email: true, name: true, role: true },
-    // TEMPORARY TEST OVERRIDE: the sessionVersion column is not currently available in the DB,
-    // and we want to allow rapid role switching while validating workflows.
-    // select: { id: true, email: true, name: true, role: true, sessionVersion: true },
+    select: { id: true, email: true, name: true, role: true, isActive: true, sessionVersion: true },
   });
 
-  // TEMPORARY TEST OVERRIDE: keep the user session valid even if the version does not match.
-  // if (!user || user.sessionVersion !== payload.sessionVersion) {
-  //   return null;
-  // }
-
-  if (!user) {
+  if (!user || !user.isActive || user.sessionVersion !== payload.sessionVersion) {
     return null;
   }
 

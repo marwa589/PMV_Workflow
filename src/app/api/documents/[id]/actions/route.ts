@@ -188,7 +188,7 @@ export async function POST(
 
         if (routing.targetRole) {
           const targetApprover = await tx.user.findFirst({
-            where: { role: routing.targetRole },
+            where: { role: routing.targetRole, isActive: true },
             select: { id: true },
           });
 
@@ -360,7 +360,7 @@ export async function POST(
       let nextApproverId: string | null = null;
       if (workflow.nextApproverRole) {
         const nextApprover = await tx.user.findFirst({
-          where: { role: workflow.nextApproverRole },
+          where: { role: workflow.nextApproverRole, isActive: true },
           select: { id: true },
         });
 
@@ -557,6 +557,7 @@ export async function POST(
 : ["aqueel.sayed@ahmadiah.com", "george.azzi@ahmadiah.com"];
       const clerkRecipients = await prisma.user.findMany({
         where: {
+          isActive: true,
           email: {
             in: result.status === DocumentStatus.APPROVED
               ? approvedRecipientEmail
