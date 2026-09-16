@@ -3,7 +3,7 @@ node_modules
 .next
 .env
 .env.local
-
+prisma/seed.mjs
 # dependencies
 /node_modules
 /.pnp
