@@ -1,6 +1,6 @@
 import { hash } from "bcryptjs";
 import { NextResponse } from "next/server";
-import { ErrAccessRole, ErrProjectCountry, UserRole } from "@prisma/client";
+import { ErrAccessRole, ErrProjectCountry, UserLocation, UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { validateCsrf } from "@/lib/csrf";
@@ -9,10 +9,15 @@ export const runtime = "nodejs";
 
 const roles = Object.values(UserRole);
 const errRoles = Object.values(ErrAccessRole);
+const userLocations = Object.values(UserLocation);
 const countries = Object.values(ErrProjectCountry);
 
 function isValidRole(value: unknown): value is UserRole {
   return typeof value === "string" && roles.includes(value as UserRole);
+}
+
+function isValidLocation(value: unknown): value is UserLocation {
+  return typeof value === "string" && userLocations.includes(value as UserLocation);
 }
 
 function isValidCountry(value: unknown): value is ErrProjectCountry {
@@ -115,6 +120,8 @@ function serializeUser(user: {
   name: string;
   email: string;
   role: UserRole;
+  location?: UserLocation | null;
+  projectName?: string | null;
   createdAt: Date;
   errAccess: Array<{
     id?: string;
@@ -128,6 +135,8 @@ function serializeUser(user: {
     name: user.name,
     email: user.email,
     role: user.role,
+    location: user.location ?? UserLocation.KUWAIT,
+    projectName: user.projectName ?? null,
     errAccessRoles: [...new Set(user.errAccess.map((entry) => entry.role))],
     errAccess: user.errAccess.map((entry) => ({
       id: entry.id,
@@ -164,6 +173,8 @@ export async function GET(request: Request) {
         name: true,
         email: true,
         role: true,
+        location: true,
+        projectName: true,
         createdAt: true,
         errAccess: {
           where: { isActive: true },
@@ -196,9 +207,11 @@ export async function POST(request: Request) {
   const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
   const password = typeof body?.password === "string" ? body.password : "";
   const role = body?.role;
+  const location = body?.location;
+  const projectName = typeof body?.projectName === "string" ? body.projectName.trim() : "";
 
-  if (!name || !email || !password || !isValidRole(role)) {
-    return NextResponse.json({ message: "Name, email, password, and a valid role are required." }, { status: 400 });
+  if (!name || !email || !password || !isValidRole(role) || !isValidLocation(location)) {
+    return NextResponse.json({ message: "Name, email, password, location, and a valid role are required." }, { status: 400 });
   }
   if (!/^\S+@\S+\.\S+$/.test(email)) return NextResponse.json({ message: "Enter a valid email address." }, { status: 400 });
   if (password.length < 12 || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9\s]/.test(password)) {
@@ -221,6 +234,8 @@ export async function POST(request: Request) {
           name,
           email,
           role,
+          location: location as UserLocation,
+          projectName: projectName || null,
           passwordHash: await hash(password, 12),
         },
         select: {
@@ -228,6 +243,8 @@ export async function POST(request: Request) {
           name: true,
           email: true,
           role: true,
+          location: true,
+          projectName: true,
           createdAt: true,
         },
       });
@@ -311,9 +328,11 @@ export async function PATCH(request: Request) {
   const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
   const password = typeof body?.password === "string" ? body.password : "";
   const role = body?.role;
+  const location = body?.location;
+  const projectName = typeof body?.projectName === "string" ? body.projectName.trim() : "";
 
-  if (!id || !name || !email || !isValidRole(role)) {
-    return NextResponse.json({ message: "User id, name, email, and a valid role are required." }, { status: 400 });
+  if (!id || !name || !email || !isValidRole(role) || !isValidLocation(location)) {
+    return NextResponse.json({ message: "User id, name, email, location, and a valid role are required." }, { status: 400 });
   }
   if (!/^\S+@\S+\.\S+$/.test(email)) return NextResponse.json({ message: "Enter a valid email address." }, { status: 400 });
   if (password && (password.length < 12 || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9\s]/.test(password))) {
@@ -337,6 +356,8 @@ export async function PATCH(request: Request) {
           name,
           email,
           role,
+          location: location as UserLocation,
+          projectName: projectName || null,
           ...(password
             ? {
                 passwordHash: await hash(password, 12),
@@ -349,6 +370,8 @@ export async function PATCH(request: Request) {
           name: true,
           email: true,
           role: true,
+          location: true,
+          projectName: true,
           createdAt: true,
         },
       });

@@ -125,7 +125,7 @@ export default function ErrVoucherUploadPage({ approvedErrs }: { approvedErrs: A
                 </div>
                 <div className="mt-4 grid gap-4 md:grid-cols-[1fr,1.2fr]">
                   <label className="block text-sm font-medium text-slate-700">Voucher PDF
-                    <input type="file" accept="application/pdf,.pdf" onChange={(event) => updateRow(row.id, { file: event.target.files?.[0] || null })} disabled={submitting} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-700" />
+                    <input type="file" accept="application/pdf,.pdf" onChange={(event) => updateRow(row.id, { file: event.target.files?.[0] || null })} disabled={submitting} className="mt-2 block w-full rounded-lg border border-slate-300 bg-white text-sm font-normal text-slate-700 file:mr-3 file:cursor-pointer file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-700" />
                     {row.file ? <button type="button" onClick={() => updateRow(row.id, { file: null })} disabled={submitting} className="mt-2 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50">Remove selected file</button> : null}
                   </label>
                   <label className="block text-sm font-medium text-slate-700">Comments <span className="font-normal text-slate-500">(optional)</span>

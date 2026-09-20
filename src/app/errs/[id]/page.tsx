@@ -509,15 +509,25 @@ export default async function ErrDetailsPage({ params }: Props) {
                       {file.originalName}
                     </span>
                   </div>
-                  <a
-                    href={`/api/errs/${id}/download?kind=${file.kind}&fileId=${file.id}`}
-                    className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    download
-                  >
-                    Download
-                  </a>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <a
+                      href={`/api/errs/${id}/download?kind=${file.kind}&fileId=${file.id}`}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      download
+                    >
+                      Download
+                    </a>
+                    <a
+                      href={`/api/errs/${id}/download?kind=${file.kind}&fileId=${file.id}&inline=1`}
+                      className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-800 hover:bg-cyan-100"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Open File
+                    </a>
+                  </div>
                 </li>
               );
             })}

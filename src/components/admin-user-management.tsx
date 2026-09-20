@@ -5,6 +5,7 @@ import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 import { Plus, Trash2, ShieldCheck, Building2 } from "lucide-react";
 
 type Role = "CLERK" | "APPROVER_1" | "APPROVER_2" | "APPROVER_3" | "ADMIN" | "ERR_USER";
+type UserLocationType = "AVR" | "AVK" | "KUWAIT";
 type ErrRole = "UPLOADER" | "PROJECT_DIRECTOR" | "ACTING_CEO" | "CEO" | "VIEWER";
 type ErrProjectCountry = "KSA" | "KUWAIT";
 
@@ -22,6 +23,8 @@ type User = {
   name: string;
   email: string;
   role: Role;
+  location: UserLocationType;
+  projectName?: string | null;
   errAccessRoles: ErrRole[];
   errAccess?: ErrAccessItem[];
   createdAt: string;
@@ -55,11 +58,19 @@ const countryOptions: Array<{ value: ErrProjectCountry; label: string }> = [
   { value: "KUWAIT", label: "KUWAIT" },
 ];
 
+const locationOptions: Array<{ value: UserLocationType; label: string }> = [
+  { value: "AVR", label: "AVR" },
+  { value: "AVK", label: "AVK" },
+  { value: "KUWAIT", label: "KUWAIT" },
+];
+
 const emptyForm = {
   name: "",
   email: "",
   password: "",
   role: "CLERK" as Role,
+  location: "KUWAIT" as UserLocationType,
+  projectName: "",
   errAccess: [] as ErrAccessItem[],
 };
 
@@ -84,7 +95,7 @@ export default function AdminUserManagement({
   const [newProjectName, setNewProjectName] = useState<string>("");
   const [selectedNewCountry, setSelectedNewCountry] = useState<ErrProjectCountry>("KUWAIT");
 
-  function updateField(field: "name" | "email" | "password" | "role", value: string) {
+  function updateField(field: "name" | "email" | "password" | "role" | "location" | "projectName", value: string) {
     setForm((current) => ({
       ...current,
       [field]: value,
@@ -99,6 +110,8 @@ export default function AdminUserManagement({
       email: user.email,
       password: "",
       role: user.role,
+      location: user.location || "KUWAIT",
+      projectName: user.projectName || "",
       errAccess: user.errAccess ? [...user.errAccess] : (user.errAccessRoles || []).map((r) => ({ role: r, projectId: null })),
     });
     setError(null);
@@ -219,6 +232,8 @@ export default function AdminUserManagement({
       email: form.email,
       password: form.password,
       role: form.role,
+      location: form.location,
+      projectName: form.projectName.trim(),
       errAccess:
         form.role === "ERR_USER"
           ? form.errAccess.map((g) => ({
@@ -350,6 +365,30 @@ export default function AdminUserManagement({
                 </option>
               ))}
             </select>
+          </label>
+          <label className="text-sm font-medium text-slate-700">
+            Location
+            <select
+              required
+              value={form.location}
+              onChange={(event) => updateField("location", event.target.value)}
+              className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 font-normal outline-none focus:border-slate-500"
+            >
+              {locationOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm font-medium text-slate-700 md:col-span-2">
+            Project (optional)
+            <input
+              value={form.projectName}
+              onChange={(event) => updateField("projectName", event.target.value)}
+              placeholder="Optional project or department name"
+              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2.5 font-normal outline-none focus:border-slate-500"
+            />
           </label>
           <label className="text-sm font-medium text-slate-700">
             {editingId ? "New password (optional)" : "Initial password"}

@@ -26,8 +26,6 @@ function makeFieldList(context: EmailTextContext) {
     formatTextLine("Workflow", context.workflowType ?? null),
     formatTextLine("Project", context.projectName ?? null),
     formatTextLine("Current status", context.currentStatus ?? null),
-    formatTextLine("Current stage", context.currentStage ?? null),
-    formatTextLine("Actor", context.actorName ?? null),
     formatTextLine("Comments", context.comments ?? null),
   ].filter(Boolean).join("");
 }
@@ -39,36 +37,42 @@ function buildCommonHtml(context: EmailTextContext, intro: string, actionLabel: 
   const escapedWorkflow = escapeHtml(context.workflowType ?? "workflow document");
   const escapedProject = escapeHtml(context.projectName ?? "—");
   const escapedStatus = escapeHtml(context.currentStatus ?? "—");
-  const escapedStage = escapeHtml(context.currentStage ?? "—");
-  const escapedActor = escapeHtml(context.actorName ?? "—");
   const escapedComments = escapeHtml(context.comments ?? "No comments were provided.");
   const escapedUrl = context.documentUrl ? escapeHtml(context.documentUrl) : null;
 
   return `
-    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:650px;margin:0 auto;padding:24px;">
-      <div style="background:#0f172a;color:#fff;padding:20px 24px;border-radius:12px 12px 0 0;">
-        <div style="font-size:12px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.78;">PMV Workflow</div>
-        <h1 style="margin:8px 0 0;font-size:28px;">${escapeHtml(intro)}</h1>
-      </div>
-      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:24px;">
-        <p style="margin:0 0 16px;">Hello ${escapedName},</p>
-        <p style="margin:0 0 16px;">${escapeHtml(actionText)}</p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:0;padding:0;background:#eef2f7;font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;">
+      <tr>
+        <td align="center" style="padding:24px 12px;">
+          <table role="presentation" width="720" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:720px;margin:0 auto;">
+            <tr>
+              <td style="background:#0f172a;color:#fff;padding:22px 28px;border-radius:12px 12px 0 0;">
+                <div style="font-size:12px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.78;">PMV Workflow</div>
+                <h1 style="margin:8px 0 0;font-size:28px;line-height:1.25;">${escapeHtml(intro)}</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;padding:28px;">
+                <p style="margin:0 0 16px;">Hello ${escapedName},</p>
+                <p style="margin:0 0 20px;">${escapeHtml(actionText)}</p>
 
-        <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
-          <tbody>
-            <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;width:35%;">Document</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedDoc}${context.title ? ` — ${escapedTitle}` : ""}</td></tr>
-            <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;">Workflow</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedWorkflow}</td></tr>
-            <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;">Project</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedProject}</td></tr>
-            <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;">Current status</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedStatus}</td></tr>
-            <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;">Current stage</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedStage}</td></tr>
-            <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;">Actor</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedActor}</td></tr>
-            <tr><td style="padding:10px 12px;font-weight:700;">Comments</td><td style="padding:10px 12px;">${escapedComments}</td></tr>
-          </tbody>
-        </table>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;">
+                  <tbody>
+                    <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;width:35%;">Document</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedDoc}${context.title ? ` — ${escapedTitle}` : ""}</td></tr>
+                    <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;">Workflow</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedWorkflow}</td></tr>
+                    <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;">Project</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedProject}</td></tr>
+                    <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;">Current status</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedStatus}</td></tr>
+                    <tr><td style="padding:10px 12px;font-weight:700;">Comments</td><td style="padding:10px 12px;">${escapedComments}</td></tr>
+                  </tbody>
+                </table>
 
-        ${escapedUrl ? `<p style="margin:20px 0 0;"><a href="${escapedUrl}" style="display:inline-block;background:#0f172a;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:700;">${escapeHtml(actionLabel)}</a></p>` : ""}
-      </div>
-    </div>
+                ${escapedUrl ? `<p style="margin:20px 0 0;"><a href="${escapedUrl}" style="display:inline-block;background:#0f172a;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:700;">${escapeHtml(actionLabel)}</a></p>` : ""}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   `;
 }
 

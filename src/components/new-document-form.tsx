@@ -579,7 +579,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                 </div>
                 <div>
                   <label htmlFor="err-quotation" className="mb-2 block text-sm font-medium text-slate-700">Quotation <span className="font-normal text-slate-500">(optional)</span></label>
-                  <input id="err-quotation" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => setQuotation(event.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-700" />
+                  <input id="err-quotation" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => setQuotation(event.target.files?.[0] ?? null)} className="block w-full rounded-lg border border-slate-300 bg-white text-sm text-slate-700 file:mr-3 file:cursor-pointer file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-700" />
                 </div>
               </div>
             ) : null}

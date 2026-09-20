@@ -29,8 +29,8 @@ export async function GET(
     );
   }
 
-  const kindParam = new URL(_request.url).searchParams.get("kind");
-  const fileId = new URL(_request.url).searchParams.get("fileId");
+  const kindParam = new URL(request.url).searchParams.get("kind");
+  const fileId = new URL(request.url).searchParams.get("fileId");
 
   const validKinds: ErrFileKind[] = [
     ErrFileKind.ERR_PDF,

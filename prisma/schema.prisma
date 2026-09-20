@@ -13,6 +13,7 @@ model User {
   passwordHash              String
   role                      UserRole
   location                  UserLocation?
+  projectName               String?
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
   sessionVersion            Int                      @default(0)
@@ -37,6 +38,7 @@ model User {
   createdErrs               Err[]                    @relation("ErrCreatedBy")
   projectDirectorErrs       Err[]                    @relation("ErrProjectDirector")
   assignedErrs              Err[]                    @relation("ErrCurrentApprover")
+  workflowStepApprovals     DocumentWorkflowStep[]   @relation("WorkflowStepApprover")
   uploadedErrFiles          ErrFile[]                @relation("ErrFilesUploadedBy")
   errActions                ErrApprovalHistory[]     @relation("ErrActionsPerformedBy")
   errAccess                 ErrUserAccess[]
@@ -84,7 +86,12 @@ model Document {
   updatedAt                 DateTime          @updatedAt
   createdById               String
   currentApproverId         String?
+  uploaderLocation          UserLocation?
+  projectName               String?
+  workflowTemplateId        String?
+  currentWorkflowStep       Int?
   documentType              DocumentType      @default(COMPARISON)
+  documentSubtype           String?
   comparisonType            ComparisonType?
   mrType                    MrType?
   currentApproverAssignedAt DateTime?
@@ -96,6 +103,7 @@ model Document {
   deletionRequests          DeletionRequest[] @relation("DeletionRequests")
   createdBy                 User              @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
   currentApprover           User?             @relation("CurrentApprover", fields: [currentApproverId], references: [id])
+  workflowTemplate          DocumentWorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: SetNull)
   relatedComparison         Document?         @relation("MRToComparison", fields: [relatedComparisonId], references: [id])
   linkedMRs                 Document[]        @relation("MRToComparison")
   versions                  DocumentVersion[]
@@ -103,8 +111,44 @@ model Document {
 
   @@index([createdById])
   @@index([currentApproverId])
+  @@index([workflowTemplateId])
   @@index([relatedComparisonId])
   @@index([status])
+}
+
+model DocumentWorkflowTemplate {
+  id             String                 @id @default(cuid())
+  name           String
+  location       UserLocation?
+  documentType   DocumentType
+  documentSubtype String?
+  projectName    String?
+  isActive       Boolean                @default(true)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  steps          DocumentWorkflowStep[]
+  documents      Document[]
+
+  @@index([location, documentType, isActive])
+  @@index([documentType, documentSubtype, isActive])
+  @@index([projectName])
+}
+
+model DocumentWorkflowStep {
+  id             String                   @id @default(cuid())
+  templateId     String
+  stepNumber     Int
+  role           UserRole
+  approverUserId String?
+  isRequired     Boolean                  @default(true)
+  createdAt      DateTime                 @default(now())
+
+  template DocumentWorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  approver User?                    @relation("WorkflowStepApprover", fields: [approverUserId], references: [id], onDelete: SetNull)
+
+  @@unique([templateId, stepNumber])
+  @@index([templateId, stepNumber])
+  @@index([approverUserId])
 }
 
 model DocumentVersion {

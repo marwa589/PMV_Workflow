@@ -9,6 +9,8 @@ import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 import { writeAuditLog } from "@/lib/audit";
 import { runInBackground } from "@/lib/background";
 import { canAccessMrModuleForSession } from "@/lib/auth/resource-access";
+import { resolveNextWorkflowStepForApproval } from "@/lib/document-workflow-config";
+import { documentStorageFolder } from "@/lib/storage-layout";
 
 export const runtime = "nodejs";
 
@@ -53,10 +55,31 @@ export async function POST(
           currentVersion: true,
           currentApproverId: true,
           createdById: true,
+          createdBy: {
+            select: { id: true, name: true, email: true, location: true },
+          },
+          mrType: true,
+          workflowTemplateId: true,
+          currentWorkflowStep: true,
           documentType: true,
           comparisonType: true,
           mrNumber: true,
           relatedComparisonId: true,
+          workflowTemplate: {
+            select: {
+              id: true,
+              steps: {
+                orderBy: { stepNumber: "asc" },
+                select: {
+                  id: true,
+                  stepNumber: true,
+                  role: true,
+                  approverUserId: true,
+                  approver: { select: { id: true, email: true, name: true } },
+                },
+              },
+            },
+          },
         },
       });
 
@@ -93,29 +116,22 @@ export async function POST(
       }
 
       if (decision === "REJECT") {
-        const aqueel = await tx.user.findUnique({
-          where: { email: "aqueel.sayed@ahmadiah.com" },
-          select: { id: true },
+        const uploader = document.createdBy ?? await tx.user.findUnique({
+          where: { id: document.createdById },
+          select: { id: true, name: true, email: true },
         });
-        if (!aqueel) {
-          throw new Error("Aqueel Sayed clerk account not found.");
-        }
 
-        const versionFilesToDelete = await tx.documentVersion.findMany({
-          where: {
-            documentId: document.id,
-            versionNumber: { gt: 0 },
-          },
-          select: { id: true, filePath: true },
-        });
+        if (!uploader) {
+          throw new Error("Uploader account not found for this document.");
+        }
 
         await tx.document.update({
           where: { id: document.id },
           data: {
             status: DocumentStatus.REJECTED,
-            currentVersion: 0,
-            currentApproverId: aqueel.id,
-            currentApproverAssignedAt: null,
+            currentVersion: document.currentVersion,
+            currentApproverId: uploader.id,
+            currentApproverAssignedAt: new Date(),
             lastActiveStage: document.status,
           },
         });
@@ -139,40 +155,25 @@ export async function POST(
             comments: comments || null,
             approverRole: session.role,
             previousStatus: document.status,
+            returnedToUploaderId: uploader.id,
+            returnedToUploaderEmail: uploader.email,
           }),
         });
 
         runInBackground(async () => {
           await createNotification({
-            userId: aqueel.id,
+            userId: uploader.id,
             type: "DOCUMENT_REJECTED",
-            title: "Document rejected",
+            title: "Document rejected and returned to you",
             message: `${document.documentNumber} - ${document.title}`,
             documentId: document.id,
           });
         });
 
-        await tx.documentVersion.deleteMany({
-          where: {
-            documentId: document.id,
-            versionNumber: { gt: 0 },
-          },
-        });
-
-        await Promise.all(
-          versionFilesToDelete.map(async (version) => {
-            try {
-              await deleteDocumentFiles({ filePaths: [version.filePath] });
-            } catch {
-              // Ignore missing files so rejection still succeeds.
-            }
-          }),
-        );
-
         return {
           status: DocumentStatus.REJECTED,
-          currentVersion: 0,
-          emailRecipientId: aqueel.id,
+          currentVersion: document.currentVersion,
+          emailRecipientId: uploader.id,
         };
       }
 
@@ -219,6 +220,9 @@ export async function POST(
             documentNumber: document.documentNumber,
             mrNumber: document.mrNumber,
             hasLinkedComparison: !!document.relatedComparisonId,
+            uploaderEmail: document.createdBy?.email ?? undefined,
+            location: document.createdBy?.location ?? undefined,
+            mrType: document.mrType ?? undefined,
           });
 
           const newVersion = await tx.documentVersion.create({
@@ -303,6 +307,9 @@ export async function POST(
         documentNumber: document.documentNumber,
         mrNumber: document.mrNumber,
         hasLinkedComparison: !!document.relatedComparisonId,
+        uploaderEmail: document.createdBy?.email ?? undefined,
+        location: document.createdBy?.location ?? undefined,
+        mrType: document.mrType ?? undefined,
       });
 
       let finalFilePath = saved.relativePath;
@@ -328,6 +335,13 @@ export async function POST(
             firstFilePath: comparisonVersion.filePath,
             secondFilePath: saved.relativePath,
             fileName: `${document.mrNumber || document.documentNumber} - ${document.title} + ${comparison.title}`,
+            storageFolder: saved.storageFolder || documentStorageFolder({
+              uploaderEmail: document.createdBy?.email ?? "",
+              location: document.createdBy?.location ?? undefined,
+              documentType: "MATERIAL_REQUISITION",
+              mrType: document.mrType ?? null,
+              hasLinkedComparison: true,
+            }) || undefined,
           });
           finalFilePath = merged.relativePath;
           finalOriginalName = `${document.mrNumber || document.documentNumber} - ${document.title} + ${comparison.title}.pdf`;
@@ -354,7 +368,22 @@ export async function POST(
       });
 
       let nextApproverId: string | null = null;
-      if (workflow.nextApproverRole) {
+      let nextStatus = workflow.nextStatus;
+      let nextWorkflowStep: number | null = null;
+      const templateTransition = resolveNextWorkflowStepForApproval(document.workflowTemplate, document.currentWorkflowStep);
+
+      if (document.workflowTemplate && document.workflowTemplate.steps.length > 0 && templateTransition.currentStep) {
+        const fallbackApprover = templateTransition.nextStep?.approverUserId ?? templateTransition.nextStep?.approver?.id ?? null;
+        if (templateTransition.nextStep) {
+          nextApproverId = fallbackApprover ?? null;
+          nextStatus = templateTransition.nextStatus ?? workflow.nextStatus;
+          nextWorkflowStep = templateTransition.nextStep.stepNumber;
+        } else {
+          nextApproverId = null;
+          nextStatus = DocumentStatus.APPROVED;
+          nextWorkflowStep = templateTransition.currentStep.stepNumber;
+        }
+      } else if (workflow.nextApproverRole) {
         const nextApprover = await tx.user.findFirst({
           where: { role: workflow.nextApproverRole },
           select: { id: true },
@@ -371,10 +400,11 @@ export async function POST(
         where: { id: document.id },
         data: {
           currentVersion: nextVersionNumber,
-          status: workflow.nextStatus,
+          status: nextStatus,
           currentApproverId: nextApproverId,
           currentApproverAssignedAt: nextApproverId ? new Date() : null,
-          lastActiveStage: workflow.nextStatus,
+          currentWorkflowStep: nextWorkflowStep,
+          lastActiveStage: nextStatus,
         },
       });
 
@@ -505,6 +535,10 @@ export async function POST(
         : ["aqueel.sayed@ahmadiah.com", "george.azzi@ahmadiah.com"];
       existingRejectedEmails.forEach((email) => workflowRecipientEmails.add(email));
 
+      if (documentForEmail?.createdBy?.email) {
+        workflowRecipientEmails.add(documentForEmail.createdBy.email.trim().toLowerCase());
+      }
+
       if (documentForEmail?.documentType === "COMPARISON" && creatorEmail) {
         workflowRecipientEmails.add(creatorEmail);
       }
@@ -599,6 +633,13 @@ export async function POST(
       const targetEmails = result.status === DocumentStatus.APPROVED
         ? [...approvedRecipientEmail]
         : [...workflowRecipientEmails];
+
+      if (result.status === DocumentStatus.REJECTED && documentForEmail?.createdBy?.email) {
+        const uploaderEmail = documentForEmail.createdBy.email.trim().toLowerCase();
+        if (!targetEmails.includes(uploaderEmail)) {
+          targetEmails.push(uploaderEmail);
+        }
+      }
 
       if (
         result.status === DocumentStatus.APPROVED &&

@@ -12,6 +12,11 @@ const GROUP_B_UPLOADER_EMAILS = new Set([
 const GROUP_A_RECIPIENT_EMAILS = [ERRO_EMAIL, "mohammad.mehieddine@ahmadiah.com"];
 const GROUP_B_RECIPIENT_EMAILS = ["joemar.paraiso@ahmadiah.com", ERRO_EMAIL, "bernabie.rocha@ahmadiah.com", "mohamed.mahran@ahmadiah.com"];
 const GROUP_C_RECIPIENT_EMAILS = ["mohamed.shawky@ahmadiah.com", "mohamed.mahmoud@ahmadiah.com", "jad.kabalan@ahmadiah.com", "muneer.kottappuram@ahmadiah.com"];
+const PO_GLOBAL_VIEWER_EMAILS = new Set([
+  "george.azzi@ahmadiah.com",
+  "marc.baddour@ahmadiah.com",
+  "jad.kabalan@ahmadiah.com",
+]);
 
 export function isOmar(user: { email?: string | null }): boolean {
   return user.email?.trim().toLowerCase() === "omar.merzek@ahmadiah.com";
@@ -42,6 +47,10 @@ async function resolvePurchaseOrderRecipientIds(tx: PoAccessDb, poId: string) {
     for (const email of recipientEmailsForUploader(uploaderEmail)) emails.add(normalizeEmail(email));
   }
 
+  for (const email of PO_GLOBAL_VIEWER_EMAILS) {
+    emails.add(normalizeEmail(email));
+  }
+
   const recipients = await tx.user.findMany({ where: { email: { in: [...emails] } }, select: { id: true, email: true } });
   const found = new Set(recipients.map((user) => normalizeEmail(user.email)));
   const missing = [...emails].filter((email) => !found.has(email));
@@ -60,6 +69,12 @@ export async function canViewPurchaseOrder(user: { userId: string; role: UserRol
     });
     if (purchaseOrder?.uploadedById === user.userId) return true;
   }
+
+  const normalizedUserEmail = user.email?.trim().toLowerCase();
+  if (normalizedUserEmail && PO_GLOBAL_VIEWER_EMAILS.has(normalizedUserEmail)) {
+    return true;
+  }
+
   return (await getPurchaseOrderRecipientIds(poId)).includes(user.userId);
 }
 

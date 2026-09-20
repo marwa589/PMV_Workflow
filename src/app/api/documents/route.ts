@@ -5,6 +5,7 @@ import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 import { resolveWorkflowApproverIdsForUploader } from "@/lib/workflow-locations";
+import { resolveDocumentWorkflowForSubmission } from "@/lib/document-workflow-config";
 import { documentStorageFolder } from "@/lib/storage-layout";
 
 export const runtime = "nodejs";
@@ -69,30 +70,46 @@ export async function POST(request: Request) {
 
   const uploader = await prisma.user.findUnique({
     where: { id: session.userId },
-    select: { email: true, location: true },
+    select: { email: true, location: true, projectName: true },
   });
 
   if (!uploader) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  const workflowApprovers = await resolveWorkflowApproverIdsForUploader(prisma, uploader.email);
+  const configuredWorkflow = await resolveDocumentWorkflowForSubmission(prisma, {
+    uploaderLocation: uploader.location,
+    documentType,
+    documentSubtype: documentType === "COMPARISON" ? comparisonType : mrType,
+    projectName: uploader.projectName,
+  });
+
+  const workflowApprovers = configuredWorkflow
+    ? { approver1Id: null, approver2Id: null, approver3Id: null, location: uploader.location }
+    : await resolveWorkflowApproverIdsForUploader(prisma, uploader.email);
+
   const { approver1Id, approver2Id, approver3Id, location } = workflowApprovers;
 
   if (!location) {
     return NextResponse.json({ message: "User location is not configured for this workflow." }, { status: 400 });
   }
 
-  const requiresApprover1 = Boolean(approver1Id);
-  const approver1 = approver1Id ? await prisma.user.findUnique({ where: { id: approver1Id }, select: { id: true, email: true, name: true } }) : null;
-  const approver2 = approver2Id ? await prisma.user.findUnique({ where: { id: approver2Id }, select: { id: true, email: true, name: true } }) : null;
-  const approver3 = approver3Id ? await prisma.user.findUnique({ where: { id: approver3Id }, select: { id: true, email: true, name: true } }) : null;
+  const requiresApprover1 = Boolean(configuredWorkflow?.approverId && configuredWorkflow.status === DocumentStatus.PENDING_APPROVER_1) || Boolean(approver1Id);
+  const approver1 = configuredWorkflow?.status === DocumentStatus.PENDING_APPROVER_1
+    ? configuredWorkflow.approver
+    : approver1Id ? await prisma.user.findUnique({ where: { id: approver1Id }, select: { id: true, email: true, name: true } }) : null;
+  const approver2 = configuredWorkflow?.status === DocumentStatus.PENDING_APPROVER_2
+    ? configuredWorkflow.approver
+    : approver2Id ? await prisma.user.findUnique({ where: { id: approver2Id }, select: { id: true, email: true, name: true } }) : null;
+  const approver3 = configuredWorkflow?.status === DocumentStatus.PENDING_APPROVER_3
+    ? configuredWorkflow.approver
+    : approver3Id ? await prisma.user.findUnique({ where: { id: approver3Id }, select: { id: true, email: true, name: true } }) : null;
 
   if (requiresApprover1 && !approver1) {
     return NextResponse.json({ message: "Approver 1 account is missing for the configured location." }, { status: 400 });
   }
 
-  const requiresApprover2 = requiresApprover1 || location === UserLocation.KUWAIT || documentType === "MATERIAL_REQUISITION" || (documentType === "COMPARISON" && comparisonType === "SPARE_PARTS");
+  const requiresApprover2 = configuredWorkflow?.status === DocumentStatus.PENDING_APPROVER_2 || requiresApprover1 || location === UserLocation.KUWAIT || documentType === "MATERIAL_REQUISITION" || (documentType === "COMPARISON" && comparisonType === "SPARE_PARTS");
 
   if (requiresApprover2 && !approver2) {
     return NextResponse.json({ message: "Approver 2 account is missing for this workflow." }, { status: 400 });
@@ -102,8 +119,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "PMV Manager account is missing." }, { status: 400 });
   }
 
-  const initialApprover = requiresApprover1 ? approver1 : requiresApprover2 ? approver2 : approver3;
-  const initialStatus = requiresApprover1 ? DocumentStatus.PENDING_APPROVER_1 : requiresApprover2 ? DocumentStatus.PENDING_APPROVER_2 : DocumentStatus.PENDING_APPROVER_3;
+  const initialApprover = configuredWorkflow?.approverId ? configuredWorkflow.approver : requiresApprover1 ? approver1 : requiresApprover2 ? approver2 : approver3;
+  const initialStatus = configuredWorkflow?.status ?? (requiresApprover1 ? DocumentStatus.PENDING_APPROVER_1 : requiresApprover2 ? DocumentStatus.PENDING_APPROVER_2 : DocumentStatus.PENDING_APPROVER_3);
 
   if (!initialApprover) {
     return NextResponse.json({ message: "Initial approver account is missing." }, { status: 400 });
@@ -144,6 +161,10 @@ export async function POST(request: Request) {
           lastActiveStage: initialStatus,
           currentApproverId: initialApprover.id,
           currentApproverAssignedAt: new Date(),
+          uploaderLocation: uploader.location,
+          projectName: uploader.projectName ?? null,
+          workflowTemplateId: configuredWorkflow?.templateId ?? null,
+          currentWorkflowStep: configuredWorkflow?.stepNumber ?? null,
           documentType: normalizedDocumentType,
           comparisonType: normalizedDocumentType === DocumentType.COMPARISON ? comparisonType as "SPARE_PARTS" | "OTHER" : null,
           mrType: normalizedMrType,
@@ -160,6 +181,7 @@ export async function POST(request: Request) {
         const isMrLinked = normalizedDocumentType === DocumentType.MATERIAL_REQUISITION && !!relatedComparisonId;
         const storageFolder = documentStorageFolder({
           uploaderEmail: uploader.email,
+          location: uploader.location,
           documentType: normalizedDocumentType === DocumentType.COMPARISON ? "COMPARISON" : "MATERIAL_REQUISITION",
           mrType: normalizedMrType === MrType.CREDIT ? "CREDIT" : normalizedMrType === MrType.CASH ? "CASH" : null,
           hasLinkedComparison: isMrLinked,

@@ -15,6 +15,8 @@ export default async function AdminUsersPage() {
         name: true,
         email: true,
         role: true,
+        location: true,
+        projectName: true,
         createdAt: true,
         errAccess: {
           where: { isActive: true },
@@ -43,6 +45,8 @@ export default async function AdminUsersPage() {
           name: user.name,
           email: user.email,
           role: user.role,
+          location: user.location ?? "KUWAIT",
+          projectName: user.projectName ?? null,
           errAccessRoles: [...new Set(user.errAccess.map((entry) => entry.role))],
           errAccess: user.errAccess.map((entry: any) => {
             const proj: any = entry.project;

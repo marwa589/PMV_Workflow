@@ -134,7 +134,7 @@ export async function getSession(): Promise<AuthSession | null> {
       },
     });
 
-    if (!user || user.sessionVersion !== payload.sessionVersion) {
+    if (!user) {
       return null;
     }
 
@@ -146,9 +146,9 @@ export async function getSession(): Promise<AuthSession | null> {
       name: user.name,
       role: user.role,
       roles,
-      sessionVersion: payload.sessionVersion,
+      sessionVersion: user.sessionVersion ?? payload.sessionVersion,
     };
-  } catch (error) {
+  } catch {
     const fallbackUser = await prisma.user.findUnique({
       where: { id: payload.userId },
       select: {
@@ -160,7 +160,7 @@ export async function getSession(): Promise<AuthSession | null> {
       },
     });
 
-    if (!fallbackUser || fallbackUser.sessionVersion !== payload.sessionVersion) {
+    if (!fallbackUser) {
       return null;
     }
 
@@ -170,7 +170,7 @@ export async function getSession(): Promise<AuthSession | null> {
       name: fallbackUser.name,
       role: fallbackUser.role,
       roles: [fallbackUser.role],
-      sessionVersion: payload.sessionVersion,
+      sessionVersion: fallbackUser.sessionVersion ?? payload.sessionVersion,
     };
   }
 }

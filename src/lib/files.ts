@@ -166,14 +166,38 @@ export function resolveStorageDir(params: {
   mrNumber?: string | null;
   mrType?: "CASH" | "CREDIT" | null;
   hasLinkedComparison: boolean;
+  location?: string | null;
+  uploaderEmail?: string;
 }): string {
+  const resolvedPath = params.uploaderEmail
+    ? documentStorageFolder({
+        uploaderEmail: params.uploaderEmail,
+        location: params.location,
+        documentType: params.documentType,
+        mrType: params.mrType,
+        hasLinkedComparison: params.hasLinkedComparison,
+      })
+    : null;
+
+  const fallbackPath = params.location ? `MRs/${params.location}` : "MRs";
+
+  if (resolvedPath) {
+    return resolvedPath;
+  }
+
   if (params.documentType === "COMPARISON") {
-    return "Comparisons";
+    return `${fallbackPath}/Comparisons`;
   }
-  if (params.hasLinkedComparison && params.mrNumber) {
-    return `MRs+Comparisons/MR-${safeFileName(params.mrNumber)}`;
+
+  if (params.mrType === "CREDIT") {
+    return `${fallbackPath}/MRs Credit`;
   }
-  return "MRs";
+
+  if (params.mrType === "CASH") {
+    return `${fallbackPath}/MRs Cash`;
+  }
+
+  return `${fallbackPath}/MRs`;
 }
 
 export async function saveDocumentVersionFile(params: {
@@ -186,6 +210,7 @@ export async function saveDocumentVersionFile(params: {
   mrNumber?: string | null;
   hasLinkedComparison?: boolean;
   uploaderEmail?: string;
+  location?: string | null;
   mrType?: "CASH" | "CREDIT" | null;
   storageFolder?: string | null;
 }): Promise<{ relativePath: string; extension: string; storageFolder: string | null }> {
@@ -202,6 +227,7 @@ export async function saveDocumentVersionFile(params: {
     dir = params.storageFolder || (params.uploaderEmail
       ? documentStorageFolder({
           uploaderEmail: params.uploaderEmail,
+          location: params.location,
           documentType: params.documentType,
           mrType: params.mrType,
           hasLinkedComparison: params.hasLinkedComparison ?? false,
@@ -211,6 +237,8 @@ export async function saveDocumentVersionFile(params: {
         mrNumber: params.mrNumber,
         mrType: params.mrType,
         hasLinkedComparison: params.hasLinkedComparison ?? false,
+        location: params.location,
+        uploaderEmail: params.uploaderEmail,
       });
     fileName = documentFileName({
       fileName: params.file.name,
@@ -275,7 +303,10 @@ export async function mergePdfFiles(params: {
   }
 
   const safeName = `${safeFileName(params.fileName.replace(/\.[^.]+$/, ""))}.pdf`;
-  const relativePath = `${params.storageFolder || "MRs+Comparisons"}/${safeName}`;
+  const normalizedStorageFolder = params.storageFolder
+    ? params.storageFolder.replace(/\\/g, "/").replace(/\/+$/, "")
+    : "MRs";
+  const relativePath = `${normalizedStorageFolder.replace(/\/MRs+Comparisons$/, "")}/MRs+Comparisons/${safeName}`;
   const saved = await saveStoredFile({
     relativePath,
     bytes: await mergedPdf.save(),
@@ -287,14 +318,18 @@ export async function mergePdfFiles(params: {
   };
 }
 
-// Copy a comparison file into an MRs+Comparisons subfolder so OneDrive sees the pair together.
+// Copy a comparison file into the MR country/group MRs+Comparisons folder so OneDrive sees the pair together.
 export async function copyComparisonToMrFolder(params: {
   comparisonFilePath: string;
   comparisonOriginalName: string;
   mrNumber: string;
+  storageFolder?: string | null;
 }): Promise<void> {
   const { readFile } = await import("fs/promises");
-  const destDir = path.join(getUploadRoot(), "MRs+Comparisons", `MR-${safeFileName(params.mrNumber)}`);
+  const baseFolder = params.storageFolder
+    ? params.storageFolder.replace(/\\/g, "/").replace(/\/+$/, "")
+    : "MRs";
+  const destDir = path.join(getUploadRoot(), baseFolder.replace(/^\//, ""), "MRs+Comparisons", `MR-${safeFileName(params.mrNumber)}`);
   await mkdir(destDir, { recursive: true });
   const destPath = path.join(destDir, safeFileName(params.comparisonOriginalName));
   try {

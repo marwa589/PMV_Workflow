@@ -1,7 +1,8 @@
-import { DocumentStatus } from "@prisma/client";
+import { DocumentStatus, UserRole } from "@prisma/client";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import DashboardShell from "@/components/dashboard-shell";
+import PurchaseOrderListTable from "@/components/purchase-order-list-table";
 import PurchaseOrderUpload from "@/components/purchase-order-upload";
 import { requireAuth } from "@/lib/auth/guards";
 import { isOmar } from "@/lib/po-access";
@@ -36,6 +37,9 @@ export default async function PurchaseOrdersPage() {
     })),
   )).filter((item) => item.visible).map((item) => item.purchaseOrder);
 
+  const canAdminDelete = session.role === UserRole.ADMIN;
+  const canRequestDeletion = session.role === UserRole.ADMIN || isOmar(session);
+
   return (
     <DashboardShell role={session.role} userName={session.name} title="Purchase Orders" subtitle="Upload POs and link them to approved MRs">
       {isOmar(session) ? (
@@ -47,10 +51,21 @@ export default async function PurchaseOrdersPage() {
       ) : null}
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4"><h2 className="text-lg font-semibold text-slate-900">Purchase Orders</h2></div>
-        {visiblePurchaseOrders.length === 0 ? <p className="px-5 py-6 text-sm text-slate-500">No purchase orders available.</p> : (
-          <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3 font-semibold">PO Number</th><th className="px-5 py-3 font-semibold">Filename</th><th className="px-5 py-3 font-semibold">Description</th><th className="px-5 py-3 font-semibold">Uploaded</th><th className="px-5 py-3 font-semibold">Uploaded By</th><th className="px-5 py-3 font-semibold">Linked MRs</th><th className="px-5 py-3 font-semibold">Open File</th></tr></thead><tbody>
-            {visiblePurchaseOrders.map((po) => <tr key={po.id} className="border-t border-slate-100"><td className="px-5 py-4"><a href={`/purchase-orders/${po.id}`} className="font-medium text-cyan-700 hover:underline">{po.poNumber}</a></td><td className="px-5 py-4 text-slate-700">{po.originalName}</td><td className="px-5 py-4 text-slate-600">{po.description || "—"}</td><td className="px-5 py-4 text-slate-600">{new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(po.uploadedAt)}</td><td className="px-5 py-4 text-slate-600">{po.uploadedBy.name}</td><td className="px-5 py-4 text-slate-600">{po.mrLinks.length === 0 ? "—" : <div className="flex flex-wrap gap-2">{po.mrLinks.map((link) => <Link key={link.document.id} href={`/documents/${link.document.id}`} className="font-medium text-cyan-700 hover:underline">{link.document.documentNumber}</Link>)}</div>}</td><td className="px-5 py-4"><a href={`/api/purchase-orders/${po.id}/download?inline=1`} target="_blank" rel="noopener noreferrer" className="font-medium text-cyan-700 hover:underline">Open File</a></td></tr>)}
-          </tbody></table></div>
+        {visiblePurchaseOrders.length === 0 ? (
+          <p className="px-5 py-6 text-sm text-slate-500">No purchase orders available.</p>
+        ) : (
+          <PurchaseOrderListTable
+            purchaseOrders={visiblePurchaseOrders.map((po) => ({
+              id: po.id,
+              poNumber: po.poNumber,
+              originalName: po.originalName,
+              description: po.description,
+              uploadedAt: po.uploadedAt.toISOString(),
+              uploadedByName: po.uploadedBy.name,
+            }))}
+            canAdminDelete={canAdminDelete}
+            canRequestDeletion={canRequestDeletion}
+          />
         )}
       </section>
     </DashboardShell>

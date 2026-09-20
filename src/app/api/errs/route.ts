@@ -191,6 +191,7 @@ if (!storageProject) {
     const storageFolder = errDocumentStorageFolder(
       storageProject.country,
       storageProject.name,
+      typeValue as ErrType,
       uploadedFiles[0].name,
       errId,
     );

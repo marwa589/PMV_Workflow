@@ -133,6 +133,7 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "Approved Documents", href: "/admin/approved-documents", icon: CheckCircle2 },
     { label: "Rejected Documents", href: "/admin/rejected-documents", icon: FileCheck2 },
     { label: "Users", href: "/admin/users", icon: Users },
+    { label: "Workflow Templates", href: "/admin/workflows", icon: ClipboardCheck },
     { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
     { label: "Account Settings", href: "/admin/settings", icon: Settings },
   ],

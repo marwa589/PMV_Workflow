@@ -2,33 +2,16 @@ import type { UserRole } from "@prisma/client";
 
 export type ModuleVisibility = "ERR_ONLY" | "DOCUMENTS_ONLY" | "ALL";
 
-const DOCUMENT_ONLY_NAMES = new Set([
-  "omar merzek",
-  "george azzi",
-  "aqueel sayed",
-  "jad",
-  "mohamed mahmoud",
-  "mohammad mahmoud",
-  "mohammad mehieddine",
-  "mohammad mehialddine",
-]);
-
-function normalizedName(name: string): string {
-  return name.trim().toLocaleLowerCase().replace(/\s+/g, " ");
-}
-
-export function getModuleVisibility(name: string, role: UserRole): ModuleVisibility {
-  const normalized = normalizedName(name);
-
-  if (role === "ERR_USER" || normalized === "edmond houeiss" || normalized === "reine al souki") {
+export function getModuleVisibility(_name: string, role: UserRole): ModuleVisibility {
+  if (role === "ERR_USER") {
     return "ERR_ONLY";
   }
 
-  if (role === "ADMIN" || role === "APPROVER_3" || normalized === "marc baddour" || normalized === "marwa mehielddine") {
+  if (role === "ADMIN" || role === "APPROVER_3") {
     return "ALL";
   }
 
-  if (DOCUMENT_ONLY_NAMES.has(normalized) || role === "CLERK" || role === "APPROVER_1" || role === "APPROVER_2") {
+  if (role === "CLERK" || role === "APPROVER_1" || role === "APPROVER_2") {
     return "DOCUMENTS_ONLY";
   }
 

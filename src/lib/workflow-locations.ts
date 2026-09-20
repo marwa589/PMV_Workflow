@@ -9,6 +9,10 @@ export const USER_LOCATION_ASSIGNMENTS: Record<UserLocation, string[]> = {
     "joemar.paraiso@ahmadiah.com",
     "bernabie.rocha@ahmadiah.com",
     "mohamed.mahran@ahmadiah.com",
+    //temp
+  "joemar.paraiso@example.com",
+  "bernabie.rocha@example.com",
+  "mohamed.mahran@example.com",
   ],
   KUWAIT: [
     "omar.merzek@ahmadiah.com",
@@ -18,6 +22,10 @@ export const USER_LOCATION_ASSIGNMENTS: Record<UserLocation, string[]> = {
     "mohamed.mahmoud@ahmadiah.com",
     "mohamed.shawky@ahmadiah.com",
     "jad.kabalan@ahmadiah.com",
+    "aqueel.sayed@example.com",
+  "mohamed.shawky@example.com",
+  "mohamed.mahmoud@example.com",
+  "jad.kabalan@example.com",
   ],
 };
 

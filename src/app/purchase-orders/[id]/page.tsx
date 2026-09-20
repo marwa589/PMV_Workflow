@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, Download, FileText } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
+import PurchaseOrderDeleteButton from "@/components/purchase-order-delete-button";
 import { requireAuth } from "@/lib/auth/guards";
 import { canViewPurchaseOrder } from "@/lib/po-access";
 import { prisma } from "@/lib/prisma";
@@ -47,6 +48,7 @@ export default async function PurchaseOrderDetailsPage({ params }: { params: Pro
           <FileText className="h-4 w-4" />
           Open File
         </a>
+        <PurchaseOrderDeleteButton purchaseOrderId={po.id} />
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
