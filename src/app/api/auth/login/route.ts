@@ -1,10 +1,12 @@
 import { compare } from "bcryptjs";
 import { NextResponse } from "next/server";
 import { getDefaultRouteForRole } from "@/lib/auth/roles";
-import { attachSessionCookie, rotateSession } from "@/lib/auth/session";
+import { attachSessionCookie} from "@/lib/auth/session";
 import {
   createAdminOtpChallenge,
   getValidTrustedDevice,
+  isOtpAuthenticationEnabled,
+  isOtpRequiredForUser,
   OTP_CHALLENGE_COOKIE,
   TRUSTED_DEVICE_COOKIE,
 } from "@/lib/auth/otp";
@@ -41,30 +43,37 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "Invalid credentials." }, { status: 401 });
     }
 
-    if (user.role === "ADMIN") {
+    if (isOtpAuthenticationEnabled() && isOtpRequiredForUser(user.email)) {
       const trustedDevice = await getValidTrustedDevice(user.id, getCookie(request, TRUSTED_DEVICE_COOKIE));
       if (!trustedDevice) {
-        const challengeToken = await createAdminOtpChallenge({
-          id: user.id,
-          email: user.email,
-          name: user.name,
-        });
-        const response = NextResponse.json({
-          message: "A verification code was sent to your email.",
-          requiresOtp: true,
-        });
-        response.cookies.set(OTP_CHALLENGE_COOKIE, challengeToken, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: "strict",
-          path: "/",
-          maxAge: 5 * 60,
-        });
-        return response;
+        try {
+          const challengeToken = await createAdminOtpChallenge({
+            id: user.id,
+            email: user.email,
+            name: user.name,
+          });
+          const response = NextResponse.json({
+            message: "A verification code was sent to your email.",
+            requiresOtp: true,
+          });
+          response.cookies.set(OTP_CHALLENGE_COOKIE, challengeToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "strict",
+            path: "/",
+            maxAge: 5 * 60,
+          });
+          return response;
+        } catch (error) {
+          return NextResponse.json(
+            { message: error instanceof Error ? error.message : "OTP authentication is currently unavailable." },
+            { status: 503 },
+          );
+        }
       }
     }
 
-    const rotatedVersion = await rotateSession(user.id);
+    // const rotatedVersion = await rotateSession(user.id);
     const redirectTo = getDefaultRouteForRole(user.role);
     const response = NextResponse.json({
       message: "Login successful.",
@@ -77,7 +86,7 @@ export async function POST(request: Request) {
       email: user.email,
       name: user.name,
       role: user.role,
-    }, rotatedVersion);
+    }, user.sessionVersion);
 
     return response;
   } catch {

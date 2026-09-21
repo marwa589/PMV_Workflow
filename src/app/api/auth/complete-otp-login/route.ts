@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { getDefaultRouteForRole } from "@/lib/auth/roles";
-import { attachSessionCookie, rotateSession } from "@/lib/auth/session";
+import { attachSessionCookie } from "@/lib/auth/session";
 import {
   clearOtpChallengeCookie,
   completeAdminOtpLogin,
+  isOtpAuthenticationEnabled,
   OTP_CHALLENGE_COOKIE,
   setTrustedDeviceCookie,
 } from "@/lib/auth/otp";
@@ -15,6 +16,13 @@ function getCookie(request: Request, name: string): string | undefined {
 
 export async function POST(request: Request) {
   try {
+    if (!isOtpAuthenticationEnabled()) {
+      return NextResponse.json(
+        { message: "OTP authentication is currently disabled." },
+        { status: 403 },
+      );
+    }
+
     const body = (await request.json()) as { rememberDevice?: boolean };
     const challengeToken = getCookie(request, OTP_CHALLENGE_COOKIE);
 
@@ -23,14 +31,13 @@ export async function POST(request: Request) {
     }
 
     const result = await completeAdminOtpLogin(challengeToken, body.rememberDevice === true);
-    const rotatedVersion = await rotateSession(result.user.id);
     const response = NextResponse.json({
       message: "Login successful.",
       role: result.user.role,
       redirectTo: getDefaultRouteForRole(result.user.role),
     });
 
-    attachSessionCookie(response, result.user, rotatedVersion);
+    attachSessionCookie(response, result.user, result.user.sessionVersion );
     clearOtpChallengeCookie(response);
     if (result.trustedDeviceToken) {
       setTrustedDeviceCookie(response, result.trustedDeviceToken);

@@ -35,11 +35,17 @@ export async function GET(
     return NextResponse.json({ message: "Document not found." }, { status: 404 });
   }
 
+  const versionParam = new URL(request.url).searchParams.get("version");
+  const targetVersionNumber =
+    versionParam !== null && !isNaN(Number(versionParam))
+      ? Number(versionParam)
+      : document.currentVersion;
+
   const version = await prisma.documentVersion.findUnique({
     where: {
       documentId_versionNumber: {
         documentId,
-        versionNumber: document.currentVersion,
+        versionNumber: targetVersionNumber,
       },
     },
     select: {

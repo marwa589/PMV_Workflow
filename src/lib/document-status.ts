@@ -1,26 +1,49 @@
-import { DocumentStatus } from "@prisma/client";
-
-export type DocumentTypeFilter = "COMPARISON" | "MATERIAL_REQUISITION" | "";
+export type DocumentTypeFilter = "COMPARISON" | "MATERIAL_REQUISITION" | "ERR" | "";
 export type DownloadStatusFilter = "DOWNLOADED" | "NOT_DOWNLOADED" | "";
 export type MrTypeFilter = "CASH" | "CREDIT" | "";
+export type PoStatusFilter = "UPLOADED" | "PENDING" | "NOT_APPLICABLE" | "";
 
-export const DOCUMENT_STATUS_FILTER_OPTIONS: Array<{ value: DocumentStatus; label: string }> = [
-  { value: DocumentStatus.PENDING_APPROVER_1, label: "Pending PMV Engineer" },
-  { value: DocumentStatus.PENDING_APPROVER_2, label: "Pending Workshop Manager" },
-  { value: DocumentStatus.PENDING_APPROVER_3, label: "Pending PMV Manager" },
-  { value: DocumentStatus.APPROVED, label: "Approved" },
-  { value: DocumentStatus.REJECTED, label: "Rejected" },
-  { value: DocumentStatus.REVISION_REQUIRED, label: "Revision Required" },
-  { value: DocumentStatus.ARCHIVED, label: "Archived" },
+export function getPoStatus(documentType: string, mrType: string | null | undefined, hasPurchaseOrder: boolean): "UPLOADED" | "PENDING" | "NOT_APPLICABLE" {
+  if (documentType !== "MATERIAL_REQUISITION" || mrType !== "CREDIT") return "NOT_APPLICABLE";
+  return hasPurchaseOrder ? "UPLOADED" : "PENDING";
+}
+export type ErrTypeFilter = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "PURCHASE" | "";
+export type ErrStatusFilter = "PENDING" | "ON_HOLD" | "REVISION_REQUIRED" | "REJECTED" | "APPROVED" | "";
+export type DocumentStatusFilterValue =
+  | "PENDING_APPROVER_1"
+  | "PENDING_APPROVER_2"
+  | "PENDING_APPROVER_3"
+  | "APPROVED"
+  | "REJECTED"
+  | "REVISION_REQUIRED"
+  | "ARCHIVED"
+  | "";
+
+export const DOCUMENT_STATUS_FILTER_OPTIONS: Array<{ value: DocumentStatusFilterValue; label: string }> = [
+  { value: "PENDING_APPROVER_1", label: "Pending PMV Engineer" },
+  { value: "PENDING_APPROVER_2", label: "Pending Workshop Manager" },
+  { value: "PENDING_APPROVER_3", label: "Pending PMV Manager" },
+  { value: "APPROVED", label: "Approved" },
+  { value: "REJECTED", label: "Rejected" },
+  { value: "REVISION_REQUIRED", label: "Revision Required" },
+  { value: "ARCHIVED", label: "Archived" },
 ];
 
-export function parseDocumentStatusFilter(value: unknown): DocumentStatus | "" {
+export const ERR_STATUS_FILTER_OPTIONS: Array<{ value: ErrStatusFilter; label: string }> = [
+  { value: "PENDING", label: "Pending" },
+  { value: "ON_HOLD", label: "On Hold" },
+  { value: "REVISION_REQUIRED", label: "Revision Required" },
+  { value: "REJECTED", label: "Rejected" },
+  { value: "APPROVED", label: "Approved" },
+];
+
+export function parseDocumentStatusFilter(value: unknown): DocumentStatusFilterValue {
   if (typeof value !== "string" || value.length === 0) {
     return "";
   }
 
   if (DOCUMENT_STATUS_FILTER_OPTIONS.some((option) => option.value === value)) {
-    return value as DocumentStatus;
+    return value as DocumentStatusFilterValue;
   }
 
   return "";
@@ -31,7 +54,7 @@ export function parseDocumentTypeFilter(value: unknown): DocumentTypeFilter {
     return "";
   }
 
-  if (value === "COMPARISON" || value === "MATERIAL_REQUISITION") {
+  if (value === "COMPARISON" || value === "MATERIAL_REQUISITION" || value === "ERR") {
     return value;
   }
 
@@ -48,6 +71,27 @@ export function parseDownloadStatusFilter(value: unknown): DownloadStatusFilter 
 
 export function parseMrTypeFilter(value: unknown): MrTypeFilter {
   if (value === "CASH" || value === "CREDIT") {
+    return value;
+  }
+
+  return "";
+}
+
+export function parsePoStatusFilter(value: unknown): PoStatusFilter {
+  if (value === "UPLOADED" || value === "PENDING" || value === "NOT_APPLICABLE") return value;
+  return "";
+}
+
+export function parseErrTypeFilter(value: unknown): ErrTypeFilter {
+  if (value === "RENTAL_ACTC" || value === "RENTAL_EXTERNAL" || value === "PURCHASE") {
+    return value;
+  }
+
+  return "";
+}
+
+export function parseErrStatusFilter(value: unknown): ErrStatusFilter {
+  if (value === "PENDING" || value === "ON_HOLD" || value === "REVISION_REQUIRED" || value === "REJECTED" || value === "APPROVED") {
     return value;
   }
 

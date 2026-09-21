@@ -12,7 +12,8 @@ model User {
   email                     String                   @unique
   passwordHash              String
   role                      UserRole
-  isActive                  Boolean                  @default(true)
+  location                  UserLocation?
+  projectName               String?
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
   sessionVersion            Int                      @default(0)
@@ -33,6 +34,45 @@ model User {
   notifications             Notification[]           @relation("NotificationsForUser")
   otpChallenges             OtpChallenge[]
   trustedDevices            TrustedDevice[]
+  passwordResetTokens       PasswordResetToken[]
+  createdErrs               Err[]                    @relation("ErrCreatedBy")
+  projectDirectorErrs       Err[]                    @relation("ErrProjectDirector")
+  assignedErrs              Err[]                    @relation("ErrCurrentApprover")
+  workflowStepApprovals     DocumentWorkflowStep[]   @relation("WorkflowStepApprover")
+  uploadedErrFiles          ErrFile[]                @relation("ErrFilesUploadedBy")
+  errActions                ErrApprovalHistory[]     @relation("ErrActionsPerformedBy")
+  errAccess                 ErrUserAccess[]
+  errNotifications          ErrNotification[]        @relation("ErrNotificationRecipient")
+  directedErrProjects       ErrProject[]             @relation("ErrProjectDirectorAccount")
+  purchaseOrdersCreated     PurchaseOrder[]          @relation("PurchaseOrdersCreatedBy")
+  purchaseOrderLinksCreated PurchaseOrderMrLink[]     @relation("PurchaseOrderLinksCreatedBy")
+  roleAssignments           UserRoleAssignment[]     @relation("UserRoleAssignmentsForUser")
+}
+
+model UserRoleAssignment {
+  id        String      @id @default(cuid())
+  userId    String
+  role      UserRole
+  createdAt DateTime    @default(now())
+
+  user User @relation("UserRoleAssignmentsForUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@index([userId, role])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Document {
@@ -46,11 +86,16 @@ model Document {
   updatedAt                 DateTime          @updatedAt
   createdById               String
   currentApproverId         String?
+  uploaderLocation          UserLocation?
+  projectName               String?
+  workflowTemplateId        String?
+  currentWorkflowStep       Int?
   documentType              DocumentType      @default(COMPARISON)
+  documentSubtype           String?
   comparisonType            ComparisonType?
   mrType                    MrType?
   currentApproverAssignedAt DateTime?
-  downloadedAt             DateTime?
+  downloadedAt              DateTime?
   mrNumber                  String?
   relatedComparisonId       String?
   lastActiveStage           DocumentStatus?
@@ -58,14 +103,52 @@ model Document {
   deletionRequests          DeletionRequest[] @relation("DeletionRequests")
   createdBy                 User              @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
   currentApprover           User?             @relation("CurrentApprover", fields: [currentApproverId], references: [id])
+  workflowTemplate          DocumentWorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: SetNull)
   relatedComparison         Document?         @relation("MRToComparison", fields: [relatedComparisonId], references: [id])
   linkedMRs                 Document[]        @relation("MRToComparison")
   versions                  DocumentVersion[]
+  purchaseOrderLinks        PurchaseOrderMrLink[]
 
   @@index([createdById])
   @@index([currentApproverId])
+  @@index([workflowTemplateId])
   @@index([relatedComparisonId])
   @@index([status])
+}
+
+model DocumentWorkflowTemplate {
+  id             String                 @id @default(cuid())
+  name           String
+  location       UserLocation?
+  documentType   DocumentType
+  documentSubtype String?
+  projectName    String?
+  isActive       Boolean                @default(true)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  steps          DocumentWorkflowStep[]
+  documents      Document[]
+
+  @@index([location, documentType, isActive])
+  @@index([documentType, documentSubtype, isActive])
+  @@index([projectName])
+}
+
+model DocumentWorkflowStep {
+  id             String                   @id @default(cuid())
+  templateId     String
+  stepNumber     Int
+  role           UserRole
+  approverUserId String?
+  isRequired     Boolean                  @default(true)
+  createdAt      DateTime                 @default(now())
+
+  template DocumentWorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  approver User?                    @relation("WorkflowStepApprover", fields: [approverUserId], references: [id], onDelete: SetNull)
+
+  @@unique([templateId, stepNumber])
+  @@index([templateId, stepNumber])
+  @@index([approverUserId])
 }
 
 model DocumentVersion {
@@ -73,6 +156,7 @@ model DocumentVersion {
   documentId     String
   versionNumber  Int
   filePath       String
+  storageFolder  String?
   originalName   String
   extension      String?
   mimeType       String
@@ -86,6 +170,46 @@ model DocumentVersion {
   @@unique([documentId, versionNumber])
   @@index([documentId])
   @@index([uploadedById])
+}
+
+model PurchaseOrderSequence {
+  id         Int      @id @default(1)
+  nextNumber Int      @default(1)
+  updatedAt  DateTime @updatedAt
+}
+
+model PurchaseOrder {
+  id           String   @id @default(cuid())
+  poNumber     String   @unique
+  originalName String
+  description  String?
+  filePath     String   @unique
+  mimeType     String
+  fileSize     Int
+  uploadedAt   DateTime @default(now())
+  uploadedById String
+
+  uploadedBy User                  @relation("PurchaseOrdersCreatedBy", fields: [uploadedById], references: [id])
+  mrLinks    PurchaseOrderMrLink[]
+
+  @@index([uploadedById])
+  @@index([uploadedAt])
+}
+
+model PurchaseOrderMrLink {
+  id              String   @id @default(cuid())
+  purchaseOrderId String
+  documentId      String
+  createdAt       DateTime @default(now())
+  createdById     String
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  document      Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdBy     User          @relation("PurchaseOrderLinksCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([purchaseOrderId, documentId])
+  @@index([documentId])
+  @@index([createdById])
 }
 
 model ApprovalHistory {
@@ -207,6 +331,13 @@ enum UserRole {
   APPROVER_2
   APPROVER_3
   ADMIN
+  ERR_USER
+}
+
+enum UserLocation {
+  AVR
+  AVK
+  KUWAIT
 }
 
 enum DocumentStatus {
@@ -261,4 +392,233 @@ enum EmailEventType {
   WORKFLOW_REJECTED
   APPROVAL_OVERDUE
   COMPARISON_MR_OVERDUE
+  PURCHASE_ORDER_AVAILABLE
+}
+
+enum ErrType {
+  RENTAL_ACTC
+  RENTAL_EXTERNAL
+  PURCHASE
+}
+
+enum ErrStatus {
+  PENDING
+  ON_HOLD
+  REVISION_REQUIRED
+  REJECTED
+  APPROVED
+}
+
+enum ErrStage {
+  PROJECT_DIRECTOR
+  PMV_MANAGER
+  ACTING_CEO
+  CEO
+}
+
+model Err {
+  id             String    @id @default(cuid())
+  documentNumber String    @unique
+  submissionKey String? @unique
+  title          String
+  description    String?
+  type           ErrType
+  status         ErrStatus @default(PENDING)
+  currentStage   ErrStage  @default(PROJECT_DIRECTOR)
+
+  createdById               String
+  projectDirectorId         String
+  currentApproverId         String?
+  currentApproverAssignedAt DateTime?
+
+  revisionNumber Int @default(1)
+  lockVersion    Int @default(0)
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  approvedAt DateTime?
+
+  createdBy       User                 @relation("ErrCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  projectDirector User                 @relation("ErrProjectDirector", fields: [projectDirectorId], references: [id], onDelete: Restrict)
+  currentApprover User?                @relation("ErrCurrentApprover", fields: [currentApproverId], references: [id], onDelete: Restrict)
+  files           ErrFile[]
+  approvalHistory ErrApprovalHistory[]
+  notifications   ErrNotification[]
+
+  projectId           String?
+  projectNameSnapshot String?
+
+  project ErrProject? @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@index([createdById, status])
+  @@index([projectDirectorId, status])
+  @@index([currentApproverId, status])
+  @@index([status, currentStage])
+  @@index([createdAt])
+  @@index([projectId, status])
+}
+
+model ErrSequence {
+  id          Int      @id @default(1)
+  nextNumber  Int      @default(1)
+  updatedAt   DateTime @updatedAt
+}
+
+enum ErrFileKind {
+  ERR_PDF
+  QUOTATION
+  ATTACHMENT
+  RELEASE_VOUCHER
+  RECEIPT_VOUCHER
+}
+
+model ErrFile {
+  id             String      @id @default(cuid())
+  errId          String
+  kind           ErrFileKind
+  versionNumber  Int
+  revisionNumber Int         @default(1)
+
+  filePath     String @unique
+  storageFolder String?
+  originalName String
+  mimeType     String
+  fileSize     Int
+
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  err              Err                  @relation(fields: [errId], references: [id], onDelete: Restrict)
+  uploadedBy       User                 @relation("ErrFilesUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  inputForActions  ErrApprovalHistory[] @relation("ErrActionInputFile")
+  outputForActions ErrApprovalHistory[] @relation("ErrActionOutputFile")
+
+  @@unique([errId, kind, versionNumber])
+  @@index([uploadedById])
+  @@index([errId, revisionNumber])
+}
+
+enum ErrAction {
+  SUBMITTED
+  APPROVED
+  FINALIZED_APPROVAL
+  ESCALATED_TO_ACTING_CEO
+  ESCALATED_TO_CEO
+  REJECTED
+  REQUESTED_REVISION
+  PUT_ON_HOLD
+  RESUMED
+  RESUBMITTED
+  COMMENTED
+  RELEASE_VOUCHER_ADDED
+  RECEIPT_VOUCHER_ADDED
+}
+
+model ErrApprovalHistory {
+  id             String    @id @default(cuid())
+  errId          String
+  performedById  String
+  action         ErrAction
+  stage          ErrStage?
+  comments       String?
+  revisionNumber Int
+
+  inputFileId  String?
+  outputFileId String?
+  performedAt  DateTime @default(now())
+
+  err         Err  @relation(fields: [errId], references: [id], onDelete: Restrict)
+  performedBy User @relation("ErrActionsPerformedBy", fields: [performedById], references: [id], onDelete: Restrict)
+
+  inputFile  ErrFile? @relation("ErrActionInputFile", fields: [inputFileId], references: [id], onDelete: Restrict)
+  outputFile ErrFile? @relation("ErrActionOutputFile", fields: [outputFileId], references: [id], onDelete: Restrict)
+
+  @@index([errId, performedAt])
+  @@index([performedById])
+  @@index([inputFileId])
+  @@index([outputFileId])
+}
+
+enum ErrAccessRole {
+  UPLOADER
+  PROJECT_DIRECTOR
+  ACTING_CEO
+  CEO
+  VIEWER
+}
+
+enum ErrProjectCountry {
+  KSA
+  KUWAIT
+}
+
+model ErrUserAccess {
+  id        String        @id @default(cuid())
+  userId    String
+  role      ErrAccessRole
+  projectId String?
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  user    User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  project ErrProject? @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, role, projectId])
+  @@index([role, isActive])
+  @@index([projectId, isActive])
+}
+
+enum ErrNotificationType {
+  APPROVAL_PENDING
+  APPROVED
+  REJECTED
+  REVISION_REQUIRED
+  ON_HOLD
+  RESUMED
+}
+
+model ErrNotification {
+  id          String              @id @default(cuid())
+  errId       String
+  recipientId String
+  type        ErrNotificationType
+
+  eventKey String
+  title    String
+  message  String
+
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+
+  emailEnabled   Boolean   @default(false)
+  emailSentAt    DateTime?
+  emailAttempts  Int       @default(0)
+  nextEmailAt    DateTime  @default(now())
+  emailClaimedAt DateTime?
+  lastEmailError String?
+
+  err       Err  @relation(fields: [errId], references: [id], onDelete: Restrict)
+  recipient User @relation("ErrNotificationRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+
+  @@unique([eventKey, recipientId])
+  @@index([recipientId, readAt, createdAt])
+  @@index([errId])
+  @@index([emailEnabled, emailSentAt, nextEmailAt])
+}
+
+model ErrProject {
+  id         String               @id @default(cuid())
+  name       String               @unique
+  country    ErrProjectCountry    @default(KUWAIT)
+  directorId String?
+  isActive   Boolean              @default(true)
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+
+  director   User?           @relation("ErrProjectDirectorAccount", fields: [directorId], references: [id], onDelete: Restrict)
+  errs       Err[]
+  userAccess ErrUserAccess[]
+
+  @@index([directorId, isActive])
 }

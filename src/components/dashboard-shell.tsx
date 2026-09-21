@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
@@ -19,8 +19,13 @@ import {
   UserCircle2,
   Users,
   X,
+  PauseCircle,
+  RotateCcw,
 } from "lucide-react";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
+import { getModuleVisibility } from "@/lib/auth/module-visibility";
+import { isErrUploaderAccount } from "@/lib/err/uploader-access";
+import type { UserRole } from "@prisma/client";
 
 type NavItem = {
   label: string;
@@ -28,19 +33,22 @@ type NavItem = {
   icon: LucideIcon;
 };
 
-type AppRole = "CLERK" | "APPROVER_1" | "APPROVER_2" | "APPROVER_3" | "ADMIN";
+type AppRole = UserRole;
 
 type DashboardShellProps = {
   role: AppRole;
   userName: string;
   title: string;
   subtitle: string;
+  isUploader?: boolean;
   children: ReactNode;
 };
 
 type SidebarCounts = {
   materialRequisitions: number;
   comparisons: number;
+  pendingApprovals: number;
+  errs: number;
 };
 
 type NotificationItem = {
@@ -53,7 +61,12 @@ type NotificationItem = {
 };
 
 const navItemsByRole: Record<AppRole, NavItem[]> = {
+    ERR_USER: [
+    { label: "ERRs", href: "/errs", icon: FileText },
+    { label: "Account Settings", href: "/errs/settings", icon: Settings },
+  ],
   CLERK: [
+    { label: "Dashboard", href: "/clerk", icon: LayoutDashboard },
     { label: "New Document", href: "/new-document", icon: FilePlus2 },
     { label: "My Documents", href: "/clerk/my-documents", icon: FileText },
     { label: "MRs", href: "/clerk/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
@@ -61,6 +74,9 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "Rejected Documents", href: "/clerk/rejected-documents", icon: FileCheck2 },
     { label: "Revision Required", href: "/clerk/my-documents?status=REVISION_REQUIRED", icon: ClipboardCheck },
     { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
+    { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
+    { label: "ERRs", href: "/errs", icon: FileText },
+    { label: "Account Settings", href: "/clerk/settings", icon: Settings },
   ],
   APPROVER_1: [
     { label: "Dashboard", href: "/approver", icon: LayoutDashboard },
@@ -68,9 +84,12 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "MRs", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "Comparison Sheets", href: "/approver/my-documents?documentType=COMPARISON", icon: FileText },
     { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
+    { label: "ERRs", href: "/errs", icon: FileText },
     { label: "Pending Approvals", href: "/approver/pending-approvals", icon: ClipboardCheck },
+    { label: "Revision Required", href: "/approver/my-documents?status=REVISION_REQUIRED", icon: RotateCcw },
     { label: "Approved Documents", href: "/approver/approved-documents", icon: CheckCircle2 },
     { label: "Rejected Documents", href: "/approver/rejected-documents", icon: FileCheck2 },
+    { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
     { label: "Account Settings", href: "/approver/settings", icon: Settings },
   ],
   APPROVER_2: [
@@ -79,9 +98,12 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "MRs", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "Comparison Sheets", href: "/approver/my-documents?documentType=COMPARISON", icon: FileText },
     { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
+    { label: "ERRs", href: "/errs", icon: FileText },
     { label: "Pending Approvals", href: "/approver/pending-approvals", icon: ClipboardCheck },
+    { label: "Revision Required", href: "/approver/my-documents?status=REVISION_REQUIRED", icon: RotateCcw },
     { label: "Approved Documents", href: "/approver/approved-documents", icon: CheckCircle2 },
     { label: "Rejected Documents", href: "/approver/rejected-documents", icon: FileCheck2 },
+    { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
     { label: "Account Settings", href: "/approver/settings", icon: Settings },
   ],
   APPROVER_3: [
@@ -90,9 +112,12 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "MRs", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "Comparison Sheets", href: "/approver/my-documents?documentType=COMPARISON", icon: FileText },
     { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
+    { label: "ERRs", href: "/errs", icon: FileText },
     { label: "Pending Approvals", href: "/approver/pending-approvals", icon: ClipboardCheck },
+    { label: "Revision Required", href: "/approver/my-documents?status=REVISION_REQUIRED", icon: RotateCcw },
     { label: "Approved Documents", href: "/approver/approved-documents", icon: CheckCircle2 },
     { label: "Rejected Documents", href: "/approver/rejected-documents", icon: FileCheck2 },
+    { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
     { label: "Account Settings", href: "/approver/settings", icon: Settings },
   ],
   ADMIN: [
@@ -102,30 +127,157 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "MRs", href: "/admin/all-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "Comparison Sheets", href: "/admin/all-documents?documentType=COMPARISON", icon: FileText },
     { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
+    { label: "ERRs", href: "/errs", icon: FileText },
     { label: "Pending Approvals", href: "/admin/pending-approvals", icon: ClipboardCheck },
+    { label: "Revision Required", href: "/admin/all-documents?status=REVISION_REQUIRED", icon: RotateCcw },
     { label: "Approved Documents", href: "/admin/approved-documents", icon: CheckCircle2 },
     { label: "Rejected Documents", href: "/admin/rejected-documents", icon: FileCheck2 },
     { label: "Users", href: "/admin/users", icon: Users },
-    { label: "Settings", href: "/admin/settings", icon: Settings },
+    { label: "Workflow Templates", href: "/admin/workflows", icon: ClipboardCheck },
+    { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
+    { label: "Account Settings", href: "/admin/settings", icon: Settings },
   ],
 };
 
+function getVisibleNavItems(role: AppRole, userName: string, isUploader?: boolean): NavItem[] {
+  const visibility = getModuleVisibility(userName, role);
+
+  if (visibility === "ERR_ONLY") {
+    const canUpload = isUploader ?? isErrUploaderAccount(userName, role);
+    const items: NavItem[] = [
+      { label: "Dashboard", href: "/errs?view=all&section=dashboard", icon: LayoutDashboard },
+      { label: "My Documents", href: "/errs?view=all&section=my-documents", icon: FileText },
+      ...(canUpload ? [{ label: "New Document", href: "/new-document", icon: FilePlus2 }] : []),
+      { label: "ERRs", href: "/errs", icon: FileText },
+      ...(canUpload ? [{ label: "Attach Vouchers", href: "/errs/vouchers", icon: FilePlus2 }] : []),
+      { label: "Pending Approvals", href: "/errs?view=pending", icon: ClipboardCheck },
+      { label: "Revision Required", href: "/errs?view=revision-required", icon: RotateCcw },
+      { label: "On Hold", href: "/errs?view=on-hold", icon: PauseCircle },
+      { label: "Approved Documents", href: "/errs?view=approved", icon: CheckCircle2 },
+      { label: "Rejected Documents", href: "/errs?view=rejected", icon: FileCheck2 },
+      { label: "Account Settings", href: "/errs/settings", icon: Settings },
+    ];
+
+    return items;
+  }
+
+  const items = navItemsByRole[role].filter((item) => {
+    if (item.label === "Purchase Orders" && !["CLERK", "APPROVER_1", "APPROVER_2", "APPROVER_3", "ADMIN"].includes(role)) {
+      return false;
+    }
+    if (visibility === "DOCUMENTS_ONLY") {
+      return !["ERRs", "Users", "On Hold"].includes(item.label);
+    }
+
+    return true;
+  });
+
+  if ((role === "ADMIN" || role === "APPROVER_3") && visibility !== "DOCUMENTS_ONLY") {
+    const onHoldItem: NavItem = { label: "On Hold", href: "/errs?view=on-hold", icon: PauseCircle };
+    return [...items, onHoldItem];
+  }
+
+  if (visibility === "DOCUMENTS_ONLY" && role === "CLERK" && !items.some((item) => item.label === "Dashboard")) {
+    return [{ label: "Dashboard", href: "/clerk", icon: LayoutDashboard }, ...items];
+  }
+
+  return items;
+}
+
 function Sidebar({
   role,
+  userName,
   closeMenu,
   counts,
+  combinedErrLayout = false,
+  isUploader,
 }: {
   role: AppRole;
+  userName: string;
   closeMenu?: () => void;
   counts: SidebarCounts;
+  combinedErrLayout?: boolean;
+  isUploader?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const navItems = navItemsByRole[role];
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const navItems = getVisibleNavItems(role, userName, isUploader);
+  const settingsItem = navItems.find((item) => item.href.endsWith("/settings"));
+  const primaryNavItems = navItems.filter((item) => item !== settingsItem);
+  const renderNavItem = (item: NavItem) => {
+    const Icon = item.icon;
+    const itemUrl = new URL(item.href, "http://localhost");
+    const itemDocumentType = itemUrl.searchParams.get("documentType");
+    const itemStatus = itemUrl.searchParams.get("status");
+    const itemView = itemUrl.searchParams.get("view");
+    const itemSection = itemUrl.searchParams.get("section");
+    const currentDocumentType = searchParams.get("documentType") ?? "";
+    const currentStatus = searchParams.get("status") ?? "";
+    const currentView = searchParams.get("view") ?? "";
+    const currentSection = searchParams.get("section") ?? "";
+
+    const active =
+      item.href !== "#" &&
+      pathname === itemUrl.pathname &&
+      (itemView
+        ? currentView === itemView && (!itemSection || currentSection === itemSection)
+        : itemSection
+          ? currentSection === itemSection
+          : itemDocumentType
+            ? currentDocumentType === itemDocumentType
+            : itemStatus
+              ? currentStatus === itemStatus
+              : !currentDocumentType && !currentStatus && !currentView && !currentSection);
+
+    return (
+      <button
+        key={item.label}
+        type="button"
+        onClick={() => {
+          closeMenu?.();
+          if (item.href !== "#") {
+            router.push(item.href);
+          }
+        }}
+        className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm font-medium transition ${
+          active ? "bg-slate-900 text-white shadow-sm" : "text-slate-700 hover:bg-slate-100"
+        }`}
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <Icon className="h-4 w-4" />
+          <span className="truncate">{item.label}</span>
+        </span>
+        <span className="flex items-center gap-2">
+          {item.label === "MRs" && counts.materialRequisitions > 0 ? (
+            <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"}`}>
+              {counts.materialRequisitions}
+            </span>
+          ) : null}
+          {item.label === "Comparison Sheets" && counts.comparisons > 0 ? (
+            <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"}`}>
+              {counts.comparisons}
+            </span>
+          ) : null}
+          {item.label === "ERRs" && counts.errs > 0 ? (
+            <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"}`}>
+              {counts.errs}
+            </span>
+          ) : null}
+          {item.label === "Pending Approvals" && counts.pendingApprovals > 0 ? (
+            <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"}`}>
+              {counts.pendingApprovals}
+            </span>
+          ) : null}
+          <ChevronRight className={`h-4 w-4 ${active ? "text-white/70" : "text-slate-400"}`} />
+        </span>
+      </button>
+    );
+  };
 
   return (
-    <aside className="flex h-full w-72 flex-col border-r border-slate-200 bg-white/90 backdrop-blur-sm">
+    <aside className="sticky top-0 flex h-screen w-72 flex-col border-r border-slate-200 bg-white/90 backdrop-blur-sm">
       <div className="flex items-center gap-3 border-b border-slate-200 px-6 py-5">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white">
           <FileCheck2 className="h-5 w-5" />
@@ -136,49 +288,65 @@ function Sidebar({
         </div>
       </div>
 
-      <nav className="flex-1 space-y-2 px-3 py-4">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const itemUrl = new URL(item.href, "http://localhost");
-          const itemDocumentType = itemUrl.searchParams.get("documentType");
-          const currentDocumentType = searchParams.get("documentType") ?? "";
-          const active =
-            item.href !== "#" &&
-            pathname === itemUrl.pathname &&
-            (itemDocumentType ? currentDocumentType === itemDocumentType : !currentDocumentType);
-
-          return (
+      <nav className="flex-1 space-y-2 overflow-y-auto px-3 py-4">
+        {primaryNavItems.map((item) => renderNavItem(item))}
+        {settingsItem && (
+          <div
+            className="relative"
+            onMouseEnter={() => setSettingsOpen(true)}
+            onMouseLeave={() => setSettingsOpen(false)}
+          >
             <button
-              key={item.label}
               type="button"
-              onClick={() => {
-                closeMenu?.();
-                if (item.href !== "#") {
-                  router.push(item.href);
-                }
-              }}
               className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm font-medium transition ${
-                active ? "bg-slate-900 text-white shadow-sm" : "text-slate-700 hover:bg-slate-100"
+                settingsOpen ? "bg-slate-900 text-white shadow-sm" : "text-slate-700 hover:bg-slate-100"
               }`}
             >
               <span className="flex items-center gap-3">
-                <Icon className="h-4 w-4" />
-                {item.label === "MRs" && counts.materialRequisitions > 0 ? `${counts.materialRequisitions} ${item.label}` : item.label === "Comparison Sheets" && counts.comparisons > 0 ? `${counts.comparisons} ${item.label}` : item.label}
+                <Settings className="h-4 w-4" />
+                Account Settings
               </span>
-              <ChevronRight className={`h-4 w-4 ${active ? "text-white/70" : "text-slate-400"}`} />
+              <ChevronRight className={`h-4 w-4 ${settingsOpen ? "text-white/70" : "text-slate-400"}`} />
             </button>
-          );
-        })}
+
+            {settingsOpen ? (
+              <div className="mt-1 space-y-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
+                <Link
+                  href={role === "ERR_USER" ? "/approver/settings/change-password" : "/approver/settings/change-password"}
+                  onClick={() => {
+                    closeMenu?.();
+                    setSettingsOpen(false);
+                  }}
+                  className="block rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                >
+                  Change Password
+                </Link>
+                {role !== "CLERK" ? (
+                  <Link
+                    href="/approver/settings/signature"
+                    onClick={() => {
+                      closeMenu?.();
+                      setSettingsOpen(false);
+                    }}
+                    className="block rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                  >
+                    Signature
+                  </Link>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        )}
       </nav>
 
-      <div className="border-t border-slate-200 px-4 py-4">
+      {/* <div className="border-t border-slate-200 px-4 py-4">
         <div className="rounded-xl bg-slate-100 px-4 py-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Workflow Chain</p>
           <p className="mt-1 text-sm text-slate-800">
             Clerk {"->"} PMV Engineer {"->"} Workshop Manager {"->"} PMV Manager {"->"} Approved
           </p>
         </div>
-      </div>
+      </div> */}
     </aside>
   );
 }
@@ -188,17 +356,20 @@ export default function DashboardShell({
   userName,
   title,
   subtitle,
+  isUploader,
   children,
 }: DashboardShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [searchValue, setSearchValue] = useState("");
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [sidebarCounts, setSidebarCounts] = useState<SidebarCounts>({ materialRequisitions: 0, comparisons: 0 });
+  const [sidebarCounts, setSidebarCounts] = useState<SidebarCounts>({ materialRequisitions: 0, comparisons: 0, pendingApprovals: 0, errs: 0 });
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -206,6 +377,17 @@ export default function DashboardShell({
   useEffect(() => {
     setSearchValue(searchParams?.get("search") ?? "");
   }, [searchParams]);
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
 
   async function loadNotifications() {
     try {
@@ -247,11 +429,23 @@ export default function DashboardShell({
   }, [pathname]);
 
   useEffect(() => {
-    void fetch("/api/sidebar-counts", { cache: "no-store" })
-      .then((response) => response.ok ? response.json() as Promise<SidebarCounts> : null)
-      .then((counts) => { if (counts) setSidebarCounts(counts); })
-      .catch(() => undefined);
-  }, [pathname]);
+    let active = true;
+
+    const loadSidebarCounts = () => {
+      void fetch("/api/sidebar-counts", { cache: "no-store" })
+        .then((response) => response.ok ? response.json() as Promise<SidebarCounts> : null)
+        .then((counts) => { if (active && counts) setSidebarCounts(counts); })
+        .catch(() => undefined);
+    };
+
+    loadSidebarCounts();
+    const intervalId = window.setInterval(loadSidebarCounts, 30000);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [pathname, searchParams]);
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -275,7 +469,7 @@ export default function DashboardShell({
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-0 h-80 bg-gradient-to-br from-slate-200 via-slate-100 to-cyan-100" />
       <div className="relative z-10 flex min-h-screen">
         <div className="hidden lg:block">
-          <Sidebar role={role} counts={sidebarCounts} />
+              <Sidebar role={role} userName={userName} counts={sidebarCounts} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader} />
         </div>
 
         {menuOpen && (
@@ -287,7 +481,7 @@ export default function DashboardShell({
               className="flex-1 bg-slate-900/40"
             />
             <div className="h-full shadow-2xl">
-              <Sidebar role={role} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} />
+              <Sidebar role={role} userName={userName} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader} />
             </div>
           </div>
         )}
@@ -401,7 +595,11 @@ export default function DashboardShell({
                     </div>
                   ) : null}
                 </div>
-                <div className="relative">
+                <div
+                  ref={profileMenuRef}
+                  className="relative"
+                  onMouseEnter={() => setProfileMenuOpen(true)}
+                >
                   <button
                     type="button"
                     onClick={() => setProfileMenuOpen((prev) => !prev)}
@@ -412,12 +610,12 @@ export default function DashboardShell({
                   </button>
 
                   {profileMenuOpen && (
-                    <div className="absolute right-0 top-12 z-40 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
+                    <div className="absolute right-0 top-12 z-40 w-52 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
                       <button
                         type="button"
                         onClick={handleSignOut}
                         disabled={isSigningOut}
-                        className="w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="mt-1 w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {isSigningOut ? "Signing out..." : "Sign out"}
                       </button>

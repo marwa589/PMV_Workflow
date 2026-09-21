@@ -5,9 +5,14 @@ import { compare, hash as hashPassword } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
 import { writeAuditLog } from "@/lib/audit";
+import { appConfig } from "@/lib/env";
 
 export const OTP_CHALLENGE_COOKIE = "docflow_otp_challenge";
 export const TRUSTED_DEVICE_COOKIE = "docflow_trusted_device";
+
+// Change this one value to "OFF" to disable OTP, or to "ALL" to require it for every user.
+const OTP_ROLLOUT: "OFF" | "TEST_USER" | "ALL" = "TEST_USER";
+const OTP_TEST_USER_EMAIL = "reine.alsouki@ahmadiah.com";
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 const TRUSTED_DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -15,6 +20,16 @@ const MAX_OTP_ATTEMPTS = 5;
 const OTP_LOCKOUT_MS = 15 * 60 * 1000;
 const MAX_CHALLENGES_PER_WINDOW = 5;
 const CHALLENGE_WINDOW_MS = 15 * 60 * 1000;
+
+export function isOtpRequiredForUser(email: string): boolean {
+  if (OTP_ROLLOUT === "OFF") return false;
+  if (OTP_ROLLOUT === "ALL") return true;
+  return email.trim().toLowerCase() === OTP_TEST_USER_EMAIL;
+}
+
+export function isOtpAuthenticationEnabled(): boolean {
+  return OTP_ROLLOUT !== "OFF";
+}
 
 function hashToken(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -28,7 +43,18 @@ function createOtpCode(): string {
   return randomInt(0, 1_000_000).toString().padStart(6, "0");
 }
 
+function assertOtpEmailIsConfigured() {
+  if (!appConfig.emailDeliveryEnabled()) {
+    throw new Error("OTP authentication is currently unavailable because email delivery is disabled.");
+  }
+
+  if (!appConfig.smtpHost() || !appConfig.smtpUser() || !appConfig.smtpPass()) {
+    throw new Error("OTP authentication is currently unavailable because email delivery is not configured.");
+  }
+}
+
 export async function createAdminOtpChallenge(user: { id: string; email: string; name: string }) {
+  assertOtpEmailIsConfigured();
   const windowStart = new Date(Date.now() - CHALLENGE_WINDOW_MS);
   const recentChallenges = await prisma.otpChallenge.count({
     where: { userId: user.id, createdAt: { gte: windowStart } },
@@ -131,7 +157,11 @@ export async function verifyAdminOtp(challengeToken: string, code: string) {
 export async function completeAdminOtpLogin(challengeToken: string, rememberDevice: boolean) {
   const challenge = await prisma.otpChallenge.findUnique({
     where: { challengeTokenHash: hashToken(challengeToken) },
+<<<<<<< HEAD
     include: { user: { select: { id: true, email: true, name: true, role: true, isActive: true } } },
+=======
+    include: { user: { select: { id: true, email: true, name: true, role: true, sessionVersion: true, } } },
+>>>>>>> origin/errs-pos
   });
 
   if (!challenge || !challenge.user.isActive || challenge.consumedAt || !challenge.verifiedAt || challenge.expiresAt.getTime() <= Date.now()) {

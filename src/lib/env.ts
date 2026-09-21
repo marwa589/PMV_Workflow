@@ -59,4 +59,7 @@ export const appConfig = {
   smtpFrom: () => getEnv("SMTP_FROM", { fallback: getEnv("SMTP_USER") }),
   appUrl: () => getEnv("APP_URL", { fallback: getEnv("NEXT_PUBLIC_APP_URL", { fallback: "http://localhost:3000" }) }),
   auditRetentionDays: () => Number(getEnv("AUDIT_LOG_RETENTION_DAYS", { fallback: "90" })),
+  emailDeliveryEnabled: () => getEnv("EMAIL_DELIVERY_ENABLED", { fallback: "false" }) === "true",
+  passwordResetEmailEnabled: () => getEnv("PASSWORD_RESET_EMAIL_ENABLED", { fallback: "false" }) === "true",
+  otpAuthenticationEnabled: () => getEnv("OTP_AUTH_ENABLED", { fallback: "false" }) === "true",
 };

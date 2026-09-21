@@ -1,10 +1,14 @@
 import { ApprovalActionType, DocumentStatus, UserRole } from "@prisma/client";
 import DashboardShell from "@/components/dashboard-shell";
+import DocumentListTable from "@/components/document-list-table";
 import DeletionRequestsList from "@/components/deletion-requests-list";
 import WorkflowPipelineChart from "@/components/workflow-pipeline-chart";
+import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
 import { formatWaitingTime, getAgeBucket, getWaitingHours } from "@/lib/document-metrics";
 import { prisma } from "@/lib/prisma";
+import { getErrAccess } from "@/lib/err/permissions";
+import { getErrCounts } from "@/lib/err/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -172,10 +176,15 @@ export default async function AdminDashboardPage() {
       }),
     ]);
 
-    totalDocuments = total;
-    pendingApprovals = pending;
-    approvedDocuments = approved;
-    rejectedDocuments = rejected;
+    const errAccess = await getErrAccess();
+    const errCounts = errAccess
+      ? await getErrCounts(errAccess)
+      : { all: 0, pending: 0, approved: 0, rejected: 0 };
+
+    totalDocuments = total + errCounts.all;
+    pendingApprovals = pending + errCounts.pending;
+    approvedDocuments = approved + errCounts.approved;
+    rejectedDocuments = rejected + errCounts.rejected;
     recentActivity = activity;
     allDocuments = allDocs.map((doc) => ({
       id: doc.id,
@@ -205,12 +214,12 @@ export default async function AdminDashboardPage() {
       { under3: 0, between3And24: 0, over24: 0, overdue: 0 },
     );
     workflowPipeline = {
-      submitted: total,
+      submitted: total + errCounts.all,
       approver1: allPendingDocs.filter((doc) => doc.status === DocumentStatus.PENDING_APPROVER_1).length,
       approver2: allPendingDocs.filter((doc) => doc.status === DocumentStatus.PENDING_APPROVER_2).length,
       approver3: allPendingDocs.filter((doc) => doc.status === DocumentStatus.PENDING_APPROVER_3).length,
-      approved: approved,
-      rejected: rejected,
+      approved: approved + errCounts.approved,
+      rejected: rejected + errCounts.rejected,
     };
 
     const pipelineStageDefinitions = [
@@ -360,7 +369,7 @@ export default async function AdminDashboardPage() {
               <p className="text-sm font-medium">Total Documents</p>
               <p className="mt-3 text-3xl font-semibold">{totalDocuments}</p>
             </article>
-            <article className="rounded-2xl bg-amber-50 p-5 text-amber-900 ring-1 ring-amber-200 shadow-sm">
+            <article className="rounded-2xl bg-yellow-50 p-5 text-yellow-900 ring-1 ring-yellow-200 shadow-sm">
               <p className="text-sm font-medium">Pending</p>
               <p className="mt-3 text-3xl font-semibold">{pendingApprovals}</p>
             </article>

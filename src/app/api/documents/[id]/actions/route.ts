@@ -8,6 +8,9 @@ import { APPROVER_WORKFLOW, getWorkflowAuthorizationPolicy, isApproverRole } fro
 import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 import { writeAuditLog } from "@/lib/audit";
 import { runInBackground } from "@/lib/background";
+import { canAccessMrModuleForSession } from "@/lib/auth/resource-access";
+import { resolveNextWorkflowStepForApproval } from "@/lib/document-workflow-config";
+import { documentStorageFolder } from "@/lib/storage-layout";
 
 export const runtime = "nodejs";
 
@@ -22,7 +25,7 @@ export async function POST(
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  if (!isApproverRole(session.role)) {
+  if (!isApproverRole(session.role) || !canAccessMrModuleForSession(session)) {
     return NextResponse.json({ message: "Only approvers can perform this action." }, { status: 403 });
   }
 
@@ -52,10 +55,31 @@ export async function POST(
           currentVersion: true,
           currentApproverId: true,
           createdById: true,
+          createdBy: {
+            select: { id: true, name: true, email: true, location: true },
+          },
+          mrType: true,
+          workflowTemplateId: true,
+          currentWorkflowStep: true,
           documentType: true,
           comparisonType: true,
           mrNumber: true,
           relatedComparisonId: true,
+          workflowTemplate: {
+            select: {
+              id: true,
+              steps: {
+                orderBy: { stepNumber: "asc" },
+                select: {
+                  id: true,
+                  stepNumber: true,
+                  role: true,
+                  approverUserId: true,
+                  approver: { select: { id: true, email: true, name: true } },
+                },
+              },
+            },
+          },
         },
       });
 
@@ -92,29 +116,22 @@ export async function POST(
       }
 
       if (decision === "REJECT") {
-        const aqueel = await tx.user.findUnique({
-          where: { email: "aqueel.sayed@ahmadiah.com" },
-          select: { id: true },
+        const uploader = document.createdBy ?? await tx.user.findUnique({
+          where: { id: document.createdById },
+          select: { id: true, name: true, email: true },
         });
-        if (!aqueel) {
-          throw new Error("Aqueel Sayed clerk account not found.");
-        }
 
-        const versionFilesToDelete = await tx.documentVersion.findMany({
-          where: {
-            documentId: document.id,
-            versionNumber: { gt: 0 },
-          },
-          select: { id: true, filePath: true },
-        });
+        if (!uploader) {
+          throw new Error("Uploader account not found for this document.");
+        }
 
         await tx.document.update({
           where: { id: document.id },
           data: {
             status: DocumentStatus.REJECTED,
-            currentVersion: 0,
-            currentApproverId: aqueel.id,
-            currentApproverAssignedAt: null,
+            currentVersion: document.currentVersion,
+            currentApproverId: uploader.id,
+            currentApproverAssignedAt: new Date(),
             lastActiveStage: document.status,
           },
         });
@@ -138,40 +155,25 @@ export async function POST(
             comments: comments || null,
             approverRole: session.role,
             previousStatus: document.status,
+            returnedToUploaderId: uploader.id,
+            returnedToUploaderEmail: uploader.email,
           }),
         });
 
         runInBackground(async () => {
           await createNotification({
-            userId: aqueel.id,
+            userId: uploader.id,
             type: "DOCUMENT_REJECTED",
-            title: "Document rejected",
+            title: "Document rejected and returned to you",
             message: `${document.documentNumber} - ${document.title}`,
             documentId: document.id,
           });
         });
 
-        await tx.documentVersion.deleteMany({
-          where: {
-            documentId: document.id,
-            versionNumber: { gt: 0 },
-          },
-        });
-
-        await Promise.all(
-          versionFilesToDelete.map(async (version) => {
-            try {
-              await deleteDocumentFiles({ filePaths: [version.filePath] });
-            } catch {
-              // Ignore missing files so rejection still succeeds.
-            }
-          }),
-        );
-
         return {
           status: DocumentStatus.REJECTED,
-          currentVersion: 0,
-          emailRecipientId: aqueel.id,
+          currentVersion: document.currentVersion,
+          emailRecipientId: uploader.id,
         };
       }
 
@@ -218,6 +220,9 @@ export async function POST(
             documentNumber: document.documentNumber,
             mrNumber: document.mrNumber,
             hasLinkedComparison: !!document.relatedComparisonId,
+            uploaderEmail: document.createdBy?.email ?? undefined,
+            location: document.createdBy?.location ?? undefined,
+            mrType: document.mrType ?? undefined,
           });
 
           const newVersion = await tx.documentVersion.create({
@@ -302,6 +307,9 @@ export async function POST(
         documentNumber: document.documentNumber,
         mrNumber: document.mrNumber,
         hasLinkedComparison: !!document.relatedComparisonId,
+        uploaderEmail: document.createdBy?.email ?? undefined,
+        location: document.createdBy?.location ?? undefined,
+        mrType: document.mrType ?? undefined,
       });
 
       let finalFilePath = saved.relativePath;
@@ -327,12 +335,27 @@ export async function POST(
             firstFilePath: comparisonVersion.filePath,
             secondFilePath: saved.relativePath,
             fileName: `${document.mrNumber || document.documentNumber} - ${document.title} + ${comparison.title}`,
+<<<<<<< HEAD
+=======
+            storageFolder: saved.storageFolder || documentStorageFolder({
+              uploaderEmail: document.createdBy?.email ?? "",
+              location: document.createdBy?.location ?? undefined,
+              documentType: "MATERIAL_REQUISITION",
+              mrType: document.mrType ?? null,
+              hasLinkedComparison: true,
+            }) || undefined,
+>>>>>>> origin/errs-pos
           });
           finalFilePath = merged.relativePath;
           finalOriginalName = `${document.mrNumber || document.documentNumber} - ${document.title} + ${comparison.title}.pdf`;
           mergedSourcePaths = [saved.relativePath];
         }
       }
+
+      const previousVersions = await tx.documentVersion.findMany({
+        where: { documentId: document.id },
+        select: { id: true, filePath: true },
+      });
 
       const newVersion = await tx.documentVersion.create({
         data: {
@@ -347,18 +370,23 @@ export async function POST(
         },
       });
 
-      const versionsToDeleteAfterCommit = workflow.nextApproverRole
-        ? []
-        : await tx.documentVersion.findMany({
-            where: {
-              documentId: document.id,
-              versionNumber: { lt: nextVersionNumber },
-            },
-            select: { filePath: true },
-          });
-
       let nextApproverId: string | null = null;
-      if (workflow.nextApproverRole) {
+      let nextStatus = workflow.nextStatus;
+      let nextWorkflowStep: number | null = null;
+      const templateTransition = resolveNextWorkflowStepForApproval(document.workflowTemplate, document.currentWorkflowStep);
+
+      if (document.workflowTemplate && document.workflowTemplate.steps.length > 0 && templateTransition.currentStep) {
+        const fallbackApprover = templateTransition.nextStep?.approverUserId ?? templateTransition.nextStep?.approver?.id ?? null;
+        if (templateTransition.nextStep) {
+          nextApproverId = fallbackApprover ?? null;
+          nextStatus = templateTransition.nextStatus ?? workflow.nextStatus;
+          nextWorkflowStep = templateTransition.nextStep.stepNumber;
+        } else {
+          nextApproverId = null;
+          nextStatus = DocumentStatus.APPROVED;
+          nextWorkflowStep = templateTransition.currentStep.stepNumber;
+        }
+      } else if (workflow.nextApproverRole) {
         const nextApprover = await tx.user.findFirst({
           where: { role: workflow.nextApproverRole, isActive: true },
           select: { id: true },
@@ -375,21 +403,20 @@ export async function POST(
         where: { id: document.id },
         data: {
           currentVersion: nextVersionNumber,
-          status: workflow.nextStatus,
+          status: nextStatus,
           currentApproverId: nextApproverId,
           currentApproverAssignedAt: nextApproverId ? new Date() : null,
-          lastActiveStage: workflow.nextStatus,
+          currentWorkflowStep: nextWorkflowStep,
+          lastActiveStage: nextStatus,
         },
       });
 
-      if (!workflow.nextApproverRole) {
-        await tx.documentVersion.deleteMany({
-          where: {
-            documentId: document.id,
-            versionNumber: { lt: nextVersionNumber },
-          },
-        });
-      }
+      await tx.documentVersion.deleteMany({
+        where: {
+          documentId: document.id,
+          versionNumber: { lt: nextVersionNumber },
+        },
+      });
 
       await tx.approvalHistory.create({
         data: {
@@ -443,7 +470,7 @@ export async function POST(
       return {
         status: workflow.nextStatus,
         currentVersion: nextVersionNumber,
-        versionsToDeleteAfterCommit,
+        previousFilePaths: previousVersions.map((v) => v.filePath),
         currentFilePath: finalFilePath,
         mergedSourcePaths,
         emailRecipientId: nextApproverId || document.createdById,
@@ -463,29 +490,23 @@ export async function POST(
       });
     }
 
-    if (result.status === DocumentStatus.APPROVED) {
-      const versionsToDeleteAfterCommit = (
-        result as typeof result & { versionsToDeleteAfterCommit?: { filePath: string }[] }
-      ).versionsToDeleteAfterCommit || [];
-      const currentFilePath = (
-        result as typeof result & { currentFilePath?: string }
-      ).currentFilePath;
-      const mergedSourcePaths = (
-        result as typeof result & { mergedSourcePaths?: string[] }
-      ).mergedSourcePaths || [];
+    // Clean up all previous version files on disk at every stage so only one file remains
+    const filesToClean = [
+      ...(result.previousFilePaths || []),
+      ...(result.mergedSourcePaths || []),
+    ];
 
-      await Promise.all(
-        [...versionsToDeleteAfterCommit.map((version) => version.filePath), ...mergedSourcePaths].map(async (filePath) => {
-          if (filePath === currentFilePath) return;
-          try {
-            await deleteDocumentFiles({ filePaths: [filePath] });
-          } catch {
-            // Ignore missing files so approval still succeeds.
-          }
-        }),
-      );
-      console.info(`[actions] File cleanup completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
-    }
+    await Promise.all(
+      filesToClean.map(async (filePath) => {
+        if (filePath === result.currentFilePath) return;
+        try {
+          await deleteDocumentFiles({ filePaths: [filePath] });
+        } catch {
+          // Ignore missing files so approval still succeeds.
+        }
+      }),
+    );
+    console.info(`[actions] File cleanup completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
 
     const documentForEmail = await prisma.document.findUnique({
       where: { id: documentId },
@@ -501,6 +522,88 @@ export async function POST(
       },
     });
 
+    const workflowRecipientEmails = new Set<string>();
+    const creatorEmail = documentForEmail?.createdBy?.email?.trim().toLowerCase();
+    const creatorName = documentForEmail?.createdBy?.name?.trim().toLowerCase().replace(/\s+/g, " ");
+    const isDispatcherErro = creatorEmail === "dispatcher.pmv@ahmadiah.com" || creatorName === "erro almacen";
+    const isAvkUploader = [
+      "joemar.paraiso@ahmadiah.com",
+      "bernabie.rocha@ahmadiah.com",
+      "mohamed.mahran@ahmadiah.com",
+    ].includes(creatorEmail || "");
+
+    if (result.status === DocumentStatus.REJECTED) {
+      const existingRejectedEmails = documentForEmail?.documentType === "COMPARISON"
+        ? ["mohamed.mahmoud@ahmadiah.com", "george.azzi@ahmadiah.com"]
+        : ["aqueel.sayed@ahmadiah.com", "george.azzi@ahmadiah.com"];
+      existingRejectedEmails.forEach((email) => workflowRecipientEmails.add(email));
+
+      if (documentForEmail?.createdBy?.email) {
+        workflowRecipientEmails.add(documentForEmail.createdBy.email.trim().toLowerCase());
+      }
+
+      if (documentForEmail?.documentType === "COMPARISON" && creatorEmail) {
+        workflowRecipientEmails.add(creatorEmail);
+      }
+
+      if (documentForEmail?.documentType === "MATERIAL_REQUISITION") {
+        if (isDispatcherErro && creatorEmail) {
+          workflowRecipientEmails.add(creatorEmail);
+          workflowRecipientEmails.add("mohammad.mehieddine@ahmadiah.com");
+        } else if (isAvkUploader && creatorEmail) {
+          workflowRecipientEmails.add(creatorEmail);
+          workflowRecipientEmails.add("joemar.paraiso@ahmadiah.com");
+        }
+      }
+    }
+
+    if (result.status === DocumentStatus.REVISION_REQUIRED) {
+      if (documentForEmail?.currentApprover?.email) {
+        workflowRecipientEmails.add(documentForEmail.currentApprover.email.trim().toLowerCase());
+      }
+
+      if (documentForEmail?.documentType === "COMPARISON") {
+        workflowRecipientEmails.add("mohamed.mahmoud@ahmadiah.com");
+      } else if (isDispatcherErro && creatorEmail) {
+        workflowRecipientEmails.add(creatorEmail);
+        workflowRecipientEmails.add("mohammad.mehieddine@ahmadiah.com");
+      } else if (isAvkUploader && creatorEmail) {
+        workflowRecipientEmails.add(creatorEmail);
+        workflowRecipientEmails.add("joemar.paraiso@ahmadiah.com");
+      } else {
+        workflowRecipientEmails.add("aqueel.sayed@ahmadiah.com");
+      }
+    }
+
+    if (workflowRecipientEmails.size > 0) {
+      const notificationRecipients = await prisma.user.findMany({
+        where: { email: { in: [...workflowRecipientEmails] } },
+        select: { id: true },
+      });
+      const existingNotificationRecipients = new Set<string>([
+        result.emailRecipientId,
+        documentForEmail?.currentApprover?.id,
+      ].filter((userId): userId is string => Boolean(userId)));
+      const notificationType = result.status === DocumentStatus.REJECTED
+        ? "DOCUMENT_REJECTED" as const
+        : "DOCUMENT_REVISED" as const;
+      const notificationTitle = result.status === DocumentStatus.REJECTED ? "Document rejected" : "Revision requested";
+
+      runInBackground(async () => {
+        await Promise.all(
+          notificationRecipients
+            .filter((recipient) => !existingNotificationRecipients.has(recipient.id))
+            .map((recipient) => createNotification({
+              userId: recipient.id,
+              type: notificationType,
+              title: notificationTitle,
+              message: `${documentForEmail?.documentNumber} - ${documentForEmail?.title}`,
+              documentId,
+            })),
+        );
+      });
+    }
+
     if (
       documentForEmail?.currentApprover?.email &&
       (result.status === DocumentStatus.PENDING_APPROVER_1 ||
@@ -508,60 +611,53 @@ export async function POST(
         result.status === DocumentStatus.PENDING_APPROVER_3 ||
         result.status === DocumentStatus.REVISION_REQUIRED)
       ){
-  const recipients = new Set<string>();
+      const recipients = result.status === DocumentStatus.REVISION_REQUIRED
+        ? await prisma.user.findMany({
+            where: { email: { in: [...workflowRecipientEmails] } },
+            select: { id: true },
+          })
+        : documentForEmail.currentApprover.id
+          ? [{ id: documentForEmail.currentApprover.id }]
+          : [];
 
-  if (result.status === DocumentStatus.REVISION_REQUIRED) {
-    const user = await prisma.user.findFirst({
-      where: {
-        email:
-          documentForEmail.documentType === "COMPARISON"
-            ? "mohamed.mahmoud@ahmadiah.com"
-            : "aqueel.sayed@ahmadiah.com",
-      },
-      select: { id: true },
-    });
-
-    if (user) recipients.add(user.id);
-  } else if (documentForEmail.currentApprover.id) {
-    recipients.add(documentForEmail.currentApprover.id);
-  }
-
-  await queueWorkflowEmailEvents(
-    [...recipients].map((recipientId) => ({
-      recipientId,
-      type: "APPROVAL_PENDING" as const,
-      documentId,
-    })),
-  );
-}
-    // ) {
-    //   const recipients = new Set<string>();
-    //   if (result.status === DocumentStatus.REVISION_REQUIRED) {
-    //     if (result.emailRecipientId) recipients.add(result.emailRecipientId);
-    //   } else if (documentForEmail.currentApprover.id) {
-    //     recipients.add(documentForEmail.currentApprover.id);
-    //   }
-    //   await queueWorkflowEmailEvents([...recipients].map((recipientId) => ({
-    //     recipientId,
-    //     type: "APPROVAL_PENDING" as const,
-    //     documentId,
-    //   })));
-    // }
-
+      await queueWorkflowEmailEvents(
+        recipients.map((recipient) => ({
+          recipientId: recipient.id,
+          type: "APPROVAL_PENDING" as const,
+          documentId,
+        })),
+      );
+    }
     if (result.status === DocumentStatus.APPROVED || result.status === DocumentStatus.REJECTED) {
       const approvedRecipientEmail = documentForEmail?.documentType === "COMPARISON"
         ? ["aqueel.sayed@ahmadiah.com", "mohamed.mahmoud@ahmadiah.com"]
         : ["omar.merzek@ahmadiah.com"];
-        const rejectedRecipientEmail = documentForEmail?.documentType === "COMPARISON"
-? ["mohamed.mahmoud@ahmadiah.com","george.azzi@ahmadiah.com"]
-: ["aqueel.sayed@ahmadiah.com", "george.azzi@ahmadiah.com"];
+
+      const targetEmails = result.status === DocumentStatus.APPROVED
+        ? [...approvedRecipientEmail]
+        : [...workflowRecipientEmails];
+
+      if (result.status === DocumentStatus.REJECTED && documentForEmail?.createdBy?.email) {
+        const uploaderEmail = documentForEmail.createdBy.email.trim().toLowerCase();
+        if (!targetEmails.includes(uploaderEmail)) {
+          targetEmails.push(uploaderEmail);
+        }
+      }
+
+      if (
+        result.status === DocumentStatus.APPROVED &&
+        documentForEmail?.documentType === "COMPARISON" &&
+        documentForEmail?.createdBy?.email
+      ) {
+        if (creatorEmail && !targetEmails.includes(creatorEmail)) {
+          targetEmails.push(creatorEmail);
+        }
+      }
+
       const clerkRecipients = await prisma.user.findMany({
         where: {
-          isActive: true,
           email: {
-            in: result.status === DocumentStatus.APPROVED
-              ? approvedRecipientEmail
-              : rejectedRecipientEmail,
+            in: targetEmails,
           },
         },
         select: { id: true, email: true },

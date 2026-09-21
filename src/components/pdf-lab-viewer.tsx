@@ -17,6 +17,7 @@ const MAX_ZOOM = 2.5;
 const ZOOM_STEP = 0.25;
 const DEFAULT_TEXT_SIZE = { width: 240, height: 96 };
 const DEFAULT_HIGHLIGHT_SIZE = { width: 180, height: 80 };
+const DEFAULT_TEXTBOX_SIZE = { width: 240, height: 80 };
 const DEFAULT_DRAW_PAD = 8;
 const DRAW_COLORS = [
   { label: "Slate", value: "#0f172a" },
@@ -25,8 +26,17 @@ const DRAW_COLORS = [
   { label: "Green", value: "#16a34a" },
   { label: "Purple", value: "#7c3aed" },
 ];
+const TEXTBOX_COLORS = [
+  { label: "Slate", value: "#0f172a" },
+  { label: "Red", value: "#ef4444" },
+  { label: "Blue", value: "#2563eb" },
+  { label: "Green", value: "#16a34a" },
+  { label: "Purple", value: "#7c3aed" },
+  { label: "Orange", value: "#f97316" },
+  { label: "Amber", value: "#d97706" },
+];
 
-type Tool = "select" | "highlight" | "text" | "draw";
+type Tool = "select" | "highlight" | "text" | "draw" | "text-box";
 
 type Point = {
   x: number;
@@ -56,6 +66,13 @@ type TextAnnotation = BaseAnnotation & {
   text: string;
 };
 
+type TextBoxAnnotation = BaseAnnotation & {
+  kind: "text-box";
+  rect: RectPct;
+  text: string;
+  color: string;
+};
+
 type DrawAnnotation = BaseAnnotation & {
   kind: "draw";
   rect: RectPct;
@@ -64,10 +81,16 @@ type DrawAnnotation = BaseAnnotation & {
   strokeWidth: number;
 };
 
-type Annotation = HighlightAnnotation | TextAnnotation | DrawAnnotation;
+type Annotation = HighlightAnnotation | TextAnnotation | TextBoxAnnotation | DrawAnnotation;
 
 type DraftHighlight = {
   kind: "highlight";
+  start: Point;
+  current: Point;
+};
+
+type DraftTextBox = {
+  kind: "text-box";
   start: Point;
   current: Point;
 };
@@ -79,7 +102,7 @@ type DraftDraw = {
   strokeWidth: number;
 };
 
-type Draft = DraftHighlight | DraftDraw | null;
+type Draft = DraftHighlight | DraftTextBox | DraftDraw | null;
 
 type PdfLabSnapshot = {
   version: 1;
@@ -225,6 +248,7 @@ export default function PdfLabViewer() {
   const [tool, setTool] = useState<Tool>("select");
   const [drawColor, setDrawColor] = useState(DRAW_COLORS[0]?.value || "#0f172a");
   const [strokeWidth, setStrokeWidth] = useState(4);
+  const [textBoxColor, setTextBoxColor] = useState(TEXTBOX_COLORS[0]?.value || "#0f172a");
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [draft, setDraft] = useState<Draft>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -309,7 +333,7 @@ export default function PdfLabViewer() {
     }
 
     const selectedAnnotation = annotations.find((annotation) => annotation.id === selectedId);
-    if (!selectedAnnotation || selectedAnnotation.kind !== "text") {
+    if (!selectedAnnotation || (selectedAnnotation.kind !== "text" && selectedAnnotation.kind !== "text-box")) {
       return;
     }
 
@@ -410,6 +434,38 @@ export default function PdfLabViewer() {
       return;
     }
 
+    if (draft.kind === "text-box") {
+      const bounds = rectFromPoints(draft.start, draft.current);
+      if (bounds.width < 0.5 || bounds.height < 0.5) {
+        setDraft(null);
+        return;
+      }
+
+      const id = makeId();
+      setAnnotations((current) => [
+        ...current,
+        {
+          id,
+          pageNumber,
+          kind: "text-box",
+          rect: rectPxToPct(
+            {
+              x: (bounds.x / 100) * renderSize.width,
+              y: (bounds.y / 100) * renderSize.height,
+              width: (bounds.width / 100) * renderSize.width,
+              height: (bounds.height / 100) * renderSize.height,
+            },
+            renderSize,
+          ),
+          text: "",
+          color: textBoxColor,
+        },
+      ]);
+      setSelectedId(id);
+      setDraft(null);
+      return;
+    }
+
     if (draft.points.length < 2) {
       setDraft(null);
       return;
@@ -474,6 +530,11 @@ export default function PdfLabViewer() {
       return;
     }
 
+    if (tool === "text-box") {
+      setDraft({ kind: "text-box", start: point, current: point });
+      return;
+    }
+
   }
 
   function handleStageMouseMove(event: ReactMouseEvent<HTMLDivElement>) {
@@ -485,6 +546,11 @@ export default function PdfLabViewer() {
     const point = pointFromEvent(event, rect);
 
     if (draft.kind === "highlight") {
+      setDraft({ ...draft, current: point });
+      return;
+    }
+
+    if (draft.kind === "text-box") {
       setDraft({ ...draft, current: point });
       return;
     }
@@ -588,6 +654,40 @@ export default function PdfLabViewer() {
             font,
             color: rgb(0.1, 0.1, 0.1),
           });
+          continue;
+        }
+
+        if (annotation.kind === "text-box") {
+          // Parse hex color to RGB values
+          const hexColor = annotation.color;
+          const r = Number.parseInt(hexColor.slice(1, 3), 16) / 255;
+          const g = Number.parseInt(hexColor.slice(3, 5), 16) / 255;
+          const b = Number.parseInt(hexColor.slice(5, 7), 16) / 255;
+
+          // Draw text box border
+          page.drawRectangle({
+            x: rectLeftPx,
+            y: pageHeight - rectTopPx - rectHeight,
+            width: rectWidth,
+            height: rectHeight,
+            color: rgb(r, g, b),
+            opacity: 0,
+            borderColor: rgb(r, g, b),
+            borderWidth: 2,
+          });
+
+          // Draw text inside the box
+          if (annotation.text) {
+            page.drawText(annotation.text, {
+              x: rectLeftPx + 6,
+              y: pageHeight - rectTopPx - rectHeight + 6,
+              size: 11,
+              font,
+              color: rgb(r, g, b),
+              maxWidth: rectWidth - 12,
+            });
+          }
+          continue;
         }
       }
 
@@ -628,6 +728,16 @@ export default function PdfLabViewer() {
     setAnnotations((current) =>
       current.map((annotation) =>
         annotation.id === annotationId && annotation.kind === "text" ? { ...annotation, text } : annotation,
+      ),
+    );
+  }
+
+  function updateTextBox(annotationId: string, updates: { text?: string; color?: string }) {
+    setAnnotations((current) =>
+      current.map((annotation) =>
+        annotation.id === annotationId && annotation.kind === "text-box"
+          ? { ...annotation, ...updates }
+          : annotation,
       ),
     );
   }
@@ -700,6 +810,64 @@ export default function PdfLabViewer() {
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 text-sm text-slate-600 sm:px-5">
           <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-slate-700">Tools</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setTool("select")}
+                title="Select"
+                className={`px-3 py-2 rounded-md text-sm font-medium transition ${
+                  tool === "select" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                Select
+              </button>
+              <button
+                type="button"
+                onClick={() => setTool("highlight")}
+                title="Highlight"
+                className={`px-3 py-2 rounded-md text-sm font-medium transition ${
+                  tool === "highlight" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                Highlight
+              </button>
+              <button
+                type="button"
+                onClick={() => setTool("text")}
+                title="Text"
+                className={`px-3 py-2 rounded-md text-sm font-medium transition ${
+                  tool === "text" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                Text
+              </button>
+              <button
+                type="button"
+                onClick={() => setTool("draw")}
+                title="Draw"
+                className={`px-3 py-2 rounded-md text-sm font-medium transition ${
+                  tool === "draw" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                Draw
+              </button>
+              <button
+                type="button"
+                onClick={() => setTool("text-box")}
+                title="Insert Text Box"
+                className={`px-3 py-2 rounded-md text-sm font-medium transition ${
+                  tool === "text-box" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                Insert Text Box
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 text-sm text-slate-600 sm:px-5">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-slate-700">Draw Color</span>
             <div className="flex items-center gap-1">
               {DRAW_COLORS.map((color) => (
@@ -732,6 +900,26 @@ export default function PdfLabViewer() {
           </label>
         </div>
 
+        {tool === "text-box" ? (
+          <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 text-sm text-slate-600 sm:px-5">
+            <span className="font-medium text-slate-700">Text Color</span>
+            <div className="flex items-center gap-1">
+              {TEXTBOX_COLORS.map((color) => (
+                <button
+                  key={color.value}
+                  type="button"
+                  title={color.label}
+                  onClick={() => setTextBoxColor(color.value)}
+                  className={`h-7 w-7 rounded-full border-2 transition ${
+                    textBoxColor === color.value ? "border-slate-900" : "border-white shadow-sm"
+                  }`}
+                  style={{ backgroundColor: color.value }}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         {savedStatus ? (
           <div className="border-b border-slate-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-900 sm:px-5">
             {savedStatus}
@@ -762,7 +950,7 @@ export default function PdfLabViewer() {
                   onMouseUp={finalizeDraft}
                   onMouseLeave={finalizeDraft}
                   style={{
-                    cursor: tool === "select" ? "default" : tool === "text" ? "text" : "crosshair",
+                    cursor: tool === "select" ? "default" : tool === "text" ? "text" : tool === "text-box" ? "cell" : "crosshair",
                     pointerEvents: tool === "select" ? "none" : "auto",
                   }}
                 >
@@ -821,6 +1009,20 @@ export default function PdfLabViewer() {
                             />
                           ) : null}
 
+                          {annotation.kind === "text-box" ? (
+                            <div className="h-full w-full rounded-md border-2 p-2" style={{ borderColor: annotation.color }}>
+                              <textarea
+                                data-text-editor={annotation.id}
+                                value={annotation.text}
+                                onChange={(event) => updateTextBox(annotation.id, { text: event.target.value })}
+                                onFocus={() => setSelectedId(annotation.id)}
+                                placeholder="Type text here..."
+                                className="h-full w-full resize-none border-none bg-transparent p-0 text-xs leading-4 outline-none placeholder:text-slate-400"
+                                style={{ color: annotation.color, boxShadow: "none" }}
+                              />
+                            </div>
+                          ) : null}
+
                           {selected ? (
                             <button
                               type="button"
@@ -874,6 +1076,26 @@ export default function PdfLabViewer() {
                         vectorEffect="non-scaling-stroke"
                       />
                     </svg>
+                  ) : null}
+
+                  {draft?.kind === "text-box" ? (
+                    <div
+                      className="pointer-events-none absolute rounded-md border-2"
+                      style={{
+                        ...(() => {
+                          const bounds = rectFromPoints(draft.start, draft.current);
+                          const pxRect = {
+                            left: `${(bounds.x / 100) * renderSize.width}px`,
+                            top: `${(bounds.y / 100) * renderSize.height}px`,
+                            width: `${(bounds.width / 100) * renderSize.width}px`,
+                            height: `${(bounds.height / 100) * renderSize.height}px`,
+                          };
+                          return pxRect;
+                        })(),
+                        borderColor: textBoxColor,
+                        opacity: 0.5,
+                      }}
+                    />
                   ) : null}
                 </div>
               </div>

@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ApproverArchivePage() {
   const session = await requireRole([UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]);
-  const data = await getDocumentsForApprover(session.userId, session.role);
+  const data = await getDocumentsForApprover(session.userId, session.role, session.name);
 
   const documents = data.myDocuments
     .filter((doc) => doc.status === DocumentStatus.ARCHIVED)
@@ -34,14 +34,14 @@ export default async function ApproverArchivePage() {
         cards={[
           { label: "Archived", value: String(documents.length), tone: "bg-slate-200 text-slate-800 ring-1 ring-slate-300" },
           { label: "My Documents", value: String(data.myDocuments.length), tone: "bg-slate-900 text-white" },
-          { label: "Pending", value: String(data.pendingDocuments.length), tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200" },
+          { label: "Pending", value: String(data.pendingDocuments.length), tone: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200" },
         ]}
       />
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">
           <h3 className="text-base font-semibold text-slate-900">Archive</h3>
         </div>
-        <DocumentListTable documents={documents} emptyMessage="No archived documents found." />
+        <DocumentListTable documents={documents} emptyMessage="No archived documents found." showBulkActions />
       </section>
     </DashboardShell>
   );

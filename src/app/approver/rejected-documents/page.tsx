@@ -1,50 +1,77 @@
 import { ApprovalActionType, UserRole } from "@prisma/client";
 import DashboardShell from "@/components/dashboard-shell";
 import DocumentListTable from "@/components/document-list-table";
+import DocumentStatusFilter from "@/components/document-status-filter";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
+import { parseDocumentTypeFilter } from "@/lib/document-status";
 import { getDocumentsForApprover } from "@/lib/document-queries";
 import { roleLabel } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
+import { getModuleVisibility } from "@/lib/auth/module-visibility";
 
 export const dynamic = "force-dynamic";
 
-export default async function ApproverRejectedDocumentsPage() {
+export default async function ApproverRejectedDocumentsPage({ searchParams }: any) {
   const session = await requireRole([UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]);
-  const data = await getDocumentsForApprover(session.userId, session.role);
+  const resolvedSearchParams = await Promise.resolve(searchParams);
+  const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
+  const data = await getDocumentsForApprover(session.userId, session.role, session.name);
 
-  const documents = data.rejectedDocuments.map((doc) => ({
-    id: doc.id,
-    documentNumber: doc.documentNumber,
-    title: doc.title,
-    status: doc.status,
-    documentType: doc.documentType,
-    mrType: doc.mrType,
-    currentVersion: doc.currentVersion,
-    currentApproverName: doc.currentApprover?.name || null,
-    relatedComparisonId: doc.relatedComparison?.id || null,
-    relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
-    dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
-  }));
+  const documents = [
+    ...data.rejectedDocuments
+      .filter((doc) => !documentTypeFilter || doc.documentType === documentTypeFilter)
+      .map((doc) => ({
+        id: doc.id,
+        documentNumber: doc.documentNumber,
+        title: doc.title,
+        status: doc.status,
+        documentType: doc.documentType,
+        mrType: doc.mrType,
+        currentVersion: doc.currentVersion,
+        currentApproverName: doc.currentApprover?.name || null,
+        relatedComparisonId: doc.relatedComparison?.id || null,
+        relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
+        dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+      })),
+    ...data.errRejectedDocuments
+      .map((doc) => ({
+        id: doc.id,
+        documentNumber: doc.documentNumber,
+        title: doc.title,
+        status: doc.status,
+        documentType: "ERR" as const,
+        mrType: null,
+        currentVersion: 1,
+        currentApproverName: doc.currentApprover?.name || null,
+        relatedComparisonId: null,
+        relatedComparisonDocumentNumber: null,
+        dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+      })),
+  ];
 
   const rejectedCount = await prisma.approvalHistory.count({
     where: { performedById: session.userId, action: ApprovalActionType.REJECTED },
   });
 
+  const cards = [
+    { label: "Assigned/Handled", value: String(documents.length), tone: "bg-slate-900 text-white" },
+    { label: "MRs", value: String(documents.filter((doc) => doc.documentType === "MATERIAL_REQUISITION").length), tone: "bg-slate-50 text-slate-900 ring-1 ring-slate-200" },
+    { label: "Comparison Sheets", value: String(documents.filter((doc) => doc.documentType === "COMPARISON").length), tone: "bg-sky-50 text-sky-900 ring-1 ring-sky-200" },
+    ...(getModuleVisibility(session.name, session.role) === "ALL" ? [{ label: "ERRs", value: String((documents as Array<{ documentType: string }>).filter((doc) => doc.documentType === "ERR").length), tone: "bg-violet-50 text-violet-900 ring-1 ring-violet-200" }] : []),
+  ];
+
   return (
     <DashboardShell role={session.role} userName={session.name} title="Rejected Documents" subtitle={`${roleLabel(session.role)} rejections completed by you`}>
-      <PageSummaryCards
-        cards={[
-          { label: "Rejected By You", value: String(rejectedCount), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
-          { label: "Assigned / Handled", value: String(data.myDocuments.length), tone: "bg-slate-900 text-white" },
-          { label: "Pending", value: String(data.pendingDocuments.length), tone: "bg-amber-50 text-amber-900 ring-1 ring-amber-200" },
-        ]}
-      />
+      <PageSummaryCards cards={cards} />
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4">
           <h3 className="text-base font-semibold text-slate-900">Rejected Documents</h3>
         </div>
-        <DocumentListTable documents={documents} emptyMessage="No documents rejected by you yet." />
+        <div className="border-b border-slate-200 px-5 py-4">
+          <DocumentStatusFilter documentType={documentTypeFilter} showDocumentTypeFilter showErrDocumentType={getModuleVisibility(session.name, session.role) === "ALL"} showStatusFilter={false} />
+        </div>
+        <DocumentListTable documents={documents} emptyMessage="No documents rejected by you yet." showBulkActions />
       </section>
     </DashboardShell>
   );

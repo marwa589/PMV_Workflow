@@ -1,4 +1,5 @@
 import { DocumentStatus, UserRole } from "@prisma/client";
+import { hasUserRole } from "@/lib/user-capabilities";
 
 type ApproverRole = "APPROVER_1" | "APPROVER_2" | "APPROVER_3";
 
@@ -30,9 +31,12 @@ export const APPROVER_WORKFLOW: Record<
 };
 
 export function isApproverRole(
-  role: UserRole,
-): role is ApproverRole {
-  return role === UserRole.APPROVER_1 || role === UserRole.APPROVER_2 || role === UserRole.APPROVER_3;
+  userOrRole: UserRole | { role: UserRole; roles?: UserRole[] | null },
+): userOrRole is ApproverRole {
+  if (typeof userOrRole === "object") {
+    return [UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3].some((role) => hasUserRole(userOrRole, role));
+  }
+  return userOrRole === UserRole.APPROVER_1 || userOrRole === UserRole.APPROVER_2 || userOrRole === UserRole.APPROVER_3;
 }
 
 export function getCommentRouting(role: UserRole): { status: DocumentStatus; targetRole: UserRole | null } {
