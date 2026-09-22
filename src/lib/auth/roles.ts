@@ -16,6 +16,8 @@ export function getDefaultRouteForRole(role: UserRole): string {
       return "/approver";
     case UserRole.ADMIN:
       return "/admin";
+    case UserRole.ERR_USER:
+      return "/errs?section=dashboard";
     default:
       return "/login";
   }

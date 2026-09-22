@@ -5,9 +5,20 @@ import { compare, hash as hashPassword } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
 import { writeAuditLog } from "@/lib/audit";
+import { appConfig } from "@/lib/env";
 
 export const OTP_CHALLENGE_COOKIE = "docflow_otp_challenge";
 export const TRUSTED_DEVICE_COOKIE = "docflow_trusted_device";
+export const OTP_DEVICE_BYPASS_COOKIE = "docflow_otp_device_bypass";
+
+// Change this one value to "OFF" to disable OTP, or to "ALL" to require it for every user.
+const OTP_ROLLOUT: "OFF" | "TEST_USER" | "ALL" = "TEST_USER";
+const OTP_TEST_USER_EMAIL = "reine.alsouki@ahmadiah.com";
+const OTP_EXEMPT_EMAILS = (process.env.OTP_EXEMPT_EMAILS ?? "")
+  .split(",")
+  .map((email) => email.trim().toLowerCase())
+  .filter(Boolean);
+const OTP_DEVICE_BYPASS_TOKEN = (process.env.OTP_DEVICE_BYPASS_TOKEN ?? "").trim();
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 const TRUSTED_DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -15,6 +26,34 @@ const MAX_OTP_ATTEMPTS = 5;
 const OTP_LOCKOUT_MS = 15 * 60 * 1000;
 const MAX_CHALLENGES_PER_WINDOW = 5;
 const CHALLENGE_WINDOW_MS = 15 * 60 * 1000;
+
+export function isOtpRequiredForUser(email: string): boolean {
+  const normalized = email.trim().toLowerCase();
+
+  if (OTP_EXEMPT_EMAILS.includes(normalized)) {
+    return false;
+  }
+
+  if (OTP_ROLLOUT === "OFF") return false;
+  if (OTP_ROLLOUT === "ALL") return true;
+  return normalized === OTP_TEST_USER_EMAIL;
+}
+
+export function isOtpAuthenticationEnabled(): boolean {
+  return OTP_ROLLOUT !== "OFF";
+}
+
+export function isOtpBypassedForDevice(request: Request): boolean {
+  if (!OTP_DEVICE_BYPASS_TOKEN) {
+    return false;
+  }
+
+  const cookie = request.headers.get("cookie")
+    ?.split(";")
+    .find((entry) => entry.trim().startsWith(`${OTP_DEVICE_BYPASS_COOKIE}=`));
+
+  return !!cookie && decodeURIComponent(cookie.trim().slice(OTP_DEVICE_BYPASS_COOKIE.length + 1)) === OTP_DEVICE_BYPASS_TOKEN;
+}
 
 function hashToken(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -28,7 +67,18 @@ function createOtpCode(): string {
   return randomInt(0, 1_000_000).toString().padStart(6, "0");
 }
 
+function assertOtpEmailIsConfigured() {
+  if (!appConfig.emailDeliveryEnabled()) {
+    throw new Error("OTP authentication is currently unavailable because email delivery is disabled.");
+  }
+
+  if (!appConfig.smtpHost() || !appConfig.smtpUser() || !appConfig.smtpPass()) {
+    throw new Error("OTP authentication is currently unavailable because email delivery is not configured.");
+  }
+}
+
 export async function createAdminOtpChallenge(user: { id: string; email: string; name: string }) {
+  assertOtpEmailIsConfigured();
   const windowStart = new Date(Date.now() - CHALLENGE_WINDOW_MS);
   const recentChallenges = await prisma.otpChallenge.count({
     where: { userId: user.id, createdAt: { gte: windowStart } },
@@ -54,6 +104,8 @@ export async function createAdminOtpChallenge(user: { id: string; email: string;
     },
   });
 
+  const appUrl = appConfig.appUrl();
+
     //LOCAL TESTING:
   // console.log(`\n🔑 [DEV BACKDOOR] OTP CODE for ${user.email} is: ${code}\n`);
 
@@ -72,6 +124,7 @@ export async function createAdminOtpChallenge(user: { id: string; email: string;
         <p>Use this one-time verification code to sign in:</p>
         <p style="font-size: 28px; font-weight: 700; letter-spacing: 8px;">${code}</p>
         <p>This code expires in 5 minutes and can only be used once.</p>
+        <p>Use the application here: <a href="${appUrl}">${appUrl}</a></p>
         <p>If you did not try to sign in, secure your account immediately.</p>
       </div>
     `,
@@ -89,10 +142,10 @@ export async function createAdminOtpChallenge(user: { id: string; email: string;
 export async function verifyAdminOtp(challengeToken: string, code: string) {
   const challenge = await prisma.otpChallenge.findUnique({
     where: { challengeTokenHash: hashToken(challengeToken) },
-    include: { user: { select: { id: true, email: true, name: true, role: true, isActive: true } } },
+    include: { user: { select: { id: true, email: true, name: true, role: true} } },
   });
 
-  if (!challenge || !challenge.user.isActive || challenge.consumedAt || challenge.verifiedAt) {
+  if (!challenge || challenge.consumedAt || challenge.verifiedAt) {
     throw new Error("This OTP challenge is no longer valid.");
   }
 
@@ -140,10 +193,10 @@ export async function verifyAdminOtp(challengeToken: string, code: string) {
 export async function completeAdminOtpLogin(challengeToken: string, rememberDevice: boolean) {
   const challenge = await prisma.otpChallenge.findUnique({
     where: { challengeTokenHash: hashToken(challengeToken) },
-    include: { user: { select: { id: true, email: true, name: true, role: true, isActive: true } } },
+    include: { user: { select: { id: true, email: true, name: true, role: true, sessionVersion: true, } } },
   });
 
-  if (!challenge || !challenge.user.isActive || challenge.consumedAt || !challenge.verifiedAt || challenge.expiresAt.getTime() <= Date.now()) {
+  if (!challenge || challenge.consumedAt || !challenge.verifiedAt || challenge.expiresAt.getTime() <= Date.now()) {
     throw new Error("OTP verification has expired. Please sign in again.");
   }
 

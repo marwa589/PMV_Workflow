@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
+import Link from "next/link";
 
 type LoginResponse = {
   message?: string;
@@ -210,7 +211,18 @@ export default function LoginForm() {
           otpStep === "verify" ? "Verify code" : "Sign In"
         )}
       </button>
+{otpStep === "credentials" && (
+  <div className="mt-4 text-center">
+    <Link
+      href="/forgot-password"
+      className="text-sm font-medium text-slate-700 hover:underline"
+    >
+      Forgot password?
+    </Link>
+  </div>
+)}
 
     </form>
+    
   );
 }

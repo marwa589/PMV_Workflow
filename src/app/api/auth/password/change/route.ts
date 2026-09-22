@@ -11,13 +11,53 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  const body = (await request.json()) as { currentPassword?: string; newPassword?: string };
-  const currentPassword = body.currentPassword || "";
-  const newPassword = body.newPassword || "";
+  
+  const body: unknown = await request.json().catch(() => null);
 
-  if (!currentPassword || newPassword.length < 12) {
-    return NextResponse.json({ message: "Current password and a new password of at least 12 characters are required." }, { status: 400 });
-  }
+if (
+  !body ||
+  typeof body !== "object" ||
+  !("currentPassword" in body) ||
+  !("newPassword" in body) ||
+  typeof body.currentPassword !== "string" ||
+  typeof body.newPassword !== "string"
+) {
+  return NextResponse.json(
+    { message: "Current password and new password are required." },
+    { status: 400 },
+  );
+}
+
+const { currentPassword, newPassword } = body;
+
+if (!currentPassword) {
+  return NextResponse.json(
+    { message: "Current password is required." },
+    { status: 400 },
+  );
+}
+
+if (
+  newPassword.length < 12 ||
+  !/[A-Za-z]/.test(newPassword) ||
+  !/[0-9]/.test(newPassword) ||
+  !/[^A-Za-z0-9\s]/.test(newPassword)
+) {
+  return NextResponse.json(
+    {
+      message:
+        "Your new password must contain at least 12 characters, including a letter, a number and a special character.",
+    },
+    { status: 400 },
+  );
+}
+
+if (newPassword === currentPassword) {
+  return NextResponse.json(
+    { message: "Choose a password different from your current password." },
+    { status: 400 },
+  );
+}
 
   const user = await prisma.user.findUnique({ where: { id: session.userId }, select: { passwordHash: true } });
   if (!user || !(await compare(currentPassword, user.passwordHash))) {

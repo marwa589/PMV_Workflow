@@ -15,8 +15,8 @@ export async function POST(
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  if (session.role !== UserRole.CLERK) {
-    return NextResponse.json({ message: "Only Clerk can request document deletion." }, { status: 403 });
+  if (session.role !== UserRole.CLERK && session.role !== UserRole.ADMIN) {
+    return NextResponse.json({ message: "Only Clerk or Admin can request document deletion." }, { status: 403 });
   }
 
   return NextResponse.json(

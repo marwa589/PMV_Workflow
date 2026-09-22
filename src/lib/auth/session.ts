@@ -15,6 +15,7 @@ type SessionPayload = {
   email: string;
   name: string;
   role: UserRole;
+  roles: UserRole[];
   sessionVersion: number;
   exp: number;
 };
@@ -61,14 +62,16 @@ export function verifyToken(token: string): SessionPayload | null {
 
 export function attachSessionCookie(
   response: NextResponse,
-  user: { id: string; email: string; name: string; role: UserRole },
+  user: { id: string; email: string; name: string; role: UserRole; roles?: UserRole[] },
   sessionVersion = 0,
 ): void {
+  const roles = user.roles && user.roles.length > 0 ? Array.from(new Set(user.roles)) : [user.role];
   const payload: SessionPayload = {
     userId: user.id,
     email: user.email,
     name: user.name,
     role: user.role,
+    roles,
     sessionVersion,
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
   };
@@ -101,23 +104,58 @@ export async function getSession(): Promise<AuthSession | null> {
 
   const payload = verifyToken(token);
   if (!payload) return null;
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        sessionVersion: true,
+        roleAssignments: { select: { role: true } },
+      },
+    });
 
-  const user = await prisma.user.findUnique({
-    where: { id: payload.userId },
-    select: { id: true, email: true, name: true, role: true, isActive: true, sessionVersion: true },
-  });
+    if (!user) {
+      return null;
+    }
 
-  if (!user || !user.isActive || user.sessionVersion !== payload.sessionVersion) {
-    return null;
+    const roles = Array.from(new Set([user.role, ...user.roleAssignments.map((assignment) => assignment.role)]));
+
+    return {
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      roles,
+      sessionVersion: user.sessionVersion ?? payload.sessionVersion,
+    };
+  } catch {
+    const fallbackUser = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        sessionVersion: true,
+      },
+    });
+
+    if (!fallbackUser) {
+      return null;
+    }
+
+    return {
+      userId: fallbackUser.id,
+      email: fallbackUser.email,
+      name: fallbackUser.name,
+      role: fallbackUser.role,
+      roles: [fallbackUser.role],
+      sessionVersion: fallbackUser.sessionVersion ?? payload.sessionVersion,
+    };
   }
-
-  return {
-    userId: user.id,
-    email: user.email,
-    name: user.name,
-    role: user.role,
-    sessionVersion: payload.sessionVersion,
-  };
 }
 
 export function getSessionFromToken(token: string | undefined): AuthSession | null {
@@ -131,6 +169,7 @@ export function getSessionFromToken(token: string | undefined): AuthSession | nu
     email: payload.email,
     name: payload.name,
     role: payload.role,
+    roles: payload.roles ?? [payload.role],
     sessionVersion: payload.sessionVersion,
   };
 }

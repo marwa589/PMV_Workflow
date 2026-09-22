@@ -1,7 +1,11 @@
 import { UserRole } from "@prisma/client";
 import { APPROVER_ROLES } from "@/lib/auth/roles";
+import { hasUserRole } from "@/lib/user-capabilities";
 
-export function hasRequiredRole(userRole: UserRole, allowedRoles: UserRole[]): boolean {
+export function hasRequiredRole(userRole: UserRole | { role: UserRole; roles?: UserRole[] | null }, allowedRoles: UserRole[]): boolean {
+  if (typeof userRole === "object") {
+    return allowedRoles.some((role) => hasUserRole(userRole, role));
+  }
   return allowedRoles.includes(userRole);
 }
 

@@ -1,6 +1,8 @@
 import { mkdir, readFile, rm, unlink, writeFile } from "fs/promises";
 import { PDFDocument } from "pdf-lib";
 import path from "path";
+import { randomUUID } from "node:crypto";
+import { documentStorageFolder } from "@/lib/storage-layout";
 
 export function getUploadRoot(): string {
   const uploadPath = process.env.UPLOAD_PATH?.trim();
@@ -9,7 +11,52 @@ export function getUploadRoot(): string {
   }
   return uploadPath;
 }
+export async function saveStoredFile(params: {
+  relativePath: string;
+  bytes: Uint8Array;
+  overwrite?: boolean;
+}): Promise<{ relativePath: string }> {
+  const normalized = params.relativePath.replaceAll("\\", "/");
 
+  const segments = normalized.split("/");
+
+  if (
+    !normalized ||
+    path.isAbsolute(normalized) ||
+    segments.some(
+      (segment) =>
+        !segment ||
+        segment === "." ||
+        segment === ".." ||
+        /[:*?"<>|\u0000-\u001f]/.test(segment),
+    )
+  ) {
+    throw new Error("Invalid storage path.");
+  }
+
+  const root = path.resolve(getUploadRoot());
+  const fullPath = path.resolve(root, ...segments);
+  const relativeToRoot = path.relative(root, fullPath);
+
+  if (
+    !relativeToRoot ||
+    relativeToRoot === ".." ||
+    relativeToRoot.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeToRoot)
+  ) {
+    throw new Error("File must remain inside the upload directory.");
+  }
+
+  await mkdir(path.dirname(fullPath), { recursive: true });
+
+  await writeFile(fullPath, params.bytes, {
+    flag: params.overwrite ? "w" : "wx",
+  });
+
+  return {
+    relativePath: relativeToRoot.replaceAll("\\", "/"),
+  };
+}
 export function resolveStoredFilePath(storedPath: string): string {
   if (path.isAbsolute(storedPath)) return storedPath;
 
@@ -56,34 +103,101 @@ function safeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, "_");
 }
 
-function documentFileName(fileName: string, identifier: string, extension: string): string {
-  const baseName = fileName.replace(/\.[^.]+$/, "");
-  return safeFileName(`${baseName}-${identifier}`) + (extension ? `.${extension}` : "");
+function documentFileName(params: {
+  fileName: string;
+  documentNumber?: string;
+  documentId: string;
+  versionNumber: number;
+  extension: string;
+}): string {
+  let baseName = params.fileName.replace(/\.[^.]+$/, "");
+  // Clean up any trailing -v[0-9]+, -signed, or existing document numbers from previous saves
+  baseName = baseName
+    .replace(/-(?:v\d+|DOC-\d+|signed)(?=-|$)/gi, "")
+    .replace(/-+$/, "")
+    .trim();
+
+  if (!baseName) {
+    baseName = "Document";
+  }
+
+  const docIdentifier = params.documentNumber || params.documentId;
+  const versionSuffix = `-v${params.versionNumber}`;
+
+  return safeFileName(`${baseName}${versionSuffix}-${docIdentifier}`) + (params.extension ? `.${params.extension}` : "");
 }
 
-export async function saveUserSignatureFile(params: { userId: string; userName: string; file: File }): Promise<{ relativePath: string }> {
-  const extension = params.file.name.includes(".") ? params.file.name.slice(params.file.name.lastIndexOf(".")) : "";
-  const fileName = safeFileName(`${params.userName}${extension}`);
-  const dir = path.join(getUploadRoot(), "Signatures", params.userId);
-  await mkdir(dir, { recursive: true });
-  const fullPath = path.join(dir, fileName);
-  await writeFile(fullPath, Buffer.from(await params.file.arrayBuffer()));
-  return { relativePath: path.relative(getUploadRoot(), fullPath).replaceAll("\\", "/") };
+export async function saveUserSignatureFile(params: {
+  userId: string;
+  userName: string;
+  file: File;
+}): Promise<{ relativePath: string }> {
+  const extension = params.file.name.includes(".")
+    ? params.file.name.slice(params.file.name.lastIndexOf("."))
+    : "";
+
+  const fileName = safeFileName(
+    `${params.userName}-${randomUUID()}${extension}`,
+  );
+
+  return saveStoredFile({
+    relativePath: `Signatures/${params.userId}/${fileName}`,
+    bytes: Buffer.from(await params.file.arrayBuffer()),
+  });
+}
+
+export async function savePurchaseOrderFile(file: File, storageFolder = "POs"): Promise<{ relativePath: string }> {
+  const extension = file.name.includes(".")
+    ? file.name.slice(file.name.lastIndexOf("."))
+    : "";
+  const baseName = safeFileName(file.name.slice(0, file.name.length - extension.length)) || "Purchase-Order";
+  const fileName = `${baseName}${extension}`;
+
+  return saveStoredFile({
+    relativePath: `${storageFolder}/${fileName}`,
+    bytes: new Uint8Array(await file.arrayBuffer()),
+    overwrite: false,
+  });
 }
 
 // Compute the structured storage directory based on document type and relationship.
 export function resolveStorageDir(params: {
   documentType: "COMPARISON" | "MATERIAL_REQUISITION";
   mrNumber?: string | null;
+  mrType?: "CASH" | "CREDIT" | null;
   hasLinkedComparison: boolean;
+  location?: string | null;
+  uploaderEmail?: string;
 }): string {
+  const resolvedPath = params.uploaderEmail
+    ? documentStorageFolder({
+        uploaderEmail: params.uploaderEmail,
+        location: params.location,
+        documentType: params.documentType,
+        mrType: params.mrType,
+        hasLinkedComparison: params.hasLinkedComparison,
+      })
+    : null;
+
+  const fallbackPath = params.location ? `MRs/${params.location}` : "MRs";
+
+  if (resolvedPath) {
+    return resolvedPath;
+  }
+
   if (params.documentType === "COMPARISON") {
-    return path.join(getUploadRoot(), "Comparisons");
+    return `${fallbackPath}/Comparisons`;
   }
-  if (params.hasLinkedComparison && params.mrNumber) {
-    return path.join(getUploadRoot(), "MRs+Comparisons", `MR-${safeFileName(params.mrNumber)}`);
+
+  if (params.mrType === "CREDIT") {
+    return `${fallbackPath}/MRs Credit`;
   }
-  return path.join(getUploadRoot(), "MRs");
+
+  if (params.mrType === "CASH") {
+    return `${fallbackPath}/MRs Cash`;
+  }
+
+  return `${fallbackPath}/MRs`;
 }
 
 export async function saveDocumentVersionFile(params: {
@@ -95,7 +209,11 @@ export async function saveDocumentVersionFile(params: {
   documentNumber?: string;
   mrNumber?: string | null;
   hasLinkedComparison?: boolean;
-}): Promise<{ relativePath: string; extension: string }> {
+  uploaderEmail?: string;
+  location?: string | null;
+  mrType?: "CASH" | "CREDIT" | null;
+  storageFolder?: string | null;
+}): Promise<{ relativePath: string; extension: string; storageFolder: string | null }> {
   const validation = ensureAllowedFile(params.file);
   if (!validation.ok || !validation.extension) {
     throw new Error(validation.message || "Invalid file type.");
@@ -106,30 +224,68 @@ export async function saveDocumentVersionFile(params: {
   let fileName: string;
 
   if (params.documentType && params.documentNumber) {
-    dir = resolveStorageDir({
-      documentType: params.documentType,
-      mrNumber: params.mrNumber,
-      hasLinkedComparison: params.hasLinkedComparison ?? false,
+    dir = params.storageFolder || (params.uploaderEmail
+      ? documentStorageFolder({
+          uploaderEmail: params.uploaderEmail,
+          location: params.location,
+          documentType: params.documentType,
+          mrType: params.mrType,
+          hasLinkedComparison: params.hasLinkedComparison ?? false,
+        })
+      : null) || resolveStorageDir({
+        documentType: params.documentType,
+        mrNumber: params.mrNumber,
+        mrType: params.mrType,
+        hasLinkedComparison: params.hasLinkedComparison ?? false,
+        location: params.location,
+        uploaderEmail: params.uploaderEmail,
+      });
+    fileName = documentFileName({
+      fileName: params.file.name,
+      documentNumber: params.documentNumber,
+      documentId: params.documentId,
+      versionNumber: params.versionNumber,
+      extension,
     });
-    fileName = documentFileName(params.file.name, `${params.documentNumber}-v${params.versionNumber}`, extension);
   } else {
     // Keep approval uploads in the permanent root when document details are unavailable.
     dir = path.join(getUploadRoot(), "documents", params.documentId);
-    fileName = documentFileName(params.file.name, params.documentId, extension);
+    fileName = documentFileName({
+      fileName: params.file.name,
+      documentNumber: params.documentNumber,
+      documentId: params.documentId,
+      versionNumber: params.versionNumber,
+      extension,
+    });
   }
 
-  await mkdir(dir, { recursive: true });
-  const fullPath = path.join(dir, fileName);
-  await writeFile(fullPath, Buffer.from(await params.file.arrayBuffer()));
+  const storageFolder = params.documentType && params.documentNumber
+    ? dir.replaceAll("\\", "/").replace(`${getUploadRoot().replaceAll("\\", "/")}/`, "")
+    : null;
+  const relativePath = storageFolder
+    ? `${storageFolder}/${fileName}`
+    : path.relative(getUploadRoot(), path.join(dir, fileName)).replaceAll("\\", "/");
 
-  const relativePath = path.relative(getUploadRoot(), fullPath).replaceAll("\\", "/");
-  return { relativePath, extension };
+  if (relativePath.startsWith("uploads/")) {
+    await mkdir(path.dirname(resolveStoredFilePath(relativePath)), { recursive: true });
+    await writeFile(resolveStoredFilePath(relativePath), Buffer.from(await params.file.arrayBuffer()));
+  } else {
+    const saved = await saveStoredFile({
+      relativePath,
+      bytes: new Uint8Array(await params.file.arrayBuffer()),
+      overwrite: true,
+    });
+    return { relativePath: saved.relativePath, extension, storageFolder };
+  }
+
+  return { relativePath, extension, storageFolder };
 }
 
 export async function mergePdfFiles(params: {
   firstFilePath: string;
   secondFilePath: string;
   fileName: string;
+  storageFolder?: string | null;
 }): Promise<{ relativePath: string }> {
   const [firstBytes, secondBytes] = await Promise.all([
     readFile(resolveStoredFilePath(params.firstFilePath)),
@@ -146,25 +302,34 @@ export async function mergePdfFiles(params: {
     pages.forEach((page) => mergedPdf.addPage(page));
   }
 
-  const directory = path.join(getUploadRoot(), "MRs+Comparisons");
-  await mkdir(directory, { recursive: true });
   const safeName = `${safeFileName(params.fileName.replace(/\.[^.]+$/, ""))}.pdf`;
-  const fullPath = path.join(directory, safeName);
-  await writeFile(fullPath, await mergedPdf.save());
+  const normalizedStorageFolder = params.storageFolder
+    ? params.storageFolder.replace(/\\/g, "/").replace(/\/+$/, "")
+    : "MRs";
+  const relativePath = `${normalizedStorageFolder.replace(/\/MRs+Comparisons$/, "")}/MRs+Comparisons/${safeName}`;
+  const saved = await saveStoredFile({
+    relativePath,
+    bytes: await mergedPdf.save(),
+    overwrite: true,
+  });
 
   return {
-    relativePath: path.relative(getUploadRoot(), fullPath).replaceAll("\\", "/"),
+    relativePath: saved.relativePath,
   };
 }
 
-// Copy a comparison file into an MRs+Comparisons subfolder so OneDrive sees the pair together.
+// Copy a comparison file into the MR country/group MRs+Comparisons folder so OneDrive sees the pair together.
 export async function copyComparisonToMrFolder(params: {
   comparisonFilePath: string;
   comparisonOriginalName: string;
   mrNumber: string;
+  storageFolder?: string | null;
 }): Promise<void> {
   const { readFile } = await import("fs/promises");
-  const destDir = path.join(getUploadRoot(), "MRs+Comparisons", `MR-${safeFileName(params.mrNumber)}`);
+  const baseFolder = params.storageFolder
+    ? params.storageFolder.replace(/\\/g, "/").replace(/\/+$/, "")
+    : "MRs";
+  const destDir = path.join(getUploadRoot(), baseFolder.replace(/^\//, ""), "MRs+Comparisons", `MR-${safeFileName(params.mrNumber)}`);
   await mkdir(destDir, { recursive: true });
   const destPath = path.join(destDir, safeFileName(params.comparisonOriginalName));
   try {

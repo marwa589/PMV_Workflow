@@ -1,12 +1,48 @@
 import { EmailEventType, DocumentStatus, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
+import { appConfig } from "@/lib/env";
+import { getPurchaseOrderRecipientIds } from "@/lib/po-access";
 
 const EMAIL_DELAY_MS = 10 * 60 * 1000;
 const REMINDER_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const CLAIM_TIMEOUT_MS = 15 * 60 * 1000;
 
-const PENDING_STATUSES = [
+async function alignRecipientEmailDueAt(recipientId: string, desiredDueAt: Date) {
+  const now = new Date();
+  const batchWindowEnd = new Date(now.getTime() + EMAIL_DELAY_MS);
+  const pendingEvents = await prisma.emailNotificationEvent.findMany({
+    where: {
+      recipientId,
+      emailSent: false,
+      claimedAt: null,
+      emailDueAt: { gte: now, lte: batchWindowEnd },
+    },
+    select: { id: true, emailDueAt: true },
+  });
+
+  if (pendingEvents.length === 0) return desiredDueAt;
+
+  const earliestDueAt = new Date(Math.min(
+    desiredDueAt.getTime(),
+    ...pendingEvents.map((event) => event.emailDueAt.getTime()),
+  ));
+
+  if (pendingEvents.some((event) => event.emailDueAt.getTime() !== earliestDueAt.getTime())) {
+    await prisma.emailNotificationEvent.updateMany({
+      where: {
+        id: { in: pendingEvents.map((event) => event.id) },
+        emailSent: false,
+        claimedAt: null,
+      },
+      data: { emailDueAt: earliestDueAt },
+    });
+  }
+
+  return earliestDueAt;
+}
+
+const PENDING_STATUSES: DocumentStatus[] = [
   DocumentStatus.PENDING_APPROVER_1,
   DocumentStatus.PENDING_APPROVER_2,
   DocumentStatus.PENDING_APPROVER_3,
@@ -20,20 +56,81 @@ export async function queueWorkflowEmailEvents(events: Array<{
 }>) {
   if (events.length === 0) return 0;
 
+  const dedupedEvents = Array.from(
+    new Map(
+      events.map((event) => [
+        `${event.recipientId}:${event.type}:${event.documentId ?? ""}`,
+        event,
+      ]),
+    ).values(),
+  );
+
+  if (dedupedEvents.length === 0) return 0;
+
   const createdAt = new Date();
   const emailDueAt = new Date(createdAt.getTime() + EMAIL_DELAY_MS);
+  const recipientDueAtMap = new Map<string, Date>();
+
+  for (const event of dedupedEvents) {
+    const dueAt = recipientDueAtMap.get(event.recipientId) ?? emailDueAt;
+    recipientDueAtMap.set(event.recipientId, await alignRecipientEmailDueAt(event.recipientId, dueAt));
+  }
+
   await prisma.emailNotificationEvent.createMany({
-    data: events.map((event) => ({
+    data: dedupedEvents.map((event) => ({
       recipientId: event.recipientId,
       type: event.type,
       documentId: event.documentId ?? null,
       createdAt,
-      emailDueAt,
+      emailDueAt: recipientDueAtMap.get(event.recipientId) ?? emailDueAt,
       emailSent: false,
     })),
+    skipDuplicates: true,
   });
 
-  return events.length;
+  return dedupedEvents.length;
+}
+
+export async function queuePurchaseOrderAvailableEvents(purchaseOrderIds: string[]) {
+  const events: Array<{ recipientId: string; type: EmailEventType; documentId: string }> = [];
+  for (const purchaseOrderId of [...new Set(purchaseOrderIds)]) {
+    const recipientIds = await getPurchaseOrderRecipientIds(purchaseOrderId);
+    for (const recipientId of recipientIds) {
+      const existing = await prisma.emailNotificationEvent.findFirst({
+        where: {
+          recipientId,
+          documentId: purchaseOrderId,
+          type: EmailEventType.PURCHASE_ORDER_AVAILABLE,
+        },
+        select: { id: true },
+      });
+      if (!existing) {
+        events.push({ recipientId, type: EmailEventType.PURCHASE_ORDER_AVAILABLE, documentId: purchaseOrderId });
+      }
+    }
+  }
+  if (events.length === 0) return 0;
+  const createdAt = new Date();
+  const emailDueAt = new Date(createdAt.getTime() + EMAIL_DELAY_MS);
+  const recipientDueAtMap = new Map<string, Date>();
+
+  for (const event of events) {
+    const dueAt = recipientDueAtMap.get(event.recipientId) ?? emailDueAt;
+    recipientDueAtMap.set(event.recipientId, await alignRecipientEmailDueAt(event.recipientId, dueAt));
+  }
+
+  const result = await prisma.emailNotificationEvent.createMany({
+    data: events.map((event) => ({
+      recipientId: event.recipientId,
+      type: event.type,
+      documentId: event.documentId,
+      createdAt,
+      emailDueAt: recipientDueAtMap.get(event.recipientId) ?? emailDueAt,
+      emailSent: false,
+    })),
+    skipDuplicates: true,
+  });
+  return result.count;
 }
 
 export async function queuePendingApprovalReminders() {
@@ -76,7 +173,7 @@ export async function queuePendingApprovalReminders() {
 
 export async function queueComparisonMrReminders() {
   const admins = await prisma.user.findMany({
-    where: { role: UserRole.ADMIN, isActive: true },
+    where: { role: UserRole.ADMIN },
     select: { id: true },
   });
   if (admins.length === 0) return 0;
@@ -134,22 +231,27 @@ function summaryForType(type: EmailEventType) {
       return "rejected";
     case EmailEventType.COMPARISON_MR_OVERDUE:
       return "comparisonOverdue";
+    case EmailEventType.PURCHASE_ORDER_AVAILABLE:
+      return "purchaseOrderAvailable";
   }
 }
 
 function renderSummary(counts: Record<string, number>) {
+  const appUrl = appConfig.appUrl();
   const lines = [
     counts.approved ? `<p>Approved documents: ${counts.approved}</p>` : "",
     counts.rejected ? `<p>Rejected documents: ${counts.rejected}</p>` : "",
     counts.pending ? `<p>Pending documents: ${counts.pending}</p>` : "",
     counts.overdue ? `<p>Documents pending for more than 24 hours: ${counts.overdue}</p>` : "",
     counts.comparisonOverdue ? `<p>Approved Comparisons awaiting MR upload for more than 24 hours: ${counts.comparisonOverdue}</p>` : "",
+    counts.purchaseOrderAvailable ? `<p>New purchase orders are available for your related MRs.</p>` : "",
   ].join("");
 
   return `
     <div style="font-family: Arial, sans-serif; line-height: 1.6;">
       <p>You have workflow updates requiring your attention.</p>
       ${lines}
+      <p>Application URL: <a href="${appUrl}">${appUrl}</a></p>
       <p>Please log in to review them.</p>
     </div>
   `;
@@ -172,19 +274,22 @@ export async function flushWorkflowEmailBatches() {
   const reminderEvents = pendingEvents.filter(
     (event) => event.type === EmailEventType.APPROVAL_PENDING || event.type === EmailEventType.APPROVAL_OVERDUE,
   );
-  const approvedDocumentIds = new Set(
-    (
-      await prisma.document.findMany({
-        where: {
-          id: { in: reminderEvents.flatMap((event) => event.documentId ? [event.documentId] : []) },
-          status: DocumentStatus.APPROVED,
-        },
-        select: { id: true },
-      })
-    ).map((document) => document.id),
-  );
+  const reminderDocuments = await prisma.document.findMany({
+    where: {
+      id: { in: reminderEvents.flatMap((event) => event.documentId ? [event.documentId] : []) },
+    },
+    select: { id: true, status: true, currentApproverId: true },
+  });
+  const reminderDocumentById = new Map(reminderDocuments.map((document) => [document.id, document]));
   const staleReminderIds = reminderEvents
-    .filter((event) => event.documentId && approvedDocumentIds.has(event.documentId))
+    .filter((event) => {
+      if (!event.documentId) return false;
+
+      const document = reminderDocumentById.get(event.documentId);
+      return !document
+        || !PENDING_STATUSES.includes(document.status)
+        || document.currentApproverId !== event.recipientId;
+    })
     .map((event) => event.id);
 
   if (staleReminderIds.length > 0) {
@@ -254,3 +359,4 @@ export async function flushWorkflowEmailBatches() {
 
   return sentCount;
 }
+

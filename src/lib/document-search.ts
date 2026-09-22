@@ -1,20 +1,13 @@
 // import { DocumentStatus } from "@prisma/client";
 
-type DocumentStatus =
-  | "PENDING_APPROVER_1"
-  | "PENDING_APPROVER_2"
-  | "PENDING_APPROVER_3"
-  | "APPROVED"
-  | "REJECTED"
-  | "REVISION_REQUIRED"
-  | "ARCHIVED";
+type DocumentStatus = string;
 
 export type SearchableDocument = {
   documentNumber?: string | null;
   title?: string | null;
   status?: DocumentStatus | null;
   statusLabel?: string | null;
-  documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | null;
+  documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | "ERR" | null;
   mrType?: "CASH" | "CREDIT" | null;
   mrNumber?: string | null;
   currentApproverName?: string | null;
@@ -65,7 +58,9 @@ export function matchesDocumentSearch(documentItem: SearchableDocument, query: s
       ? "material requisition mr"
       : documentItem.documentType === "COMPARISON"
         ? "comparison sheet"
-        : "",
+        : documentItem.documentType === "ERR"
+          ? "err"
+          : "",
     documentItem.mrType === "CASH" ? "cash" : documentItem.mrType === "CREDIT" ? "credit" : "",
     documentItem.mrNumber,
     documentItem.relatedComparisonDocumentNumber,

@@ -3,7 +3,8 @@ import Link from "next/link";
 import DashboardShell from "@/components/dashboard-shell";
 import { requireAuth } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
-
+import { redirect } from "next/navigation";
+import { canAccessMrModuleForSession, isErroUser } from "@/lib/auth/resource-access";
 export const dynamic = "force-dynamic";
 
 function formatTurnaround(ms: number): string {
@@ -15,11 +16,24 @@ function formatTurnaround(ms: number): string {
 
 export default async function ProcurementPackagesPage() {
   const session = await requireAuth();
+    if (!canAccessMrModuleForSession(session)) {
+    redirect("/unauthorized");
+  }
+
+  const isErro = isErroUser(session);
 
   const packages = await prisma.document.findMany({
     where: {
       documentType: "MATERIAL_REQUISITION",
       relatedComparison: { status: DocumentStatus.APPROVED },
+      ...(isErro
+        ? {
+            OR: [
+              { createdById: session.userId },
+              { relatedComparison: { createdById: session.userId } },
+            ],
+          }
+        : {}),
     },
     select: {
       id: true,
@@ -53,6 +67,7 @@ export default async function ProcurementPackagesPage() {
       documentType: "COMPARISON",
       status: DocumentStatus.APPROVED,
       linkedMRs: { none: {} },
+      ...(isErro ? { createdById: session.userId } : {}),
     },
     select: {
       id: true,

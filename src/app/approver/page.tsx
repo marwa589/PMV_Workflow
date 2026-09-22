@@ -2,8 +2,10 @@ import { ApprovalActionType, DocumentStatus, UserRole } from "@prisma/client";
 import ApproverPendingTable from "@/components/approver-pending-table";
 import DashboardShell from "@/components/dashboard-shell";
 import DocumentListTable from "@/components/document-list-table";
+import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
 import { APPROVER_ROLES, roleLabel } from "@/lib/auth/roles";
+import { getErrAccess } from "@/lib/err/permissions";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +21,7 @@ export default async function ApproverDashboardPage() {
     id: string;
     documentNumber: string;
     title: string;
-    documentType: "COMPARISON" | "MATERIAL_REQUISITION";
+    documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "ERR";
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     uploadedAt: string;
@@ -30,7 +32,7 @@ export default async function ApproverDashboardPage() {
     id: string;
     documentNumber: string;
     title: string;
-    documentType: "COMPARISON" | "MATERIAL_REQUISITION";
+    documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "ERR";
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     uploadedAt: string;
@@ -42,7 +44,7 @@ export default async function ApproverDashboardPage() {
     documentNumber: string;
     title: string;
     status: DocumentStatus;
-    documentType: "COMPARISON" | "MATERIAL_REQUISITION";
+    documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "ERR";
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     performedAt: Date;
@@ -147,11 +149,24 @@ export default async function ApproverDashboardPage() {
       }),
     ]);
 
-    pendingCount = pending;
+    const errAccess = await getErrAccess();
+    const errPendingDocuments = errAccess
+      ? await prisma.err.findMany({
+          where: {
+            status: "PENDING",
+            currentStage: session.role === UserRole.APPROVER_3 ? "PMV_MANAGER" : undefined,
+            currentApproverId: session.role === UserRole.APPROVER_3 ? undefined : session.userId,
+          },
+          select: { id: true, documentNumber: true, title: true, createdAt: true },
+          orderBy: { createdAt: "desc" },
+        })
+      : [];
+    pendingCount = pending + errPendingDocuments.length;
     revisionRequiredCount = revisionRequired;
     approvedCount = approved;
     rejectedCount = rejected;
-    pendingDocuments = pendingDocs.map((doc) => ({
+    pendingDocuments = [
+      ...pendingDocs.map((doc) => ({
       id: doc.id,
       documentNumber: doc.documentNumber,
       title: doc.title,
@@ -161,7 +176,22 @@ export default async function ApproverDashboardPage() {
       uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
       relatedComparisonId: doc.relatedComparison?.id || null,
       relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
-    }));
+      })),
+      ...errPendingDocuments.map((doc) => ({
+        id: doc.id,
+        documentNumber: doc.documentNumber,
+        title: doc.title,
+        documentType: "ERR" as const,
+        mrType: null,
+        currentVersion: 1,
+        uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+        relatedComparisonId: null,
+        relatedComparisonDocumentNumber: null,
+      })),
+    ];
+    if (session.role === UserRole.APPROVER_3) {
+      pendingDocuments.sort((left, right) => Number(right.documentType === "ERR") - Number(left.documentType === "ERR"));
+    }
     revisionRequiredDocuments = revisionRequiredDocs.map((doc) => ({
       id: doc.id,
       documentNumber: doc.documentNumber,
@@ -202,8 +232,8 @@ export default async function ApproverDashboardPage() {
       </div>
 
       <div className={`grid grid-cols-1 gap-4 ${session.role === UserRole.APPROVER_3 ? "md:grid-cols-5" : "md:grid-cols-4"}`}>
-        <article className="rounded-2xl bg-slate-50 p-5 text-slate-900 ring-1 ring-slate-200 shadow-sm">
-          <p className="text-sm font-medium">My Pending Approvals</p>
+        <article className="rounded-2xl bg-yellow-50 p-5 text-yellow-900 ring-1 ring-yellow-200 shadow-sm">
+          <p className="text-sm font-medium">Pending Approval</p>
           <p className="mt-3 text-3xl font-semibold">{pendingCount}</p>
         </article>
         <article className="rounded-2xl bg-slate-50 p-5 text-slate-900 ring-1 ring-slate-200 shadow-sm">
@@ -211,11 +241,11 @@ export default async function ApproverDashboardPage() {
           <p className="mt-3 text-3xl font-semibold">{revisionRequiredCount}</p>
         </article>
         <article className="rounded-2xl bg-emerald-50 p-5 text-emerald-900 ring-1 ring-emerald-200 shadow-sm">
-          <p className="text-sm font-medium">My Approved Documents</p>
+          <p className="text-sm font-medium">Approved</p>
           <p className="mt-3 text-3xl font-semibold">{approvedCount}</p>
         </article>
         <article className="rounded-2xl bg-rose-50 p-5 text-rose-900 ring-1 ring-rose-200 shadow-sm">
-          <p className="text-sm font-medium">My Rejected Documents</p>
+          <p className="text-sm font-medium">Rejected</p>
           <p className="mt-3 text-3xl font-semibold">{rejectedCount}</p>
         </article>
       </div>
@@ -227,37 +257,6 @@ export default async function ApproverDashboardPage() {
         <div className="px-1 py-4">
           <ApproverPendingTable documents={pendingDocuments} />
         </div>
-      </section>
-
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 px-5 py-4">
-          <h3 className="text-base font-semibold text-slate-900">Revision Required</h3>
-        </div>
-        <div className="px-1 py-4">
-          <ApproverPendingTable documents={revisionRequiredDocuments} />
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 px-5 py-4">
-          <h3 className="text-base font-semibold text-slate-900">Approved Documents</h3>
-        </div>
-        <DocumentListTable
-          documents={approvedDocuments.map((doc) => ({
-            id: doc.id,
-            documentNumber: doc.documentNumber,
-            title: doc.title,
-            status: doc.status,
-            documentType: doc.documentType,
-            mrType: doc.mrType,
-            currentVersion: doc.currentVersion,
-            currentApproverName: null,
-              relatedComparisonId: null,
-              relatedComparisonDocumentNumber: null,
-            dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.performedAt),
-          }))}
-          emptyMessage="No approved documents by you yet."
-        />
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">

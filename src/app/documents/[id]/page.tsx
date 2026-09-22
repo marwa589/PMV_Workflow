@@ -5,8 +5,10 @@ import { ArrowLeft, Download, FileText, History } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
 import StatusBadge from "@/components/status-badge";
 import WorkflowJourneyChart from "@/components/workflow-journey-chart";
+import PurchaseOrderUpload from "@/components/purchase-order-upload";
 import { requireAuth } from "@/lib/auth/guards";
 import { canAccessDocument } from "@/lib/auth/resource-access";
+import { isOmar } from "@/lib/po-access";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +64,14 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
           performedBy: { select: { name: true, email: true } },
         },
       },
+      purchaseOrderLinks: {
+        orderBy: { createdAt: "asc" },
+        include: {
+          purchaseOrder: {
+            include: { uploadedBy: { select: { name: true } } },
+          },
+        },
+      },
     },
   });
 
@@ -69,7 +79,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
     notFound();
   }
 
-  const latestComment = document.approvals.find((item) => item.comments)?.comments || null;
+  const hasPurchaseOrder = document.purchaseOrderLinks.length > 0;
   return (
     <DashboardShell
       role={session.role}
@@ -99,6 +109,13 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
           <FileText className="h-4 w-4" />
           Open File
         </a>
+        {document.documentType === "MATERIAL_REQUISITION" && document.status === DocumentStatus.APPROVED && isOmar(session) ? (
+          <PurchaseOrderUpload
+            approvedMrs={[{ id: document.id, documentNumber: document.documentNumber, title: document.title, mrNumber: document.mrNumber }]}
+            initialMrId={document.id}
+            showMrSelection={false}
+          />
+        ) : null}
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -139,6 +156,12 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
                       <span className="font-semibold text-slate-900">None</span>
                     )}
                   </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-slate-500">PO status</span>
+                    <span className={`font-semibold ${document.mrType === "CREDIT" ? hasPurchaseOrder ? "text-emerald-700" : "text-amber-700" : "text-slate-600"}`}>
+                      {document.mrType === "CREDIT" ? hasPurchaseOrder ? "PO Uploaded" : "PO Pending" : "Not Applicable"}
+                    </span>
+                  </div>
                 </>
               ) : null}
               {document.documentType === "COMPARISON" ? (
@@ -171,10 +194,6 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
               <div className="flex items-center justify-between gap-3">
                 <span className="font-medium text-slate-500">Created</span>
                 <span className="font-semibold text-slate-900">{formatDate(document.createdAt)}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-medium text-slate-500">Latest comment</span>
-                <span className="font-semibold text-slate-900">{latestComment || "No comments yet"}</span>
               </div>
             </div>
           </div>
@@ -222,11 +241,11 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
                 <div key={version.id} className="px-5 py-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-slate-900">Version {version.versionNumber}</p>
+                      <p className="text-sm font-semibold text-slate-900">Current File</p>
                       <p className="mt-1 text-sm text-slate-600">{version.originalName}</p>
                     </div>
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${version.versionNumber === document.currentVersion ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-700"}`}>
-                      {version.versionNumber === document.currentVersion ? "Current" : "Archived"}
+                    <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                      Current
                     </span>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
@@ -275,6 +294,35 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
             </div>
           </div>
         </div>
+      ) : null}
+
+      {document.documentType === "MATERIAL_REQUISITION" ? (
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4">
+            <h3 className="text-base font-semibold text-slate-900">Linked POs</h3>
+          </div>
+          {document.purchaseOrderLinks.length === 0 ? (
+            <p className="px-5 py-6 text-sm text-slate-500">No purchase orders linked.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr><th className="px-5 py-3 font-semibold">PO Number / Filename</th><th className="px-5 py-3 font-semibold">Upload Date</th><th className="px-5 py-3 font-semibold">Uploaded By</th><th className="px-5 py-3 font-semibold">Open File</th></tr>
+                </thead>
+                <tbody>
+                  {document.purchaseOrderLinks.map(({ purchaseOrder }) => (
+                    <tr key={purchaseOrder.id} className="border-t border-slate-100">
+                      <td className="px-5 py-4"><Link href={`/purchase-orders/${purchaseOrder.id}`} className="font-medium text-cyan-700 hover:underline">{purchaseOrder.poNumber}</Link><span className="ml-2 text-slate-500">{purchaseOrder.originalName}</span></td>
+                      <td className="px-5 py-4 text-slate-600">{formatDate(purchaseOrder.uploadedAt)}</td>
+                      <td className="px-5 py-4 text-slate-600">{purchaseOrder.uploadedBy.name}</td>
+                      <td className="px-5 py-4"><a href={`/api/purchase-orders/${purchaseOrder.id}/download?inline=1`} target="_blank" rel="noopener noreferrer" className="font-medium text-cyan-700 hover:underline">Open File</a></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       ) : null}
 
     </DashboardShell>

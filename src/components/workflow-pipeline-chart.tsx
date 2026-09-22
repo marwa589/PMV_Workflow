@@ -9,7 +9,7 @@ export type PipelineStage = {
   label: string;
   count: number;
   averageDaysPending: number;
-  assignees: { name: string; email: string }[];
+  assignees: { name: string; email: string; count: number }[];
   oldestPendingDocument: { documentNumber: string; title: string } | null;
 };
 
@@ -85,11 +85,11 @@ export default function WorkflowPipelineChart({ stages, documents }: Props) {
                 className={`rounded-2xl border p-3 text-left transition ${
                   isActive
                     ? stage.key === 'APPROVER_1'
-                      ? 'border-amber-200 bg-amber-50 text-amber-900 shadow-sm ring-1 ring-amber-200'
+                      ? 'border-yellow-200 bg-yellow-50 text-yellow-900 shadow-sm ring-1 ring-yellow-200'
                       : stage.key === 'APPROVER_2'
-                        ? 'border-sky-200 bg-sky-50 text-sky-900 shadow-sm ring-1 ring-sky-200'
+                        ? 'border-yellow-200 bg-yellow-50 text-yellow-900 shadow-sm ring-1 ring-yellow-200'
                         : stage.key === 'APPROVER_3'
-                          ? 'border-violet-200 bg-violet-50 text-violet-900 shadow-sm ring-1 ring-violet-200'
+                          ? 'border-yellow-200 bg-yellow-50 text-yellow-900 shadow-sm ring-1 ring-yellow-200'
                           : stage.key === 'REVISION_REQUIRED'
                             ? 'border-orange-200 bg-orange-50 text-orange-900 shadow-sm ring-1 ring-orange-200'
                             : stage.key === 'APPROVED'
@@ -102,11 +102,14 @@ export default function WorkflowPipelineChart({ stages, documents }: Props) {
                 <div className="mt-3">
                   <p className="text-xs font-semibold uppercase tracking-wide opacity-80">{stage.label}</p>
                   {stage.assignees.length > 0 ? (
-                    <div className="mt-1 space-y-0.5">
+                    <div className="mt-1 space-y-1">
                       {stage.assignees.map((assignee) => (
-                        <p key={assignee.email} className="truncate text-[11px] font-medium normal-case tracking-normal opacity-75">
-                          {assignee.name}
-                        </p>
+                        <div key={assignee.email || assignee.name} className="flex items-center justify-between gap-2 text-[11px] font-medium normal-case tracking-normal opacity-75">
+                          <span className="truncate">{assignee.name}</span>
+                          <span className="rounded-full bg-slate-900/10 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
+                            {assignee.count}
+                          </span>
+                        </div>
                       ))}
                     </div>
                   ) : null}
