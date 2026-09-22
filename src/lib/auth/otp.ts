@@ -54,6 +54,15 @@ export async function createAdminOtpChallenge(user: { id: string; email: string;
     },
   });
 
+    //LOCAL TESTING:
+  // console.log(`\n🔑 [DEV BACKDOOR] OTP CODE for ${user.email} is: ${code}\n`);
+
+  // await sendEmail({
+  //   to: user.email,
+  //   subject: "Your PMV Workflow verification code",
+  //   html: `...`,
+  // });
+
   await sendEmail({
     to: user.email,
     subject: "Your PMV Workflow verification code",

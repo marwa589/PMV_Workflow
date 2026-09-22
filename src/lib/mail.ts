@@ -20,15 +20,34 @@ export async function sendEmail({
   subject: string;
   html: string;
 }) {
-  if (!appConfig.smtpHost() || !appConfig.smtpUser() || !appConfig.smtpPass()) {
+  if (
+    !appConfig.smtpHost() ||
+    !appConfig.smtpUser() ||
+    !appConfig.smtpPass()
+  ) {
     console.warn("SMTP credentials are not configured. Skipping email send.");
     return null;
   }
 
-  return transporter.sendMail({
-    from: appConfig.smtpFrom() || appConfig.smtpUser(),
-    to,
-    subject,
-    html,
-  });
+  try {
+    const info = await transporter.sendMail({
+      from: appConfig.smtpFrom() || appConfig.smtpUser(),
+      to,
+      subject,
+      html,
+    });
+
+    // Log Ethereal preview URL if available
+    if ('previewUrl' in info) {
+      console.log(`\n📧 [ETHEREAL PREVIEW] ${(info as any).previewUrl}\n`);
+    } else {
+      console.log(`\n📧 Email sent successfully. Message ID: ${info.messageId}\n`);
+    }
+
+    return info;
+  } catch (error) {
+    console.error("❌ Failed to send email:", error);
+    // Don't crash the app - just log and return null
+    return null;
+  }
 }
