@@ -17,6 +17,7 @@ import { getRequestOrigin } from "@/lib/request-origin";
 import { appConfig } from "@/lib/env";
 import { sendEmail } from "@/lib/mail";
 import {
+  buildApprovalAssignedEmail,
   buildDocumentRejectedEmail,
   buildErrOnHoldEmail,
   buildFinalApprovalEmail,
@@ -454,7 +455,42 @@ export async function POST(
       };
     });
 
-    if (result.status !== "PENDING") {
+    if (result.status === "PENDING") {
+      try {
+        const pendingErr = await prisma.err.findUnique({
+          where: { id },
+          select: {
+            documentNumber: true,
+            title: true,
+            type: true,
+            projectNameSnapshot: true,
+            currentApprover: { select: { name: true, email: true } },
+          },
+        });
+
+        if (pendingErr?.currentApprover?.email) {
+          const emailContext = {
+            recipientName: pendingErr.currentApprover.name,
+            docNumber: pendingErr.documentNumber,
+            title: pendingErr.title,
+            workflowType: `ERR - ${pendingErr.type}`,
+            projectName: pendingErr.projectNameSnapshot,
+            currentStatus: result.status,
+            actorName: access.name,
+            documentUrl: new URL(`/errs/${id}`, appConfig.appUrl()).toString(),
+          };
+          const template = buildApprovalAssignedEmail(emailContext);
+
+          await sendEmail({
+            to: pendingErr.currentApprover.email,
+            subject: template.subject,
+            html: template.html,
+          });
+        }
+      } catch (error) {
+        console.error("ERR next approver email could not be sent.", error);
+      }
+    } else {
       try {
         const uploader = await prisma.err.findUnique({
           where: { id },
