@@ -1,5 +1,4 @@
 import { UserRole } from "@prisma/client";
-import AdminUserManagement from "@/components/admin-user-management";
 import DashboardShell from "@/components/dashboard-shell";
 import AdminUserManagement from "@/components/admin-user-management";
 import { requireRole } from "@/lib/auth/guards";
@@ -40,31 +39,28 @@ export default async function AdminUsersPage() {
 
   return (
     <DashboardShell role={session.role} userName={session.name} title="Users" subtitle="System user management">
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 px-5 py-4">
-          <h3 className="text-base font-semibold text-slate-900">Users</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-5 py-3 font-semibold">Name</th>
-                <th className="px-5 py-3 font-semibold">Email</th>
-                <th className="px-5 py-3 font-semibold">Role</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((user) => (
-                <tr key={user.id} className="border-t border-slate-100">
-                  <td className="px-5 py-4 font-medium text-slate-900">{user.name}</td>
-                  <td className="px-5 py-4 text-slate-700">{user.email}</td>
-                  <td className="px-5 py-4 text-slate-700">{user.role.replaceAll("_", " ")}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <AdminUserManagement
+        initialUsers={users.map((user) => ({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          location: user.location ?? "KUWAIT",
+          projectName: user.projectName ?? null,
+          errAccessRoles: [...new Set(user.errAccess.map((entry) => entry.role))],
+          errAccess: user.errAccess.map((entry: any) => {
+            const proj: any = entry.project;
+            return {
+              id: entry.id,
+              role: entry.role,
+              projectId: entry.projectId ?? null,
+              projectName: proj ? (proj.name as string) : null,
+            };
+          }),
+          createdAt: user.createdAt.toISOString(),
+        }))}
+        projects={projects}
+      />
     </DashboardShell>
   );
 }

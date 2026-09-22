@@ -1,0 +1,173 @@
+warning: in the working copy of 'prisma/schema.prisma', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/prisma/schema.prisma b/prisma/schema.prisma[m
+[1mindex f41f065..1d608cb 100644[m
+[1m--- a/prisma/schema.prisma[m
+[1m+++ b/prisma/schema.prisma[m
+[36m@@ -45,15 +45,15 @@[m [mmodel User {[m
+   errNotifications          ErrNotification[]        @relation("ErrNotificationRecipient")[m
+   directedErrProjects       ErrProject[]             @relation("ErrProjectDirectorAccount")[m
+   purchaseOrdersCreated     PurchaseOrder[]          @relation("PurchaseOrdersCreatedBy")[m
+[31m-  purchaseOrderLinksCreated PurchaseOrderMrLink[]     @relation("PurchaseOrderLinksCreatedBy")[m
+[32m+[m[32m  purchaseOrderLinksCreated PurchaseOrderMrLink[]    @relation("PurchaseOrderLinksCreatedBy")[m
+   roleAssignments           UserRoleAssignment[]     @relation("UserRoleAssignmentsForUser")[m
+ }[m
+ [m
+ model UserRoleAssignment {[m
+[31m-  id        String      @id @default(cuid())[m
+[32m+[m[32m  id        String   @id @default(cuid())[m
+   userId    String[m
+   role      UserRole[m
+[31m-  createdAt DateTime    @default(now())[m
+[32m+[m[32m  createdAt DateTime @default(now())[m
+ [m
+   user User @relation("UserRoleAssignmentsForUser", fields: [userId], references: [id], onDelete: Cascade)[m
+ [m
+[36m@@ -76,21 +76,21 @@[m [mmodel PasswordResetToken {[m
+ }[m
+ [m
+ model Document {[m
+[31m-  id                        String            @id @default(cuid())[m
+[31m-  documentNumber            String            @unique[m
+[32m+[m[32m  id                        String                    @id @default(cuid())[m
+[32m+[m[32m  documentNumber            String                    @unique[m
+   title                     String[m
+   description               String?[m
+   status                    DocumentStatus[m
+[31m-  currentVersion            Int               @default(1)[m
+[31m-  createdAt                 DateTime          @default(now())[m
+[31m-  updatedAt                 DateTime          @updatedAt[m
+[32m+[m[32m  currentVersion            Int                       @default(1)[m
+[32m+[m[32m  createdAt                 DateTime                  @default(now())[m
+[32m+[m[32m  updatedAt                 DateTime                  @updatedAt[m
+   createdById               String[m
+   currentApproverId         String?[m
+   uploaderLocation          UserLocation?[m
+   projectName               String?[m
+   workflowTemplateId        String?[m
+   currentWorkflowStep       Int?[m
+[31m-  documentType              DocumentType      @default(COMPARISON)[m
+[32m+[m[32m  documentType              DocumentType              @default(COMPARISON)[m
+   documentSubtype           String?[m
+   comparisonType            ComparisonType?[m
+   mrType                    MrType?[m
+[36m@@ -100,12 +100,12 @@[m [mmodel Document {[m
+   relatedComparisonId       String?[m
+   lastActiveStage           DocumentStatus?[m
+   approvals                 ApprovalHistory[][m
+[31m-  deletionRequests          DeletionRequest[] @relation("DeletionRequests")[m
+[31m-  createdBy                 User              @relation("DocumentsCreatedBy", fields: [createdById], references: [id])[m
+[31m-  currentApprover           User?             @relation("CurrentApprover", fields: [currentApproverId], references: [id])[m
+[32m+[m[32m  deletionRequests          DeletionRequest[]         @relation("DeletionRequests")[m
+[32m+[m[32m  createdBy                 User                      @relation("DocumentsCreatedBy", fields: [createdById], references: [id])[m
+[32m+[m[32m  currentApprover           User?                     @relation("CurrentApprover", fields: [currentApproverId], references: [id])[m
+   workflowTemplate          DocumentWorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: SetNull)[m
+[31m-  relatedComparison         Document?         @relation("MRToComparison", fields: [relatedComparisonId], references: [id])[m
+[31m-  linkedMRs                 Document[]        @relation("MRToComparison")[m
+[32m+[m[32m  relatedComparison         Document?                 @relation("MRToComparison", fields: [relatedComparisonId], references: [id])[m
+[32m+[m[32m  linkedMRs                 Document[]                @relation("MRToComparison")[m
+   versions                  DocumentVersion[][m
+   purchaseOrderLinks        PurchaseOrderMrLink[][m
+ [m
+[36m@@ -117,17 +117,17 @@[m [mmodel Document {[m
+ }[m
+ [m
+ model DocumentWorkflowTemplate {[m
+[31m-  id             String                 @id @default(cuid())[m
+[31m-  name           String[m
+[31m-  location       UserLocation?[m
+[31m-  documentType   DocumentType[m
+[32m+[m[32m  id              String                 @id @default(cuid())[m
+[32m+[m[32m  name            String[m
+[32m+[m[32m  location        UserLocation?[m
+[32m+[m[32m  documentType    DocumentType[m
+   documentSubtype String?[m
+[31m-  projectName    String?[m
+[31m-  isActive       Boolean                @default(true)[m
+[31m-  createdAt      DateTime               @default(now())[m
+[31m-  updatedAt      DateTime               @updatedAt[m
+[31m-  steps          DocumentWorkflowStep[][m
+[31m-  documents      Document[][m
+[32m+[m[32m  projectName     String?[m
+[32m+[m[32m  isActive        Boolean                @default(true)[m
+[32m+[m[32m  createdAt       DateTime               @default(now())[m
+[32m+[m[32m  updatedAt       DateTime               @updatedAt[m
+[32m+[m[32m  steps           DocumentWorkflowStep[][m
+[32m+[m[32m  documents       Document[][m
+ [m
+   @@index([location, documentType, isActive])[m
+   @@index([documentType, documentSubtype, isActive])[m
+[36m@@ -135,13 +135,13 @@[m [mmodel DocumentWorkflowTemplate {[m
+ }[m
+ [m
+ model DocumentWorkflowStep {[m
+[31m-  id             String                   @id @default(cuid())[m
+[32m+[m[32m  id             String   @id @default(cuid())[m
+   templateId     String[m
+   stepNumber     Int[m
+   role           UserRole[m
+   approverUserId String?[m
+[31m-  isRequired     Boolean                  @default(true)[m
+[31m-  createdAt      DateTime                 @default(now())[m
+[32m+[m[32m  isRequired     Boolean  @default(true)[m
+[32m+[m[32m  createdAt      DateTime @default(now())[m
+ [m
+   template DocumentWorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)[m
+   approver User?                    @relation("WorkflowStepApprover", fields: [approverUserId], references: [id], onDelete: SetNull)[m
+[36m@@ -419,7 +419,7 @@[m [menum ErrStage {[m
+ model Err {[m
+   id             String    @id @default(cuid())[m
+   documentNumber String    @unique[m
+[31m-  submissionKey String? @unique[m
+[32m+[m[32m  submissionKey  String?   @unique[m
+   title          String[m
+   description    String?[m
+   type           ErrType[m
+[36m@@ -459,9 +459,9 @@[m [mmodel Err {[m
+ }[m
+ [m
+ model ErrSequence {[m
+[31m-  id          Int      @id @default(1)[m
+[31m-  nextNumber  Int      @default(1)[m
+[31m-  updatedAt   DateTime @updatedAt[m
+[32m+[m[32m  id         Int      @id @default(1)[m
+[32m+[m[32m  nextNumber Int      @default(1)[m
+[32m+[m[32m  updatedAt  DateTime @updatedAt[m
+ }[m
+ [m
+ enum ErrFileKind {[m
+[36m@@ -479,11 +479,11 @@[m [mmodel ErrFile {[m
+   versionNumber  Int[m
+   revisionNumber Int         @default(1)[m
+ [m
+[31m-  filePath     String @unique[m
+[32m+[m[32m  filePath      String  @unique[m
+   storageFolder String?[m
+[31m-  originalName String[m
+[31m-  mimeType     String[m
+[31m-  fileSize     Int[m
+[32m+[m[32m  originalName  String[m
+[32m+[m[32m  mimeType      String[m
+[32m+[m[32m  fileSize      Int[m
+ [m
+   uploadedById String[m
+   createdAt    DateTime @default(now())[m
+[36m@@ -608,13 +608,13 @@[m [mmodel ErrNotification {[m
+ }[m
+ [m
+ model ErrProject {[m
+[31m-  id         String               @id @default(cuid())[m
+[31m-  name       String               @unique[m
+[31m-  country    ErrProjectCountry    @default(KUWAIT)[m
+[32m+[m[32m  id         String            @id @default(cuid())[m
+[32m+[m[32m  name       String            @unique[m
+[32m+[m[32m  country    ErrProjectCountry @default(KUWAIT)[m
+   directorId String?[m
+[31m-  isActive   Boolean              @default(true)[m
+[31m-  createdAt  DateTime             @default(now())[m
+[31m-  updatedAt  DateTime             @updatedAt[m
+[32m+[m[32m  isActive   Boolean           @default(true)[m
+[32m+[m[32m  createdAt  DateTime          @default(now())[m
+[32m+[m[32m  updatedAt  DateTime          @updatedAt[m
+ [m
+   director   User?           @relation("ErrProjectDirectorAccount", fields: [directorId], references: [id], onDelete: Restrict)[m
+   errs       Err[][m

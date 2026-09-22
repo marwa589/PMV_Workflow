@@ -34,7 +34,7 @@ export default async function AdminDashboardPage() {
     documentType: "COMPARISON" | "MATERIAL_REQUISITION";
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
-    currentApprover: { name: string } | null;
+    currentApprover: { id: string; name: string; email: string } | null;
     relatedComparison: { id: string; documentNumber: string } | null;
     currentApproverAssignedAt: Date | null;
     createdAt: Date;
@@ -71,7 +71,7 @@ export default async function AdminDashboardPage() {
     label: string;
     count: number;
     averageDaysPending: number;
-    assignees: { name: string; email: string }[];
+    assignees: { name: string; email: string; count: number }[];
     oldestPendingDocument: { documentNumber: string; title: string } | null;
   }> = [];
   let procurementMetrics = {
@@ -123,7 +123,7 @@ export default async function AdminDashboardPage() {
         orderBy: { createdAt: "desc" },
         take: 12,
         include: {
-          currentApprover: { select: { name: true } },
+          currentApprover: { select: { id: true, name: true, email: true } },
           relatedComparison: { select: { id: true, documentNumber: true } },
         },
       }),
@@ -159,10 +159,15 @@ export default async function AdminDashboardPage() {
         },
         select: {
           id: true,
+          documentNumber: true,
+          title: true,
           status: true,
           documentType: true,
           mrType: true,
           currentApproverAssignedAt: true,
+          createdAt: true,
+          currentApproverId: true,
+          currentApprover: { select: { id: true, name: true, email: true } },
         },
       }),
       prisma.deletionRequest.findMany({
@@ -231,27 +236,23 @@ export default async function AdminDashboardPage() {
       { key: "APPROVED", label: "Approved", status: DocumentStatus.APPROVED },
     ];
 
-    const stageItems = allDocs.map((doc) => {
+    const stageItems = allPendingDocs.map((doc) => {
       const daysPending = doc.currentApproverAssignedAt ? Math.max(0, Math.floor((Date.now() - new Date(doc.currentApproverAssignedAt).getTime()) / (1000 * 60 * 60 * 24))) : 0;
-      const stageKey = doc.status === DocumentStatus.APPROVED
-        ? "APPROVED"
-        : doc.status === DocumentStatus.REVISION_REQUIRED
-          ? "REVISION_REQUIRED"
-          : doc.status === DocumentStatus.PENDING_APPROVER_3
-            ? "APPROVER_3"
-            : doc.status === DocumentStatus.PENDING_APPROVER_2
-              ? "APPROVER_2"
-              : doc.status === DocumentStatus.PENDING_APPROVER_1
-                ? "APPROVER_1"
-                : "DRAFT";
+      const stageKey = doc.status === DocumentStatus.PENDING_APPROVER_3
+        ? "APPROVER_3"
+        : doc.status === DocumentStatus.PENDING_APPROVER_2
+          ? "APPROVER_2"
+          : doc.status === DocumentStatus.PENDING_APPROVER_1
+            ? "APPROVER_1"
+            : "DRAFT";
 
       return {
         id: doc.id,
         documentNumber: doc.documentNumber,
         title: doc.title,
+        currentApproverId: doc.currentApprover?.id ?? null,
         currentApproverName: doc.currentApprover?.name || null,
-        relatedComparisonId: doc.relatedComparison?.id || null,
-        relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
+        currentApproverEmail: doc.currentApprover?.email || null,
         status: doc.status,
         statusLabel: stageKey === "APPROVER_1"
           ? "PMV Engineer"
@@ -259,13 +260,7 @@ export default async function AdminDashboardPage() {
             ? "Workshop Manager"
             : stageKey === "APPROVER_3"
               ? "PMV Manager"
-              : doc.status === DocumentStatus.REVISION_REQUIRED
-                ? "Revision Required"
-                : doc.status === DocumentStatus.APPROVED
-                  ? "Approved"
-                  : doc.status === DocumentStatus.REJECTED
-                    ? "Rejected"
-                    : doc.status.replaceAll("_", " "),
+              : doc.status.replaceAll("_", " "),
         stageKey,
         daysPending,
         createdAtLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
@@ -282,16 +277,29 @@ export default async function AdminDashboardPage() {
         .slice()
         .sort((a, b) => b.daysPending - a.daysPending)[0] ?? null;
 
+      const assigneeMap = new Map<string, { name: string; email: string; count: number }>();
+
+      for (const document of matchingDocuments) {
+        if (!document.currentApproverId || !document.currentApproverName) continue;
+
+        const existing = assigneeMap.get(document.currentApproverId);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          assigneeMap.set(document.currentApproverId, {
+            name: document.currentApproverName,
+            email: document.currentApproverEmail || "",
+            count: 1,
+          });
+        }
+      }
+
       return {
         key: stage.key,
         label: stage.label,
         count: matchingDocuments.length,
         averageDaysPending,
-        assignees: stage.key.startsWith("APPROVER_")
-          ? roleGroups
-              .filter((user) => user.role === stage.key)
-              .map((user) => ({ name: user.name, email: user.email }))
-          : [],
+        assignees: stage.key.startsWith("APPROVER_") ? Array.from(assigneeMap.values()).sort((a, b) => b.count - a.count) : [],
         oldestPendingDocument: oldestPendingDocument
           ? { documentNumber: oldestPendingDocument.documentNumber, title: oldestPendingDocument.title }
           : null,

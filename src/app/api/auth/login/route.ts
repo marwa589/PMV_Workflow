@@ -6,6 +6,7 @@ import {
   createAdminOtpChallenge,
   getValidTrustedDevice,
   isOtpAuthenticationEnabled,
+  isOtpBypassedForDevice,
   isOtpRequiredForUser,
   OTP_CHALLENGE_COOKIE,
   TRUSTED_DEVICE_COOKIE,
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
       where: { email },
     });
 
-    if (!user || !user.isActive) {
+    if (!user) {
       return NextResponse.json({ message: "Invalid credentials." }, { status: 401 });
     }
 
@@ -44,8 +45,10 @@ export async function POST(request: Request) {
     }
 
     if (isOtpAuthenticationEnabled() && isOtpRequiredForUser(user.email)) {
+      const deviceBypassed = isOtpBypassedForDevice(request);
       const trustedDevice = await getValidTrustedDevice(user.id, getCookie(request, TRUSTED_DEVICE_COOKIE));
-      if (!trustedDevice) {
+
+      if (!deviceBypassed && !trustedDevice) {
         try {
           const challengeToken = await createAdminOtpChallenge({
             id: user.id,

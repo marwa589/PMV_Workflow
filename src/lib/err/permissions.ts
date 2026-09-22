@@ -48,6 +48,12 @@ export async function getErrAccess() {
   const isNamedUploader = isErrUploaderAccount(user.name, user.role);
   const isUploader = roles.includes(ErrAccessRole.UPLOADER) || isNamedUploader;
 
+  const isProjectManager = roles.includes(ErrAccessRole.PROJECT_MANAGER);
+
+  const projectManagerProjectIds = accessEntries
+  .filter((entry) => entry.role === ErrAccessRole.PROJECT_MANAGER && entry.projectId)
+  .map((entry) => entry.projectId as string);
+
   const projectDirectorProjectIds = accessEntries
     .filter((e) => e.role === ErrAccessRole.PROJECT_DIRECTOR && e.projectId)
     .map((e) => e.projectId as string);
@@ -84,6 +90,9 @@ export async function getErrAccess() {
 
     isProjectDirector: roles.includes(ErrAccessRole.PROJECT_DIRECTOR),
     projectDirectorProjectIds,
+
+    isProjectManager,
+    projectManagerProjectIds,
 
     isActingCeo: roles.includes(ErrAccessRole.ACTING_CEO),
     isCeo: roles.includes(ErrAccessRole.CEO),
@@ -130,7 +139,12 @@ export function getErrVisibilityWhere(
   }
 
   const conditions: Prisma.ErrWhereInput[] = [];
-
+// project managers retain visibility of ERRs in their assigned projects.
+   if (access.isProjectManager && access.projectManagerProjectIds.length > 0) {
+  conditions.push({
+    projectId: { in: access.projectManagerProjectIds },
+  });
+}
   // Directors retain visibility of their assigned ERRs or projects they direct.
   if (access.isProjectDirector) {
     const directorConds: Prisma.ErrWhereInput[] = [{ projectDirectorId: access.userId }];
@@ -273,11 +287,17 @@ export async function canApproveErr(
 
   switch (err.currentStage) {
     case "PROJECT_DIRECTOR":
-      return (
-        access.isProjectDirector &&
-        (err.projectDirectorId === access.userId ||
-          (err.projectId ? access.projectDirectorProjectIds.includes(err.projectId) : false))
-      );
+  return (
+    (access.isProjectDirector &&
+      (err.projectDirectorId === access.userId ||
+        (err.projectId
+          ? access.projectDirectorProjectIds.includes(err.projectId)
+          : false))) ||
+    (access.isProjectManager &&
+      (err.projectId
+        ? access.projectManagerProjectIds.includes(err.projectId)
+        : false))
+  );
 
     case "PMV_MANAGER":
       return access.isPmvManager;

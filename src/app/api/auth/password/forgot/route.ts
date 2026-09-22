@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getRequestOrigin } from "@/lib/request-origin";
+import { isAllowedRequestOrigin } from "@/lib/request-origin";
 import { sendEmail } from "@/lib/mail";
 import { appConfig } from "@/lib/env";
 
@@ -17,9 +17,7 @@ function acceptedResponse() {
 
 export async function POST(request: Request) {
   // Only allow requests originating from this application.
-  const expectedOrigin = getRequestOrigin(request);
-
-  if (request.headers.get("origin") !== expectedOrigin) {
+  if (!isAllowedRequestOrigin(request)) {
     return NextResponse.json(
       { message: "Request origin is not allowed." },
       { status: 403 },
@@ -105,7 +103,7 @@ export async function POST(request: Request) {
       },
     });
 
-    const resetUrl = new URL("/reset-password", expectedOrigin);
+    const resetUrl = new URL("/reset-password", appConfig.appUrl());
     resetUrl.searchParams.set("token", token);
 
     try {

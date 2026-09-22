@@ -7,7 +7,10 @@ import { saveErrFile } from "@/lib/err/files";
 import { deleteDocumentFiles } from "@/lib/files";
 import { isErrUploaderAccount } from "@/lib/err/uploader-access";
 import { errDocumentStorageFolder } from "@/lib/err-storage";
-import { getRequestOrigin } from "@/lib/request-origin";
+import { isAllowedRequestOrigin } from "@/lib/request-origin";
+import { appConfig } from "@/lib/env";
+import { sendEmail } from "@/lib/mail";
+import { buildApprovalAssignedEmail } from "@/lib/email-templates";
 
 export const runtime = "nodejs";
 
@@ -19,11 +22,11 @@ export async function POST(request: Request) {
   let submissionKey: string | null = null;
   let uploaderId: string | null = null;
   let documentNumber = "";
+  let approverName = "";
+  let approverEmail = "";
 
   try {
-    const appUrl = getRequestOrigin(request);
-
-    if (request.headers.get("origin") !== new URL(appUrl).origin) {
+    if (!isAllowedRequestOrigin(request)) {
       return NextResponse.json(
         { message: "Request origin is not allowed." },
         { status: 403 },
@@ -266,7 +269,7 @@ if (!storageProject) {
               {
                 userAccess: {
                   some: {
-                    role: "PROJECT_DIRECTOR",
+                    role: { in: ["PROJECT_DIRECTOR", "PROJECT_MANAGER"] },
                     isActive: true,
                   },
                 },
@@ -289,12 +292,24 @@ if (!storageProject) {
             id: true,
             name: true,
             directorId: true,
+            director: {
+              select: {
+                id: true,
+                errAccess: {
+                  where: {
+                    role: "PROJECT_DIRECTOR",
+                    isActive: true,
+                  },
+                  select: { id: true },
+                },
+              },
+            },
             userAccess: {
               where: {
-                role: "PROJECT_DIRECTOR",
+                role: { in: ["PROJECT_DIRECTOR", "PROJECT_MANAGER"] },
                 isActive: true,
               },
-              select: { userId: true },
+              select: { userId: true, role: true },
             },
           },
         });
@@ -305,21 +320,33 @@ if (!storageProject) {
           );
         }
 
+        const activeAssignedDirectorId =
+          (project.director?.errAccess.length ? project.directorId : null) ||
+          project.userAccess.find((entry) => entry.role === "PROJECT_DIRECTOR")?.userId ||
+          null;
+        const projectManagerId =
+          project.userAccess.find((entry) => entry.role === "PROJECT_MANAGER")?.userId ||
+          null;
+
         let projectDirectorId: string | null = null;
         if (requestedDirectorId) {
           const isValid =
-            project.directorId === requestedDirectorId ||
-            project.userAccess.some((u) => u.userId === requestedDirectorId);
+            activeAssignedDirectorId === requestedDirectorId ||
+            project.userAccess.some(
+              (u) => u.userId === requestedDirectorId,
+            );
           if (isValid) {
             projectDirectorId = requestedDirectorId;
           }
         }
         if (!projectDirectorId) {
-          projectDirectorId = project.directorId || project.userAccess[0]?.userId || null;
+          projectDirectorId = activeAssignedDirectorId || projectManagerId;
         }
 
         if (!projectDirectorId) {
-          throw new SubmissionError("No active project director is assigned to this project.");
+          throw new SubmissionError(
+            "No active project director or project manager is assigned to this project.",
+          );
         }
 
         await tx.err.create({
@@ -387,13 +414,47 @@ if (!storageProject) {
             emailEnabled: false,
           },
         });
+
+        const approver = await tx.user.findUnique({
+          where: { id: projectDirectorId },
+          select: { name: true, email: true },
+        });
+
+        if (approver?.email) {
+          approverName = approver.name;
+          approverEmail = approver.email;
+        }
       },
       { timeout: 15000 },
     );
 
+    if (approverEmail) {
+      try {
+        const emailContext = {
+          recipientName: approverName,
+          docNumber: documentNumber,
+          title,
+          workflowType: `ERR - ${typeValue}`,
+          projectName: storageProject.name,
+          currentStatus: "PENDING",
+          actorName: access.name,
+          documentUrl: new URL(`/errs/${errId}`, appConfig.appUrl()).toString(),
+        };
+
+        const template = buildApprovalAssignedEmail(emailContext);
+        await sendEmail({
+          to: approverEmail,
+          subject: template.subject,
+          html: template.html,
+        });
+      } catch (emailError) {
+        console.error("ERR approver email could not be sent.", emailError);
+      }
+    }
+
     return NextResponse.json(
       {
-        message: "ERR submitted to the Project Director.",
+        message: "ERR submitted to the selected Project Director or Project Manager.",
         id: errId,
         documentNumber,
       },

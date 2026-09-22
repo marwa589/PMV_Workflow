@@ -1,6 +1,7 @@
 import { EmailEventType, DocumentStatus, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
+import { appConfig } from "@/lib/env";
 import { getPurchaseOrderRecipientIds } from "@/lib/po-access";
 
 const EMAIL_DELAY_MS = 10 * 60 * 1000;
@@ -172,7 +173,7 @@ export async function queuePendingApprovalReminders() {
 
 export async function queueComparisonMrReminders() {
   const admins = await prisma.user.findMany({
-    where: { role: UserRole.ADMIN, isActive: true },
+    where: { role: UserRole.ADMIN },
     select: { id: true },
   });
   if (admins.length === 0) return 0;
@@ -236,6 +237,7 @@ function summaryForType(type: EmailEventType) {
 }
 
 function renderSummary(counts: Record<string, number>) {
+  const appUrl = appConfig.appUrl();
   const lines = [
     counts.approved ? `<p>Approved documents: ${counts.approved}</p>` : "",
     counts.rejected ? `<p>Rejected documents: ${counts.rejected}</p>` : "",
@@ -249,6 +251,7 @@ function renderSummary(counts: Record<string, number>) {
     <div style="font-family: Arial, sans-serif; line-height: 1.6;">
       <p>You have workflow updates requiring your attention.</p>
       ${lines}
+      <p>Application URL: <a href="${appUrl}">${appUrl}</a></p>
       <p>Please log in to review them.</p>
     </div>
   `;
@@ -356,3 +359,4 @@ export async function flushWorkflowEmailBatches() {
 
   return sentCount;
 }
+

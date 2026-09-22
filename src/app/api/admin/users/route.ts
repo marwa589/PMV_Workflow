@@ -466,4 +466,3 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ message: "Unable to delete the user." }, { status: 500 });
   }
 }
->>>>>>> origin/errs-pos

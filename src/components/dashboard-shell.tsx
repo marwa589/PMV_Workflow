@@ -474,15 +474,15 @@ export default function DashboardShell({
 
         {menuOpen && (
           <div className="fixed inset-0 z-40 flex lg:hidden">
+            <div className="h-full shadow-2xl">
+              <Sidebar role={role} userName={userName} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader} />
+            </div>
             <button
               type="button"
               aria-label="Close menu"
               onClick={() => setMenuOpen(false)}
               className="flex-1 bg-slate-900/40"
             />
-            <div className="h-full shadow-2xl">
-              <Sidebar role={role} userName={userName} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader} />
-            </div>
           </div>
         )}
 

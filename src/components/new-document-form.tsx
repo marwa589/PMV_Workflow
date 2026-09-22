@@ -75,11 +75,7 @@ function FileTypeIcon({ file }: { file: File | null }) {
   }
 }
 
-type ErrDirector = { projectId: string; directorId?: string; name: string; projectName: string; country?: string };
-
-type ErrProjectOption = Pick<ErrDirector, "projectId" | "projectName" | "country"> & {
-  directorNames: string[];
-};
+type ErrDirector = { projectId: string; directorId?: string; name: string; projectName: string; country?: string; accessRole?: "PROJECT_DIRECTOR" | "PROJECT_MANAGER" };
 
 export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDirectors = [], errOnly = false }: { defaultRedirectPath?: string; errDirectors?: ErrDirector[]; errOnly?: boolean }) {
   const router = useRouter();
@@ -112,29 +108,6 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
       type: file.type || "Unknown MIME type",
     }));
   }, [selectedFiles]);
-
-  const errProjectOptions = useMemo<ErrProjectOption[]>(
-    () => Array.from(
-      errDirectors.reduce((projects, director) => {
-        const existing = projects.get(director.projectId);
-        if (existing) {
-          if (!existing.directorNames.includes(director.name)) {
-            existing.directorNames.push(director.name);
-          }
-          return projects;
-        }
-
-        projects.set(director.projectId, {
-          projectId: director.projectId,
-          projectName: director.projectName,
-          country: director.country,
-          directorNames: [director.name],
-        });
-        return projects;
-      }, new Map<string, ErrProjectOption>()).values(),
-    ),
-    [errDirectors],
-  );
 
   function handleFileSelection(files: FileList | File[] | null) {
     const incomingFiles = Array.from(files ?? []);
@@ -560,20 +533,18 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                   </div>
                 </div>
                 <div>
-                  <label htmlFor="err-project" className="mb-2 block text-sm font-medium text-slate-700">Project Director and Project <span className="text-rose-600">*</span></label>
+                  <label htmlFor="err-project" className="mb-2 block text-sm font-medium text-slate-700">Project Director or Project Manager <span className="text-rose-600">*</span></label>
                   <select id="err-project" value={errProjectId} onChange={(event) => setErrProjectId(event.target.value)} className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-500">
-                    <option value="">Select a project</option>
-                    {errProjectOptions.map((project) => {
-                      return (
-                        <option key={project.projectId} value={project.projectId}>
-                          {project.directorNames.join(", ")} - {project.projectName}
-                        </option>
-                      );
-                    })}
+                    <option value="">Select a project approver</option>
+                    {errDirectors.map((director) => (
+                      <option key={`${director.projectId}::${director.directorId}`} value={`${director.projectId}::${director.directorId}`}>
+                        {director.name} - {director.accessRole === "PROJECT_MANAGER" ? "Project Manager" : "Project Director"} - {director.projectName}
+                      </option>
+                    ))}
                   </select>
                   {errProjectId ? (
                     <div className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700 border border-blue-200">
-                      <span className="font-medium">Country:</span> {errProjectOptions.find((project) => project.projectId === errProjectId)?.country || "KUWAIT"}
+                      <span className="font-medium">Country:</span> {errDirectors.find((director) => `${director.projectId}::${director.directorId}` === errProjectId)?.country || "KUWAIT"}
                     </div>
                   ) : null}
                 </div>

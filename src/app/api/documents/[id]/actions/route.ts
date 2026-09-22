@@ -11,6 +11,7 @@ import { runInBackground } from "@/lib/background";
 import { canAccessMrModuleForSession } from "@/lib/auth/resource-access";
 import { resolveNextWorkflowStepForApproval } from "@/lib/document-workflow-config";
 import { documentStorageFolder } from "@/lib/storage-layout";
+import { appConfig } from "@/lib/env";
 
 export const runtime = "nodejs";
 
@@ -190,7 +191,7 @@ export async function POST(
 
         if (routing.targetRole) {
           const targetApprover = await tx.user.findFirst({
-            where: { role: routing.targetRole, isActive: true },
+            where: { role: routing.targetRole},
             select: { id: true },
           });
 
@@ -335,8 +336,6 @@ export async function POST(
             firstFilePath: comparisonVersion.filePath,
             secondFilePath: saved.relativePath,
             fileName: `${document.mrNumber || document.documentNumber} - ${document.title} + ${comparison.title}`,
-<<<<<<< HEAD
-=======
             storageFolder: saved.storageFolder || documentStorageFolder({
               uploaderEmail: document.createdBy?.email ?? "",
               location: document.createdBy?.location ?? undefined,
@@ -344,7 +343,6 @@ export async function POST(
               mrType: document.mrType ?? null,
               hasLinkedComparison: true,
             }) || undefined,
->>>>>>> origin/errs-pos
           });
           finalFilePath = merged.relativePath;
           finalOriginalName = `${document.mrNumber || document.documentNumber} - ${document.title} + ${comparison.title}.pdf`;
@@ -388,7 +386,7 @@ export async function POST(
         }
       } else if (workflow.nextApproverRole) {
         const nextApprover = await tx.user.findFirst({
-          where: { role: workflow.nextApproverRole, isActive: true },
+          where: { role: workflow.nextApproverRole},
           select: { id: true },
         });
 
@@ -668,7 +666,7 @@ export async function POST(
 
     console.info(`[actions] Queueing completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
 
-    const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const appUrl = appConfig.appUrl();
 
     const getDocumentTypeLabel = (document: {
       documentType?: string | null;

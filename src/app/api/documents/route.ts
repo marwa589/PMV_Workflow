@@ -119,20 +119,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "PMV Manager account is missing." }, { status: 400 });
   }
 
-<<<<<<< HEAD
-  // MRS ALSO APPROVER 2
-  const requiresApprover2 = documentType ==='MATERIAL_REQUISITION' || (documentType === "COMPARISON" && comparisonType === "SPARE_PARTS");
-  const initialApprover = requiresApprover2 ? approver2 : approver3;
-
-  if (!initialApprover) {
-    return NextResponse.json({ message: requiresApprover2 ? "Workshop Manager account is missing for Spare Parts comparisons." : "PMV Manager account is missing." }, { status: 400 });
-=======
   const initialApprover = configuredWorkflow?.approverId ? configuredWorkflow.approver : requiresApprover1 ? approver1 : requiresApprover2 ? approver2 : approver3;
   const initialStatus = configuredWorkflow?.status ?? (requiresApprover1 ? DocumentStatus.PENDING_APPROVER_1 : requiresApprover2 ? DocumentStatus.PENDING_APPROVER_2 : DocumentStatus.PENDING_APPROVER_3);
 
   if (!initialApprover) {
     return NextResponse.json({ message: "Initial approver account is missing." }, { status: 400 });
->>>>>>> origin/errs-pos
   }
 
   try {

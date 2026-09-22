@@ -48,6 +48,9 @@ export function getErrViewWhere(
     const stages: ErrStage[] = [];
 
     if (access.isProjectDirector) stages.push("PROJECT_DIRECTOR" as const);
+    if (access.isProjectManager && !access.isProjectDirector) {
+      stages.push("PROJECT_DIRECTOR" as const);
+    }
     if (access.isPmvManager) stages.push("PMV_MANAGER" as const);
     if (access.isActingCeo) stages.push("ACTING_CEO" as const);
     if (access.isCeo) stages.push("CEO" as const);

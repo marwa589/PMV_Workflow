@@ -73,30 +73,11 @@ export async function getDocumentsForClerk(userId: string) {
         status: { in: [DocumentStatus.PENDING_APPROVER_1, DocumentStatus.PENDING_APPROVER_2, DocumentStatus.PENDING_APPROVER_3] },
       },
     }),
-<<<<<<< HEAD
-    prisma.document.count({ where: { status: DocumentStatus.APPROVED } }),
-    prisma.document.count({ where: { status: DocumentStatus.REJECTED } }),
-    prisma.document.findMany({
-      where: { status: DocumentStatus.REJECTED },
-      include: {
-        currentApprover: { select: { name: true } },
-        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
-        approvals: {
-          where: { action: ApprovalActionType.REJECTED },
-          orderBy: { performedAt: "desc" },
-          take: 1,
-          include: { performedBy: { select: { name: true } } },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-=======
     prisma.document.count({ where: { ...whereClause, status: DocumentStatus.APPROVED } }),
     prisma.document.count({ where: { ...whereClause, status: DocumentStatus.REJECTED } }),
->>>>>>> origin/errs-pos
   ]);
 
-  return { documents, total, pending, approved, rejected, rejectedDocuments };
+  return { documents, total, pending, approved, rejected};
 }
 
 export async function getDocumentsForApprover(userId: string, role: UserRole, userName: string) {

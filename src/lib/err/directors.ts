@@ -27,7 +27,7 @@ export async function getErrProjectDirectors() {
         {
           userAccess: {
             some: {
-              role: ErrAccessRole.PROJECT_DIRECTOR,
+              role: { in: [ErrAccessRole.PROJECT_DIRECTOR, ErrAccessRole.PROJECT_MANAGER] },
               isActive: true,
             },
           },
@@ -59,10 +59,11 @@ export async function getErrProjectDirectors() {
       },
       userAccess: {
         where: {
-          role: ErrAccessRole.PROJECT_DIRECTOR,
+          role: { in: [ErrAccessRole.PROJECT_DIRECTOR, ErrAccessRole.PROJECT_MANAGER] },
           isActive: true,
         },
         select: {
+          role: true,
           user: {
             select: {
               id: true,
@@ -85,17 +86,18 @@ export async function getErrProjectDirectors() {
     email: string;
     projectName: string;
     country: string;
+    accessRole: "PROJECT_DIRECTOR" | "PROJECT_MANAGER";
   }> = [];
 
   for (const project of projects) {
-    const directorsMap = new Map<string, { id: string; name: string; email: string }>();
+    const directorsMap = new Map<string, { id: string; name: string; email: string; accessRole: "PROJECT_DIRECTOR" | "PROJECT_MANAGER" }>();
     if (project.director) {
-      directorsMap.set(project.director.id, project.director);
+      directorsMap.set(project.director.id, { ...project.director, accessRole: ErrAccessRole.PROJECT_DIRECTOR });
     }
-    const accessEntries = (project as { userAccess?: Array<{ user?: { id: string; name: string; email: string } | null }> }).userAccess || [];
+    const accessEntries = (project as { userAccess?: Array<{ role: "PROJECT_DIRECTOR" | "PROJECT_MANAGER"; user?: { id: string; name: string; email: string } | null }> }).userAccess || [];
     for (const accessEntry of accessEntries) {
       if (accessEntry.user) {
-        directorsMap.set(accessEntry.user.id, accessEntry.user);
+        directorsMap.set(accessEntry.user.id, { ...accessEntry.user, accessRole: accessEntry.role });
       }
     }
 
@@ -107,6 +109,7 @@ export async function getErrProjectDirectors() {
         email: director.email,
         projectName: project.name,
         country: project.country,
+        accessRole: director.accessRole as "PROJECT_DIRECTOR" | "PROJECT_MANAGER",
       });
     }
   }

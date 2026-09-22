@@ -416,6 +416,12 @@ enum ErrStage {
   CEO
 }
 
+enum ErrApprovalPath {
+  FINALIZE
+  ACTING_CEO
+  ACTING_CEO_THEN_CEO
+}
+
 model Err {
   id             String    @id @default(cuid())
   documentNumber String    @unique
@@ -425,6 +431,7 @@ model Err {
   type           ErrType
   status         ErrStatus @default(PENDING)
   currentStage   ErrStage  @default(PROJECT_DIRECTOR)
+  nextApprovalPath ErrApprovalPath?
 
   createdById               String
   projectDirectorId         String
@@ -542,6 +549,7 @@ model ErrApprovalHistory {
 enum ErrAccessRole {
   UPLOADER
   PROJECT_DIRECTOR
+  PROJECT_MANAGER
   ACTING_CEO
   CEO
   VIEWER

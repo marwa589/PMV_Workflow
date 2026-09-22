@@ -14,6 +14,7 @@ import {
 import { getNextErrStage, resolveErrApprover } from "@/lib/err/workflow";
 import { projectStorageFolderFromFile } from "@/lib/err-storage";
 import { getRequestOrigin } from "@/lib/request-origin";
+import { appConfig } from "@/lib/env";
 import { sendEmail } from "@/lib/mail";
 import {
   buildDocumentRejectedEmail,
@@ -27,7 +28,7 @@ export const runtime = "nodejs";
 class ErrActionError extends Error {}
 
 type Decision = "APPROVE" | "REJECT" | "COMMENT" | "HOLD";
-type ApprovalRoute = "FINALIZE" | "ACTING_CEO" | "CEO";
+type ApprovalRoute = "FINALIZE" | "ACTING_CEO" | "ACTING_CEO_THEN_CEO";
 
 export async function POST(
   request: Request,
@@ -155,6 +156,7 @@ export async function POST(
           type: true,
           status: true,
           currentStage: true,
+          nextApprovalPath: true,
           currentApproverId: true,
           createdById: true,
           projectDirectorId: true,
@@ -231,14 +233,16 @@ export async function POST(
           throw new ErrActionError("A signed PDF is required to approve this ERR.");
         }
 
-        if ((err.currentStage === "PMV_MANAGER" || err.currentStage === "ACTING_CEO" || err.currentStage === "CEO") && !approvalRoute) {
-          throw new ErrActionError("Select an approval path before approving this ERR.");
-        }
-
-        const selectedRoute: ApprovalRoute = err.currentStage === "PMV_MANAGER"
-          ? approvalRoute === "ACTING_CEO" ? "ACTING_CEO" : "FINALIZE"
+        const pendingRoute = err.currentStage === "PMV_MANAGER"
+          ? approvalRoute || "FINALIZE"
           : err.currentStage === "ACTING_CEO"
-            ? approvalRoute === "CEO" ? "CEO" : "FINALIZE"
+            ? err.nextApprovalPath || "FINALIZE"
+            : "FINALIZE";
+
+        const selectedRoute: ApprovalRoute = pendingRoute === "ACTING_CEO_THEN_CEO"
+          ? "ACTING_CEO_THEN_CEO"
+          : pendingRoute === "ACTING_CEO"
+            ? "ACTING_CEO"
             : "FINALIZE";
 
         const outputFile = latestErrPdf
@@ -271,9 +275,9 @@ export async function POST(
             });
 
         const nextStage = err.currentStage === "PMV_MANAGER"
-          ? selectedRoute === "ACTING_CEO" ? "ACTING_CEO" : null
+          ? selectedRoute === "ACTING_CEO" || selectedRoute === "ACTING_CEO_THEN_CEO" ? "ACTING_CEO" : null
           : err.currentStage === "ACTING_CEO"
-            ? selectedRoute === "CEO" ? "CEO" : null
+            ? selectedRoute === "ACTING_CEO_THEN_CEO" ? "CEO" : null
             : err.currentStage === "CEO"
               ? null
               : getNextErrStage(err.type, err.currentStage);
@@ -302,6 +306,13 @@ export async function POST(
           data: {
             status: nextStatus,
             currentStage: nextStageValue,
+            nextApprovalPath: err.currentStage === "PMV_MANAGER"
+              ? selectedRoute === "ACTING_CEO" || selectedRoute === "ACTING_CEO_THEN_CEO"
+                ? selectedRoute
+                : null
+              : err.currentStage === "ACTING_CEO"
+                ? null
+                : err.nextApprovalPath,
             currentApproverId: nextApproverId,
             currentApproverAssignedAt: nextApproverId ? now : null,
             approvedAt,
@@ -313,11 +324,13 @@ export async function POST(
           data: {
             errId: err.id,
             performedById: access.userId,
-            action: selectedRoute === "ACTING_CEO"
-              ? "ESCALATED_TO_ACTING_CEO"
-              : selectedRoute === "CEO"
+            action: err.currentStage === "PROJECT_DIRECTOR"
+              ? "APPROVED"
+              : err.currentStage === "ACTING_CEO" && selectedRoute === "ACTING_CEO_THEN_CEO"
                 ? "ESCALATED_TO_CEO"
-                : "FINALIZED_APPROVAL",
+                : selectedRoute === "ACTING_CEO" || selectedRoute === "ACTING_CEO_THEN_CEO"
+                  ? "ESCALATED_TO_ACTING_CEO"
+                  : "FINALIZED_APPROVAL",
             stage: err.currentStage,
             comments: comments || null,
             revisionNumber: err.revisionNumber,
@@ -356,7 +369,7 @@ export async function POST(
           status: nextStatus,
           message: nextStage
             ? "ERR advanced to the next approval stage."
-            : "ERR approved.",
+            : "ERR finalized and approved.",
         };
       }
 
@@ -463,7 +476,7 @@ export async function POST(
             projectName: uploader.projectNameSnapshot,
             currentStatus: result.status,
             actorName: access.name,
-            documentUrl: `${getRequestOrigin(request)}/errs/${id}`,
+            documentUrl: new URL(`/errs/${id}`, appConfig.appUrl()).toString(),
           };
           const template = result.status === "APPROVED"
             ? buildFinalApprovalEmail(emailContext)

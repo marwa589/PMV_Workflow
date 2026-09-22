@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { hash } from "bcryptjs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getRequestOrigin } from "@/lib/request-origin";
+import { isAllowedRequestOrigin } from "@/lib/request-origin";
 import { clearSessionCookie } from "@/lib/auth/session";
 import {
   OTP_CHALLENGE_COOKIE,
@@ -24,9 +24,7 @@ function invalidLinkResponse() {
 
 export async function POST(request: Request) {
   try {
-    const expectedOrigin = getRequestOrigin(request);
-
-    if (request.headers.get("origin") !== expectedOrigin) {
+    if (!isAllowedRequestOrigin(request)) {
       return NextResponse.json(
         { message: "Request origin is not allowed." },
         { status: 403 },
