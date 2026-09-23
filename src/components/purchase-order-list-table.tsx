@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 type PurchaseOrderRow = {
@@ -13,7 +14,7 @@ type PurchaseOrderRow = {
   receivedAt: string | null;
   receivedByName: string | null;
   receivedByEmail: string | null;
-  linkedMrs: Array<{ id: string; documentNumber: string }>;
+  linkedMrs: Array<{ id: string; documentNumber: string; title: string }>;
 };
 
 export default function PurchaseOrderListTable({
@@ -30,11 +31,31 @@ export default function PurchaseOrderListTable({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const searchParams = useSearchParams();
   const [receivedIds, setReceivedIds] = useState(() => new Set(
     purchaseOrders.filter((po) => po.receivedAt).map((po) => po.id),
   ));
+  const searchQuery = (searchParams.get("search") || "").trim().toLowerCase();
+  const visiblePurchaseOrders = useMemo(() => {
+    const terms = searchQuery.split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return purchaseOrders;
 
-  const allSelected = purchaseOrders.length > 0 && selectedIds.length === purchaseOrders.length;
+    return purchaseOrders.filter((po) => {
+      const searchableText = [
+        po.poNumber,
+        po.originalName,
+        po.description,
+        ...po.linkedMrs.flatMap((mr) => [mr.documentNumber, mr.title]),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return terms.every((term) => searchableText.includes(term));
+    });
+  }, [purchaseOrders, searchQuery]);
+
+  const allSelected = visiblePurchaseOrders.length > 0 && selectedIds.length === visiblePurchaseOrders.length;
 
   function toggle(id: string) {
     setSelectedIds((current) =>
@@ -104,7 +125,7 @@ export default function PurchaseOrderListTable({
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-5 py-3">
         <button
           type="button"
-          onClick={() => setSelectedIds(purchaseOrders.map((po) => po.id))}
+          onClick={() => setSelectedIds(visiblePurchaseOrders.map((po) => po.id))}
           className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
         >
           Select all
@@ -154,7 +175,7 @@ export default function PurchaseOrderListTable({
                 <input
                   type="checkbox"
                   checked={allSelected}
-                  onChange={() => setSelectedIds(allSelected ? [] : purchaseOrders.map((po) => po.id))}
+                  onChange={() => setSelectedIds(allSelected ? [] : visiblePurchaseOrders.map((po) => po.id))}
                   className="h-4 w-4 rounded border-slate-300"
                 />
               </th>
@@ -169,7 +190,7 @@ export default function PurchaseOrderListTable({
             </tr>
           </thead>
           <tbody>
-            {purchaseOrders.map((po) => (
+            {visiblePurchaseOrders.map((po) => (
               <tr key={po.id} className="border-t border-slate-100">
                 <td className="px-3 py-4">
                   <input
@@ -232,6 +253,13 @@ export default function PurchaseOrderListTable({
                 </td>
               </tr>
             ))}
+            {visiblePurchaseOrders.length === 0 ? (
+              <tr>
+                <td colSpan={9} className="px-5 py-8 text-center text-sm text-slate-500">
+                  No matching purchase orders.
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>

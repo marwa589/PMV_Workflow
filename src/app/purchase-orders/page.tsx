@@ -36,7 +36,7 @@ export default async function PurchaseOrdersPage() {
       include: {
         uploadedBy: { select: { name: true } },
         receivedBy: { select: { name: true, email: true } },
-        mrLinks: { include: { document: { select: { id: true, documentNumber: true } } } },
+        mrLinks: { include: { document: { select: { id: true, documentNumber: true, title: true } } } },
       },
     }),
   ]);
@@ -85,6 +85,7 @@ export default async function PurchaseOrdersPage() {
               linkedMrs: po.mrLinks.map((link) => ({
                 id: link.document.id,
                 documentNumber: link.document.documentNumber,
+                title: link.document.title,
               })),
             }))}
             canMarkReceived={isMuneer(session)}
