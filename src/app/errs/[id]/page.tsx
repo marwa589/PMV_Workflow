@@ -6,6 +6,7 @@ import StatusBadge from "@/components/status-badge";
 import ErrVoucherModal from "@/components/err-voucher-modal";
 import {
   canApproveErr,
+  canViewErrQuotation,
   canUploadErrVoucher,
   getErrVisibilityWhere,
   requireErrAccess,
@@ -156,7 +157,7 @@ export default async function ErrDetailsPage({ params }: Props) {
 
   const visibleFiles = err.files.filter((file) => {
     if (file.kind === "QUOTATION") {
-      return access.isUploader || access.isAdmin || access.isPmvManager;
+      return canViewErrQuotation(access);
     }
     if (file.kind === "RELEASE_VOUCHER" || file.kind === "RECEIPT_VOUCHER") {
       return true;

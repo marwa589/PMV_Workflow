@@ -157,7 +157,18 @@ export default async function ApproverDashboardPage() {
             currentStage: session.role === UserRole.APPROVER_3 ? "PMV_MANAGER" : undefined,
             currentApproverId: session.role === UserRole.APPROVER_3 ? undefined : session.userId,
           },
-          select: { id: true, documentNumber: true, title: true, createdAt: true },
+          select: {
+            id: true,
+            documentNumber: true,
+            title: true,
+            createdAt: true,
+            files: {
+              where: { kind: "QUOTATION" },
+              orderBy: { versionNumber: "desc" },
+              take: 1,
+              select: { originalName: true },
+            },
+          },
           orderBy: { createdAt: "desc" },
         })
       : [];
@@ -187,6 +198,7 @@ export default async function ApproverDashboardPage() {
         uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
         relatedComparisonId: null,
         relatedComparisonDocumentNumber: null,
+        quotationFileName: doc.files[0]?.originalName ?? null,
       })),
     ];
     if (session.role === UserRole.APPROVER_3) {
@@ -255,7 +267,7 @@ export default async function ApproverDashboardPage() {
           <h3 className="text-base font-semibold text-slate-900">Pending Approvals</h3>
         </div>
         <div className="px-1 py-4">
-          <ApproverPendingTable documents={pendingDocuments} />
+          <ApproverPendingTable documents={pendingDocuments} showQuotation={session.role === UserRole.APPROVER_3} />
         </div>
       </section>
 

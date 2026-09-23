@@ -124,7 +124,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
         ) : null}
         {document.documentType === "MATERIAL_REQUISITION" && document.status === DocumentStatus.APPROVED && isOmar(session) ? (
           <PurchaseOrderUpload
-            approvedMrs={[{ id: document.id, documentNumber: document.documentNumber, title: document.title, mrNumber: document.mrNumber }]}
+            approvedMrs={[{ id: document.id, documentNumber: document.documentNumber, title: document.title, mrNumber: document.mrNumber, fileName: document.versions[0]?.originalName }]}
             initialMrId={document.id}
             showMrSelection={false}
           />

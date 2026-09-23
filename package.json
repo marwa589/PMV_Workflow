@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:seed": "node prisma/seed.mjs"
+    "db:seed": "node prisma/seed.mjs",
+    "users:password-preview": "node scripts/preview-user-passwords.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

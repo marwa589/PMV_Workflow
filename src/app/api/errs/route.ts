@@ -11,6 +11,7 @@ import { isAllowedRequestOrigin } from "@/lib/request-origin";
 import { appConfig } from "@/lib/env";
 import { sendEmail } from "@/lib/mail";
 import { buildApprovalAssignedEmail } from "@/lib/email-templates";
+import { runInBackground } from "@/lib/background";
 
 export const runtime = "nodejs";
 
@@ -429,27 +430,29 @@ if (!storageProject) {
     );
 
     if (approverEmail) {
-      try {
-        const emailContext = {
-          recipientName: approverName,
-          docNumber: documentNumber,
-          title,
-          workflowType: `ERR - ${typeValue}`,
-          projectName: storageProject.name,
-          currentStatus: "PENDING",
-          actorName: access.name,
-          documentUrl: new URL(`/errs/${errId}`, appConfig.appUrl()).toString(),
-        };
+      runInBackground(async () => {
+        try {
+          const emailContext = {
+            recipientName: approverName,
+            docNumber: documentNumber,
+            title,
+            workflowType: `ERR - ${typeValue}`,
+            projectName: storageProject.name,
+            currentStatus: "PENDING",
+            actorName: access.name,
+            documentUrl: new URL(`/errs/${errId}`, appConfig.appUrl()).toString(),
+          };
 
-        const template = buildApprovalAssignedEmail(emailContext);
-        await sendEmail({
-          to: approverEmail,
-          subject: template.subject,
-          html: template.html,
-        });
-      } catch (emailError) {
-        console.error("ERR approver email could not be sent.", emailError);
-      }
+          const template = buildApprovalAssignedEmail(emailContext);
+          await sendEmail({
+            to: approverEmail,
+            subject: template.subject,
+            html: template.html,
+          });
+        } catch (emailError) {
+          console.error("ERR approver email could not be sent.", emailError);
+        }
+      });
     }
 
     return NextResponse.json(

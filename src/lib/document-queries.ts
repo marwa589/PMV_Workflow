@@ -1,7 +1,7 @@
 import { ApprovalActionType, DocumentStatus, ErrStatus, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getModuleVisibility } from "@/lib/auth/module-visibility";
-import { isErroUser } from "@/lib/auth/resource-access";
+import { isRestrictedClerk } from "@/lib/auth/resource-access";
 
 export async function getPurchaseOrderStatuses(documentIds: string[]) {
   if (documentIds.length === 0) return new Map<string, boolean>();
@@ -48,8 +48,8 @@ export async function getDocumentsForClerk(userId: string) {
     select: { id: true, name: true, email: true, role: true },
   });
 
-  const isErro = user ? isErroUser(user) : false;
-  const whereClause = isErro ? { createdById: userId } : {};
+  const isRestricted = user ? isRestrictedClerk(user) : false;
+  const whereClause = isRestricted ? { createdById: userId } : {};
 
   const [documents, total, pending, approved, rejected] = await Promise.all([
     prisma.document.findMany({
@@ -192,6 +192,12 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
         currentApproverId: true,
         currentApprover: { select: { name: true } },
         createdAt: true,
+        files: {
+          where: { kind: "QUOTATION" },
+          orderBy: { versionNumber: "desc" },
+          take: 1,
+          select: { originalName: true },
+        },
       },
       orderBy: { createdAt: "desc" },
     }) : Promise.resolve([]),

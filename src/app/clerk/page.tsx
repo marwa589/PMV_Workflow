@@ -4,7 +4,7 @@ import DashboardShell from "@/components/dashboard-shell";
 import DocumentListTable from "@/components/document-list-table";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
-import { isErroUser } from "@/lib/auth/resource-access";
+import { isRestrictedClerk } from "@/lib/auth/resource-access";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -12,8 +12,8 @@ export const dynamic = "force-dynamic";
 export default async function ClerkDashboardPage() {
   const session = await requireRole([UserRole.CLERK]);
 
-  const isErro = isErroUser(session);
-  const clerkWhere = isErro ? { createdById: session.userId } : {};
+  const isRestricted = isRestrictedClerk(session);
+  const clerkWhere = isRestricted ? { createdById: session.userId } : {};
 
   let totalDocuments = 0;
   let recentDocuments: {
@@ -93,7 +93,7 @@ export default async function ClerkDashboardPage() {
 
   const pendingDocuments = recentDocuments.filter((doc) => doc.status === DocumentStatus.PENDING_APPROVER_1 || doc.status === DocumentStatus.PENDING_APPROVER_2 || doc.status === DocumentStatus.PENDING_APPROVER_3);
 
-  if (isErro) {
+  if (isRestricted) {
   return (
     <DashboardShell role={session.role} userName={session.name} title="Dashboard" subtitle="Submit and track document workflows">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">

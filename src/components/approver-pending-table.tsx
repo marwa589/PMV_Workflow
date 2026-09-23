@@ -14,9 +14,10 @@ type PendingDocument = {
   uploadedAt: string;
   relatedComparisonId?: string | null;
   relatedComparisonDocumentNumber?: string | null;
+  quotationFileName?: string | null;
 };
 
-export default function ApproverPendingTable({ documents }: { documents: PendingDocument[] }) {
+export default function ApproverPendingTable({ documents, showQuotation }: { documents: PendingDocument[]; showQuotation: boolean }) {
   const router = useRouter();
   const [visibleCount, setVisibleCount] = useState(10);
 
@@ -42,6 +43,7 @@ export default function ApproverPendingTable({ documents }: { documents: Pending
             <th className="px-5 py-3 font-semibold">Document Number</th>
             <th className="px-5 py-3 font-semibold">Title</th>
             <th className="px-5 py-3 font-semibold">Type</th>
+            {showQuotation ? <th className="px-5 py-3 font-semibold">Quotation</th> : null}
             <th className="px-5 py-3 font-semibold">Related Comparison</th>
             <th className="px-5 py-3 font-semibold">Current Version</th>
             <th className="px-5 py-3 font-semibold">Date</th>
@@ -67,10 +69,15 @@ export default function ApproverPendingTable({ documents }: { documents: Pending
                     {document.title}
                   </Link>
                 </td>
-                <td className="px-5 py-4">
+                {showQuotation ? <td className="px-5 py-4">
                   <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
                     {getDocumentTypeLabel(document)}
                   </span>
+                </td> : null}
+                <td className="px-5 py-4">
+                  {document.documentType === "ERR" && document.quotationFileName ? (
+                    <a href={`/api/errs/${document.id}/download?kind=QUOTATION&inline=1`} target="_blank" rel="noopener noreferrer" className="font-medium text-cyan-700 hover:underline">Open Quotation</a>
+                  ) : "—"}
                 </td>
                 <td className="px-5 py-4">
                   {document.relatedComparisonId && document.relatedComparisonDocumentNumber ? (

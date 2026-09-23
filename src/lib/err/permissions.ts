@@ -111,6 +111,10 @@ export type ErrAccess = NonNullable<
   Awaited<ReturnType<typeof getErrAccess>>
 >;
 
+export function canViewErrQuotation(access: ErrAccess): boolean {
+  return !access.isProjectDirector && !access.isProjectManager;
+}
+
 export async function requireErrAccess() {
   const access = await getErrAccess();
 

@@ -31,6 +31,7 @@ type DocumentReviewEditorProps = {
   errStage?: "PROJECT_DIRECTOR" | "PMV_MANAGER" | "ACTING_CEO" | "CEO";
   hasSignature: boolean;
   allowNoSignature?: boolean;
+  allowQuotationUpload?: boolean;
   downloadUrl?: string;
   actionUrl?: string;
   returnUrl?: string;
@@ -44,6 +45,7 @@ export default function DocumentReviewEditor({
   errStage,
   hasSignature,
   allowNoSignature = false,
+  allowQuotationUpload = false,
   downloadUrl = `/api/documents/${documentId}/download`,
   actionUrl = `/api/documents/${documentId}/actions`,
   returnUrl = "/approver/pending-approvals",
@@ -72,6 +74,7 @@ export default function DocumentReviewEditor({
   const [decision, setDecision] = useState<"APPROVE" | "REJECT" | "COMMENT" | "HOLD">("APPROVE");
   const [approvalRoute, setApprovalRoute] = useState<"FINALIZE" | "ACTING_CEO" | "ACTING_CEO_THEN_CEO">("FINALIZE");
   const [comments, setComments] = useState("");
+  const [quotationFile, setQuotationFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -296,6 +299,7 @@ export default function DocumentReviewEditor({
       formData.set("decision", decision);
       if (errStage) formData.set("approvalRoute", approvalRoute);
       formData.set("comments", comments);
+      if (allowQuotationUpload && quotationFile) formData.set("quotation", quotationFile);
       if (decision === "APPROVE") {
         const pdfBytes = pdfBytesRef.current;
         const coordinatePdf = pdfJsDocumentRef.current;
@@ -426,6 +430,12 @@ export default function DocumentReviewEditor({
                   <option value="ACTING_CEO">Send to Acting CEO</option>
                   <option value="ACTING_CEO_THEN_CEO">Send to Acting CEO then CEO</option>
                 </select>
+              </div>
+            ) : null}
+            {allowQuotationUpload ? (
+              <div className="min-w-60 flex-1">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600" htmlFor="review-quotation">Additional quotation</label>
+                <input id="review-quotation" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => setQuotationFile(event.target.files?.[0] || null)} disabled={saving} className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm" />
               </div>
             ) : null}
             <div className="min-w-72 flex-[2]">

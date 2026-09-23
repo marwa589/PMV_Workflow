@@ -159,6 +159,12 @@ export default async function ErrPage({ searchParams }: PageProps) {
       currentStage: true,
       currentApproverId: true,
       createdAt: true,
+      files: {
+        where: { kind: "QUOTATION" },
+        orderBy: { versionNumber: "desc" },
+        take: 1,
+        select: { originalName: true },
+      },
       projectDirector: {
         select: {
           name: true,
@@ -228,6 +234,7 @@ export default async function ErrPage({ searchParams }: PageProps) {
           userId={access.userId}
           canDelete={access.isAdmin}
           canRequestDeletion={access.isUploader}
+          showQuotation={access.isPmvManager || access.isActingCeo || access.isCeo}
         />
 
         <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">

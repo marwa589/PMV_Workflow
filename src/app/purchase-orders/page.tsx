@@ -18,7 +18,17 @@ export default async function PurchaseOrdersPage() {
   const [approvedMrs, purchaseOrders] = await Promise.all([
     prisma.document.findMany({
     where: { documentType: "MATERIAL_REQUISITION", status: DocumentStatus.APPROVED },
-    select: { id: true, documentNumber: true, title: true, mrNumber: true },
+    select: {
+      id: true,
+      documentNumber: true,
+      title: true,
+      mrNumber: true,
+      versions: {
+        orderBy: { versionNumber: "desc" },
+        take: 1,
+        select: { originalName: true },
+      },
+    },
     orderBy: { updatedAt: "desc" },
     }),
     prisma.purchaseOrder.findMany({
@@ -46,7 +56,13 @@ export default async function PurchaseOrdersPage() {
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">Create Purchase Orders</h2>
           <p className="mt-1 text-sm text-slate-600">Purchase Order is selected by default. Choose a description and related approved MR for each file.</p>
-          <div className="mt-5"><PurchaseOrderUpload approvedMrs={approvedMrs} /></div>
+          <div className="mt-5"><PurchaseOrderUpload approvedMrs={approvedMrs.map((mr) => ({
+            id: mr.id,
+            documentNumber: mr.documentNumber,
+            title: mr.title,
+            mrNumber: mr.mrNumber,
+            fileName: mr.versions[0]?.originalName,
+          }))} /></div>
         </section>
       ) : null}
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">

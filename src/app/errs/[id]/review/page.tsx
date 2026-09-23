@@ -53,6 +53,7 @@ export default async function ErrReviewPage({ params }: Props) {
       title={err.title}
       errStage={err.currentStage}
       hasSignature={Boolean(user?.signaturePath)}
+      allowQuotationUpload={err.currentStage === "PMV_MANAGER"}
       downloadUrl={`/api/errs/${id}/download?kind=ERR_PDF`}
       actionUrl={`/api/errs/${id}/actions`}
       returnUrl={`/errs/${id}`}

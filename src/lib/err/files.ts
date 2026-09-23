@@ -24,7 +24,7 @@ export async function saveErrPdf(params: {
 
   const baseName = safeStorageName(params.storageName || params.pdf.originalName);
   const folder = params.kind === "QUOTATION" ? "quotations/" : "";
-  const uniqueId = params.errId.slice(0, 8);
+  const uniqueId = params.kind === "QUOTATION" ? randomUUID().slice(0, 8) : params.errId.slice(0, 8);
 
   const saved = await saveStoredFile({
     relativePath: `${params.storageFolder ?? "ERRs"}/${folder}${baseName}-${uniqueId}.pdf`,

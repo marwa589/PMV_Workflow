@@ -2,6 +2,7 @@ import "server-only";
 import { UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
+import { isRestrictedClerk } from "@/lib/auth/resource-access";
 
 const ERRO_EMAIL = "dispatcher.pmv@ahmadiah.com";
 const GROUP_B_UPLOADER_EMAILS = new Set([
@@ -62,6 +63,18 @@ export async function getPurchaseOrderRecipientIds(poId: string) { return resolv
 
 export async function canViewPurchaseOrder(user: { userId: string; role: UserRole; email?: string | null }, poId: string) {
   if (user.role === UserRole.ADMIN) return true;
+
+  if (isRestrictedClerk(user)) {
+    const linkedToOwnMr = await prisma.purchaseOrderMrLink.findFirst({
+      where: {
+        purchaseOrderId: poId,
+        document: { createdById: user.userId },
+      },
+      select: { id: true },
+    });
+    return linkedToOwnMr !== null;
+  }
+
   if (isOmar(user)) {
     const purchaseOrder = await prisma.purchaseOrder.findUnique({
       where: { id: poId },

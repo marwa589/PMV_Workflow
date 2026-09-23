@@ -43,6 +43,7 @@ export default async function ApproverPendingApprovalsPage({ searchParams }: any
         currentVersion: 1,
         latestComment: null,
         uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+        quotationFileName: doc.files[0]?.originalName ?? null,
       })),
   ];
 
@@ -69,7 +70,7 @@ export default async function ApproverPendingApprovalsPage({ searchParams }: any
           <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} showDocumentTypeFilter={true} showErrDocumentType={getModuleVisibility(session.name, session.role) === "ALL"} showStatusFilter={false} />
         </div>
         <div className="px-1 py-4">
-          <ApproverPendingTable documents={pendingDocuments} />
+          <ApproverPendingTable documents={pendingDocuments} showQuotation={session.role === UserRole.APPROVER_3} />
         </div>
       </section>
     </DashboardShell>

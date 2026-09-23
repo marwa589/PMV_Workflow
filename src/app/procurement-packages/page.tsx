@@ -4,7 +4,7 @@ import DashboardShell from "@/components/dashboard-shell";
 import { requireAuth } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
-import { canAccessMrModuleForSession, isErroUser } from "@/lib/auth/resource-access";
+import { canAccessMrModuleForSession, isRestrictedClerk } from "@/lib/auth/resource-access";
 export const dynamic = "force-dynamic";
 
 function formatTurnaround(ms: number): string {
@@ -20,19 +20,14 @@ export default async function ProcurementPackagesPage() {
     redirect("/unauthorized");
   }
 
-  const isErro = isErroUser(session);
+  const isRestricted = isRestrictedClerk(session);
 
   const packages = await prisma.document.findMany({
     where: {
       documentType: "MATERIAL_REQUISITION",
       relatedComparison: { status: DocumentStatus.APPROVED },
-      ...(isErro
-        ? {
-            OR: [
-              { createdById: session.userId },
-              { relatedComparison: { createdById: session.userId } },
-            ],
-          }
+      ...(isRestricted
+        ? { createdById: session.userId }
         : {}),
     },
     select: {
@@ -67,7 +62,7 @@ export default async function ProcurementPackagesPage() {
       documentType: "COMPARISON",
       status: DocumentStatus.APPROVED,
       linkedMRs: { none: {} },
-      ...(isErro ? { createdById: session.userId } : {}),
+      ...(isRestricted ? { createdById: session.userId } : {}),
     },
     select: {
       id: true,
