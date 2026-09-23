@@ -13,6 +13,7 @@ const GROUP_B_UPLOADER_EMAILS = new Set([
 const GROUP_A_RECIPIENT_EMAILS = [ERRO_EMAIL, "mohammad.mehieddine@ahmadiah.com"];
 const GROUP_B_RECIPIENT_EMAILS = ["joemar.paraiso@ahmadiah.com", ERRO_EMAIL, "bernabie.rocha@ahmadiah.com", "mohamed.mahran@ahmadiah.com"];
 const GROUP_C_RECIPIENT_EMAILS = ["mohamed.shawky@ahmadiah.com", "mohamed.mahmoud@ahmadiah.com", "jad.kabalan@ahmadiah.com", "muneer.kottappuram@ahmadiah.com"];
+const MUNEER_EMAIL = "muneer.kottappuram@ahmadiah.com";
 const PO_GLOBAL_VIEWER_EMAILS = new Set([
   "george.azzi@ahmadiah.com",
   "marc.baddour@ahmadiah.com",
@@ -21,6 +22,10 @@ const PO_GLOBAL_VIEWER_EMAILS = new Set([
 
 export function isOmar(user: { email?: string | null }): boolean {
   return user.email?.trim().toLowerCase() === "omar.merzek@ahmadiah.com";
+}
+
+export function isMuneer(user: { email?: string | null }): boolean {
+  return user.email?.trim().toLowerCase() === MUNEER_EMAIL;
 }
 
 function normalizeEmail(email: string) { return email.trim().toLowerCase(); }

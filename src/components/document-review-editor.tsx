@@ -435,8 +435,27 @@ export default function DocumentReviewEditor({
             {allowQuotationUpload ? (
               <div className="min-w-60 flex-1">
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600" htmlFor="review-quotation">Additional quotation</label>
-                <input id="review-quotation" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => setQuotationFile(event.target.files?.[0] || null)} disabled={saving} className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm" />
-              </div>
+                <input
+  id="review-quotation"
+  type="file"
+  accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+  onChange={(event) => setQuotationFile(event.target.files?.[0] || null)}
+  disabled={saving}
+  className="
+    w-full text-sm
+    border border-slate-300 rounded-md
+    file:bg-blue-600
+    file:text-white
+    file:border-0
+    file:px-4
+    file:py-2
+    file:mr-3
+    file:font-medium
+    hover:file:bg-blue-700
+    file:cursor-pointer
+  "
+/>
+</div>
             ) : null}
             <div className="min-w-72 flex-[2]">
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Comments</label>

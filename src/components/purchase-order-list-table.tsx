@@ -10,20 +10,29 @@ type PurchaseOrderRow = {
   description: string | null;
   uploadedAt: string;
   uploadedByName: string;
+  receivedAt: string | null;
+  receivedByName: string | null;
+  receivedByEmail: string | null;
+  linkedMrs: Array<{ id: string; documentNumber: string }>;
 };
 
 export default function PurchaseOrderListTable({
   purchaseOrders,
+  canMarkReceived,
   canAdminDelete,
   canRequestDeletion,
 }: {
   purchaseOrders: PurchaseOrderRow[];
+  canMarkReceived: boolean;
   canAdminDelete: boolean;
   canRequestDeletion: boolean;
 }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [receivedIds, setReceivedIds] = useState(() => new Set(
+    purchaseOrders.filter((po) => po.receivedAt).map((po) => po.id),
+  ));
 
   const allSelected = purchaseOrders.length > 0 && selectedIds.length === purchaseOrders.length;
 
@@ -66,6 +75,25 @@ export default function PurchaseOrderListTable({
       window.location.reload();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to complete the PO action.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markReceived(id: string) {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/purchase-orders/${id}/received`, {
+        method: "POST",
+        headers: { "x-csrf-token": getCsrfTokenFromBrowser() },
+      });
+      const result = (await response.json()) as { message?: string };
+      if (!response.ok) throw new Error(result.message || "Unable to confirm PO receipt.");
+      setReceivedIds((current) => new Set(current).add(id));
+      setMessage("PO receipt confirmed.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to confirm PO receipt.");
     } finally {
       setBusy(false);
     }
@@ -135,6 +163,7 @@ export default function PurchaseOrderListTable({
               <th className="px-5 py-3 font-semibold">Description</th>
               <th className="px-5 py-3 font-semibold">Uploaded</th>
               <th className="px-5 py-3 font-semibold">Uploaded By</th>
+              <th className="px-5 py-3 font-semibold">Received by Muneer</th>
               <th className="px-5 py-3 font-semibold">Linked MRs</th>
               <th className="px-5 py-3 font-semibold">Actions</th>
             </tr>
@@ -161,7 +190,39 @@ export default function PurchaseOrderListTable({
                   {new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(po.uploadedAt))}
                 </td>
                 <td className="px-5 py-4 text-slate-600">{po.uploadedByName}</td>
-                <td className="px-5 py-4 text-slate-600">—</td>
+                <td className="px-5 py-4 text-slate-600">
+                  {receivedIds.has(po.id) ? (
+                    <span title={po.receivedByEmail || undefined}>
+                      Received by {po.receivedByName || "Muneer"}
+                    </span>
+                  ) : canMarkReceived ? (
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={false}
+                        disabled={busy}
+                        onChange={() => void markReceived(po.id)}
+                        className="h-4 w-4 rounded border-slate-300"
+                      />
+                      <span>Confirm receipt</span>
+                    </label>
+                  ) : (
+                    "Not confirmed"
+                  )}
+                </td>
+                <td className="px-5 py-4 text-slate-600">
+                  {po.linkedMrs.length === 0 ? (
+                    "—"
+                  ) : (
+                    <div className="flex flex-wrap gap-x-3 gap-y-1">
+                      {po.linkedMrs.map((mr) => (
+                        <a key={mr.id} href={`/documents/${mr.id}`} className="font-medium text-cyan-700 hover:underline">
+                          {mr.documentNumber}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </td>
                 <td className="px-5 py-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <a href={`/api/purchase-orders/${po.id}/download?inline=1`} target="_blank" rel="noopener noreferrer" className="font-medium text-cyan-700 hover:underline">

@@ -166,7 +166,9 @@ function getVisibleNavItems(role: AppRole, userName: string, isUploader?: boolea
       return false;
     }
     if (visibility === "DOCUMENTS_ONLY") {
-      return !["ERRs", "Users", "On Hold"].includes(item.label);
+      return item.label === "ERRs" && role === "APPROVER_2"
+      ? true
+      : !["ERRs", "Users", "On Hold"].includes(item.label);
     }
 
     return true;

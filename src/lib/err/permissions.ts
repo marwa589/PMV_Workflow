@@ -44,6 +44,7 @@ export async function getErrAccess() {
   const moduleVisibility = getModuleVisibility(user.name, user.role);
 
   const isAdmin = user.role === UserRole.ADMIN;
+  const isWorkshopManager = user.role === UserRole.APPROVER_2;
   const isPmvManager = user.role === UserRole.APPROVER_3;
   const isNamedUploader = isErrUploaderAccount(user.name, user.role);
   const isUploader = roles.includes(ErrAccessRole.UPLOADER) || isNamedUploader;
@@ -83,6 +84,7 @@ export async function getErrAccess() {
 
     isAdmin,
     isPmvManager,
+    isWorkshopManager,
 
     isUploader,
     isGlobalUploader,
@@ -102,8 +104,8 @@ export async function getErrAccess() {
     viewerProjectIds,
 
     canAccessErrModule:
-      moduleVisibility !== "DOCUMENTS_ONLY" &&
-      (isAdmin || isPmvManager || roles.length > 0 || isUploader),
+      (moduleVisibility !== "DOCUMENTS_ONLY" || isWorkshopManager) &&
+      (isAdmin || isWorkshopManager || isPmvManager || roles.length > 0 || isUploader),
   };
 }
 
@@ -138,7 +140,7 @@ export function getErrVisibilityWhere(
   }
 
   // Administrators, global uploaders, global viewers, and PMV Manager see all ERRs.
-  if (access.isAdmin || access.isGlobalUploader || access.isGlobalViewer || access.isPmvManager) {
+  if (access.isAdmin || access.isWorkshopManager || access.isGlobalUploader || access.isGlobalViewer || access.isPmvManager ) {
     return {};
   }
 
@@ -256,7 +258,7 @@ export async function canApproveErr(
   access: ErrAccess,
   errId: string,
 ): Promise<boolean> {
-  if (!access.canAccessErrModule) {
+  if (!access.canAccessErrModule || access.isWorkshopManager) {
     return false;
   }
 

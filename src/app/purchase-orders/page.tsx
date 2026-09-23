@@ -5,7 +5,7 @@ import DashboardShell from "@/components/dashboard-shell";
 import PurchaseOrderListTable from "@/components/purchase-order-list-table";
 import PurchaseOrderUpload from "@/components/purchase-order-upload";
 import { requireAuth } from "@/lib/auth/guards";
-import { isOmar } from "@/lib/po-access";
+import { isMuneer, isOmar } from "@/lib/po-access";
 import { canViewPurchaseOrder, canViewPurchaseOrdersSidebar } from "@/lib/po-access";
 import { prisma } from "@/lib/prisma";
 
@@ -35,6 +35,7 @@ export default async function PurchaseOrdersPage() {
       orderBy: { uploadedAt: "desc" },
       include: {
         uploadedBy: { select: { name: true } },
+        receivedBy: { select: { name: true, email: true } },
         mrLinks: { include: { document: { select: { id: true, documentNumber: true } } } },
       },
     }),
@@ -78,7 +79,15 @@ export default async function PurchaseOrdersPage() {
               description: po.description,
               uploadedAt: po.uploadedAt.toISOString(),
               uploadedByName: po.uploadedBy.name,
+              receivedAt: po.receivedAt?.toISOString() ?? null,
+              receivedByName: po.receivedBy?.name ?? null,
+              receivedByEmail: po.receivedBy?.email ?? null,
+              linkedMrs: po.mrLinks.map((link) => ({
+                id: link.document.id,
+                documentNumber: link.document.documentNumber,
+              })),
             }))}
+            canMarkReceived={isMuneer(session)}
             canAdminDelete={canAdminDelete}
             canRequestDeletion={canRequestDeletion}
           />

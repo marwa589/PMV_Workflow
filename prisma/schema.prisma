@@ -45,6 +45,7 @@ model User {
   errNotifications          ErrNotification[]        @relation("ErrNotificationRecipient")
   directedErrProjects       ErrProject[]             @relation("ErrProjectDirectorAccount")
   purchaseOrdersCreated     PurchaseOrder[]          @relation("PurchaseOrdersCreatedBy")
+  purchaseOrdersReceived    PurchaseOrder[]          @relation("PurchaseOrdersReceivedBy")
   purchaseOrderLinksCreated PurchaseOrderMrLink[]     @relation("PurchaseOrderLinksCreatedBy")
   roleAssignments           UserRoleAssignment[]     @relation("UserRoleAssignmentsForUser")
 }
@@ -188,12 +189,16 @@ model PurchaseOrder {
   fileSize     Int
   uploadedAt   DateTime @default(now())
   uploadedById String
+  receivedAt   DateTime?
+  receivedById String?
 
   uploadedBy User                  @relation("PurchaseOrdersCreatedBy", fields: [uploadedById], references: [id])
+  receivedBy User?                 @relation("PurchaseOrdersReceivedBy", fields: [receivedById], references: [id])
   mrLinks    PurchaseOrderMrLink[]
 
   @@index([uploadedById])
   @@index([uploadedAt])
+  @@index([receivedById])
 }
 
 model PurchaseOrderMrLink {
