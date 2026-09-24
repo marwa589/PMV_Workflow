@@ -83,7 +83,9 @@ export async function POST(request: Request) {
     const uploadedFiles = form.getAll("files").filter((value): value is File => value instanceof File && value.size > 0);
     const legacyErrPdf = form.get("errPdf");
     if (legacyErrPdf instanceof File && legacyErrPdf.size > 0) uploadedFiles.unshift(legacyErrPdf);
-    const quotation = form.get("quotation");
+    const quotations = form.getAll("quotations").filter((value): value is File => value instanceof File && value.size > 0);
+    const legacyQuotation = form.get("quotation");
+    if (legacyQuotation instanceof File && legacyQuotation.size > 0) quotations.push(legacyQuotation);
         const keyValue = form.get("submissionKey");
 
     if (
@@ -165,7 +167,7 @@ export async function POST(request: Request) {
     }
 
     const acceptedExtensions = ["pdf", "doc", "docx", "xls", "xlsx", "jpg", "jpeg", "png"];
-    const filesToValidate = [...uploadedFiles, ...(quotation instanceof File && quotation.size > 0 ? [quotation] : [])];
+    const filesToValidate = [...uploadedFiles, ...quotations];
     for (const file of filesToValidate) {
       const extension = file.name.toLowerCase().split(".").pop() || "";
       if (!acceptedExtensions.includes(extension)) {
@@ -209,16 +211,18 @@ if (!storageProject) {
     });
     savedPaths.push(errFile.filePath);
 
-    const quotationFile = quotation instanceof File && quotation.size > 0
-      ? await saveErrFile({
-          errId,
-          kind: "QUOTATION",
-          file: quotation,
-          storageName: quotation.name,
-          storageFolder,
-        })
-      : null;
-    if (quotationFile) savedPaths.push(quotationFile.filePath);
+    const quotationFiles: Array<{
+      filePath: string;
+      storageFolder: string | null;
+      originalName: string;
+      mimeType: string;
+      fileSize: number;
+    }> = [];
+    for (const quotation of quotations) {
+      const savedQuotation = await saveErrFile({ errId, kind: "QUOTATION", file: quotation, storageName: quotation.name, storageFolder });
+      quotationFiles.push(savedQuotation);
+      savedPaths.push(savedQuotation.filePath);
+    }
 
     transactionStarted = true;
 
@@ -380,12 +384,12 @@ if (!storageProject) {
           },
         });
 
-        if (quotationFile) {
+        for (const [quotationIndex, quotationFile] of quotationFiles.entries()) {
           await tx.errFile.create({
             data: {
               errId,
               kind: "QUOTATION",
-              versionNumber: 1,
+              versionNumber: quotationIndex + 1,
               revisionNumber: 1,
               uploadedById: access.userId,
               ...quotationFile,

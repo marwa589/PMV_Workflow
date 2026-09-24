@@ -234,7 +234,7 @@ export default async function ErrPage({ searchParams }: PageProps) {
           userId={access.userId}
           canDelete={access.isAdmin}
           canRequestDeletion={access.isUploader}
-          showQuotation={access.isPmvManager || access.isActingCeo || access.isCeo}
+          showQuotation={access.isUploader || access.isAdmin || access.isPmvManager || access.isActingCeo || access.isCeo}
         />
 
         <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">

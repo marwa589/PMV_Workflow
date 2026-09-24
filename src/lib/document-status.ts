@@ -2,6 +2,11 @@ export type DocumentTypeFilter = "COMPARISON" | "MATERIAL_REQUISITION" | "ERR" |
 export type DownloadStatusFilter = "DOWNLOADED" | "NOT_DOWNLOADED" | "";
 export type MrTypeFilter = "CASH" | "CREDIT" | "";
 export type PoStatusFilter = "UPLOADED" | "PENDING" | "NOT_APPLICABLE" | "";
+export type MrLocationFilter = "AVR" | "AVK" | "KUWAIT" | "";
+
+export function parseMrLocationFilter(value: unknown): MrLocationFilter {
+  return value === "AVR" || value === "AVK" || value === "KUWAIT" ? value : "";
+}
 
 export function getPoStatus(documentType: string, mrType: string | null | undefined, hasPurchaseOrder: boolean): "UPLOADED" | "PENDING" | "NOT_APPLICABLE" {
   if (documentType !== "MATERIAL_REQUISITION" || mrType !== "CREDIT") return "NOT_APPLICABLE";

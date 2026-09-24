@@ -11,7 +11,9 @@ export const runtime = "nodejs";
 
 export async function GET() {
   const session = await getSession();
-  if (!session) return NextResponse.json({ materialRequisitions: 0, comparisons: 0, pendingApprovals: 0, errs: 0 }, { status: 401 });
+  if (!session) return NextResponse.json({ materialRequisitions: 0, comparisons: 0, pendingApprovals: 0, errs: 0, userLocation: null }, { status: 401 });
+
+  const user = await prisma.user.findUnique({ where: { id: session.userId }, select: { location: true } });
 
   const visibility = getModuleVisibility(session.name, session.role);
   const canQueryDocuments = canAccessMrModule(session.role) && visibility !== "ERR_ONLY";
@@ -56,5 +58,6 @@ export async function GET() {
     comparisons,
     pendingApprovals: documentPendingApprovals + errPendingApprovals,
     errs: errPendingApprovals,
+    userLocation: user?.location ?? null,
   });
 }

@@ -87,7 +87,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
   const [mrType, setMrType] = useState<MrTypeOption | null>(null);
   const [errType, setErrType] = useState<ErrTypeOption | null>(null);
   const [errProjectId, setErrProjectId] = useState("");
-  const [quotation, setQuotation] = useState<File | null>(null);
+  const [quotations, setQuotations] = useState<File[]>([]);
   const [mrNumber, setMrNumber] = useState("");
   const [comparisonLinkChoice, setComparisonLinkChoice] = useState<"YES" | "NO" | null>(null);
   const [comparisonSearch, setComparisonSearch] = useState("");
@@ -153,7 +153,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
     setMrType(null);
     setErrType(null);
     setErrProjectId("");
-    setQuotation(null);
+    setQuotations([]);
     setMrNumber("");
     setComparisonLinkChoice(null);
     setComparisonSearch("");
@@ -211,7 +211,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
 
           errFormData.set("submissionKey", crypto.randomUUID());
           errFormData.append("files", file);
-          if (quotation && index === 0) errFormData.set("quotation", quotation);
+          if (index === 0) quotations.forEach((file) => errFormData.append("quotations", file));
 
           const response = await fetch("/api/errs", {
             method: "POST",
@@ -550,7 +550,12 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                 </div>
                 <div>
                   <label htmlFor="err-quotation" className="mb-2 block text-sm font-medium text-slate-700">Quotation <span className="font-normal text-slate-500">(optional)</span></label>
-                  <input id="err-quotation" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => setQuotation(event.target.files?.[0] ?? null)} className="block w-full rounded-lg border border-slate-300 bg-white text-sm text-slate-700 file:mr-3 file:cursor-pointer file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-700" />
+                  <input id="err-quotation" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => setQuotations(Array.from(event.target.files ?? []))} className="block w-full rounded-lg border border-slate-300 bg-white text-sm text-slate-700 file:mr-3 file:cursor-pointer file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-700" />
+                  {quotations.length > 0 ? (
+                    <ul className="mt-2 space-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                      {quotations.map((file) => <li key={`${file.name}-${file.size}-${file.lastModified}`} className="truncate" title={file.name}>{file.name}</li>)}
+                    </ul>
+                  ) : null}
                 </div>
               </div>
             ) : null}

@@ -236,7 +236,10 @@ function summaryForType(type: EmailEventType) {
   }
 }
 
-function renderSummary(counts: Record<string, number>) {
+function renderSummary(
+  counts: Record<string, number>,
+  updates: Array<{ documentNumber: string; title: string; comments: string | null }>,
+) {
   const appUrl = appConfig.appUrl();
   const lines = [
     counts.approved ? `<p>Approved documents: ${counts.approved}</p>` : "",
@@ -247,10 +250,16 @@ function renderSummary(counts: Record<string, number>) {
     counts.purchaseOrderAvailable ? `<p>New purchase orders are available for your related MRs.</p>` : "",
   ].join("");
 
+  const updateDetails = updates
+    .filter((update) => update.comments)
+    .map((update) => `<p><strong>${update.documentNumber} - ${update.title}</strong><br />Comments: ${update.comments!.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br />")}</p>`)
+    .join("");
+
   return `
     <div style="font-family: Arial, sans-serif; line-height: 1.6;">
       <p>You have workflow updates requiring your attention.</p>
       ${lines}
+      ${updateDetails ? `<h3>Comments</h3>${updateDetails}` : ""}
       <p>Application URL: <a href="${appUrl}">${appUrl}</a></p>
       <p>Please log in to review them.</p>
     </div>
@@ -338,10 +347,32 @@ export async function flushWorkflowEmailBatches() {
     }
 
     try {
+      const documentIds = group
+        .map((event) => event.documentId)
+        .filter((documentId): documentId is string => Boolean(documentId));
+      const documentsWithComments = documentIds.length > 0
+        ? await prisma.document.findMany({
+            where: { id: { in: [...new Set(documentIds)] } },
+            select: {
+              documentNumber: true,
+              title: true,
+              approvals: {
+                orderBy: { performedAt: "desc" },
+                take: 1,
+                select: { comments: true },
+              },
+            },
+          })
+        : [];
+
       await sendEmail({
         to: recipientEmail,
         subject: "Workflow notification summary",
-        html: renderSummary(counts),
+        html: renderSummary(counts, documentsWithComments.map((document) => ({
+          documentNumber: document.documentNumber,
+          title: document.title,
+          comments: document.approvals[0]?.comments ?? null,
+        }))),
       });
       await prisma.emailNotificationEvent.updateMany({
         where: { id: { in: group.map((event) => event.id) }, claimedAt, emailSent: false },

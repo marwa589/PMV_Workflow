@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle2, Download, FileCheck, FileText, FolderCheck } f
 import DashboardShell from "@/components/dashboard-shell";
 import StatusBadge from "@/components/status-badge";
 import ErrVoucherModal from "@/components/err-voucher-modal";
+import ErrQuotationUpload from "@/components/err-quotation-upload";
 import {
   canApproveErr,
   canViewErrQuotation,
@@ -229,6 +230,7 @@ export default async function ErrDetailsPage({ params }: Props) {
             Review ERR
           </Link>
         )}
+        {canViewErrQuotation(access) ? <ErrQuotationUpload errId={id} /> : null}
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

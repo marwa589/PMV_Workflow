@@ -21,9 +21,10 @@ type Props = {
   showErrDocumentType?: boolean;
   showStatusFilter?: boolean;
   statusFilterOptions?: Array<{ value: string; label: string }>;
+  location?: string;
 };
 
-export default function DocumentStatusFilter({ value = "", title = "Status", documentType = "", downloadStatus = "", approvalFrom = "", approvalTo = "", showDownloadFilters = false, mrType = "", poStatus = "", errType = "", errStatus = "", showMrTypeFilter = false, showPoStatusFilter = false, showErrTypeFilter = false, showErrStatusFilter = false, showDocumentTypeFilter = false, showErrDocumentType = true, showStatusFilter = true, statusFilterOptions = DOCUMENT_STATUS_FILTER_OPTIONS }: Props) {
+export default function DocumentStatusFilter({ value = "", title = "Status", documentType = "", downloadStatus = "", approvalFrom = "", approvalTo = "", showDownloadFilters = false, mrType = "", poStatus = "", errType = "", errStatus = "", location = "", showMrTypeFilter = false, showPoStatusFilter = false, showErrTypeFilter = false, showErrStatusFilter = false, showDocumentTypeFilter = false, showErrDocumentType = true, showStatusFilter = true, statusFilterOptions = DOCUMENT_STATUS_FILTER_OPTIONS }: Props) {
   return (
     <form method="get" className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       {showDocumentTypeFilter ? (
@@ -37,6 +38,7 @@ export default function DocumentStatusFilter({ value = "", title = "Status", doc
           </select>
         </div>
       ) : documentType ? <input type="hidden" name="documentType" value={documentType} /> : null}
+      {location ? <input type="hidden" name="location" value={location} /> : null}
       {showMrTypeFilter && documentType === "MATERIAL_REQUISITION" ? (
         <div className="min-w-0 flex-1">
           <label htmlFor="mr-type" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">MR Type</label>

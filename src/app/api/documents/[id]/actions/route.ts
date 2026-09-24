@@ -15,6 +15,16 @@ import { appConfig } from "@/lib/env";
 
 export const runtime = "nodejs";
 
+function escapeEmailHtml(value: string | null | undefined): string {
+  return (value ?? "No comments were provided.")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;")
+    .replace(/\n/g, "<br />");
+}
+
 type Decision = "APPROVE" | "REJECT" | "COMMENT";
 
 export async function POST(
@@ -772,6 +782,10 @@ export async function POST(
                         <th align="left" style="padding: 10px; border: 1px solid #e6e6e6; background-color: #f5f5f5;">Status</th>
                         <td style="padding: 10px; border: 1px solid #e6e6e6;">Revision Required</td>
                       </tr>
+                      <tr>
+                        <th align="left" style="padding: 10px; border: 1px solid #e6e6e6; background-color: #f5f5f5;">Comments</th>
+                        <td style="padding: 10px; border: 1px solid #e6e6e6;">${escapeEmailHtml(comments)}</td>
+                      </tr>
                     </table>
                     <p style="margin: 0 0 12px 0; font-size: 15px;"><strong>System URL:</strong> <a href="${appUrl}" style="text-decoration: none; color: #464feb;">${appUrl}</a></p>
                     <p style="margin: 0; font-size: 15px;">Best regards,<br />PMV Workflow System</p>
@@ -821,6 +835,10 @@ export async function POST(
                       <tr>
                         <th align="left" style="padding: 10px; border: 1px solid #e6e6e6; background-color: #f5f5f5;">Status</th>
                         <td style="padding: 10px; border: 1px solid #e6e6e6;">Approved</td>
+                      </tr>
+                      <tr>
+                        <th align="left" style="padding: 10px; border: 1px solid #e6e6e6; background-color: #f5f5f5;">Comments</th>
+                        <td style="padding: 10px; border: 1px solid #e6e6e6;">${escapeEmailHtml(comments)}</td>
                       </tr>
                     </table>
                     <p style="margin: 0 0 12px 0; font-size: 15px;">The final approved version is now available for download from the PMV Workflow System.</p>

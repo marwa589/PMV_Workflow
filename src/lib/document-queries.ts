@@ -55,6 +55,7 @@ export async function getDocumentsForClerk(userId: string) {
     prisma.document.findMany({
       where: whereClause,
       include: {
+        createdBy: { select: { location: true } },
         currentApprover: { select: { name: true } },
         relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
@@ -102,6 +103,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
         status: { in: [DocumentStatus.PENDING_APPROVER_1, DocumentStatus.PENDING_APPROVER_2, DocumentStatus.PENDING_APPROVER_3] },
       },
       include: {
+        createdBy: { select: { location: true } },
         currentApprover: { select: { name: true } },
         relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
@@ -118,6 +120,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
         status: DocumentStatus.REVISION_REQUIRED,
       },
       include: {
+        createdBy: { select: { location: true } },
         currentApprover: { select: { name: true } },
         relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
@@ -131,6 +134,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
     prisma.document.findMany({
       where: { approvals: { some: { performedById: userId, action: ApprovalActionType.APPROVED } } },
       include: {
+        createdBy: { select: { location: true } },
         currentApprover: { select: { name: true } },
         relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
@@ -145,6 +149,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
     prisma.document.findMany({
       where: { approvals: { some: { performedById: userId, action: ApprovalActionType.REJECTED } } },
       include: {
+        createdBy: { select: { location: true } },
         currentApprover: { select: { name: true } },
         relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
@@ -161,6 +166,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
         OR: [{ currentApproverId: userId }, { approvals: { some: { performedById: userId } } }],
       },
       include: {
+        createdBy: { select: { location: true } },
         currentApprover: { select: { name: true } },
         relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
@@ -316,6 +322,7 @@ export async function getDocumentsForAdmin() {
     prisma.document.findMany({
       orderBy: { createdAt: "desc" },
       include: {
+        createdBy: { select: { location: true } },
         currentApprover: { select: { name: true } },
         relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
@@ -330,6 +337,7 @@ export async function getDocumentsForAdmin() {
       where: { status: { in: [DocumentStatus.PENDING_APPROVER_1, DocumentStatus.PENDING_APPROVER_2, DocumentStatus.PENDING_APPROVER_3] } },
       orderBy: { createdAt: "desc" },
       include: {
+        createdBy: { select: { location: true } },
         currentApprover: { select: { name: true } },
         relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {

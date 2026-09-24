@@ -10,11 +10,12 @@ type Props = {
   approvedMrs: ApprovedMr[];
   initialMrId?: string;
   showMrSelection?: boolean;
+  location?: "AVR" | "AVK" | "KUWAIT";
 };
 
 type SelectedFile = { file: File; mrId: string };
 
-export default function PurchaseOrderUpload({ approvedMrs, initialMrId, showMrSelection = true }: Props) {
+export default function PurchaseOrderUpload({ approvedMrs, initialMrId, showMrSelection = true, location }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [files, setFiles] = useState<SelectedFile[]>([]);
   const [description, setDescription] = useState("");
@@ -37,6 +38,7 @@ export default function PurchaseOrderUpload({ approvedMrs, initialMrId, showMrSe
     try {
       const formData = new FormData();
       formData.set("description", description);
+      if (location) formData.set("location", location);
       formData.set("fileMrIds", JSON.stringify(files.map((item) => item.mrId)));
       files.forEach((item) => formData.append("files", item.file));
       const response = await fetch("/api/purchase-orders", {

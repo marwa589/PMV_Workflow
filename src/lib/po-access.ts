@@ -28,6 +28,11 @@ export function isMuneer(user: { email?: string | null }): boolean {
   return user.email?.trim().toLowerCase() === MUNEER_EMAIL;
 }
 
+export function isGlobalPurchaseOrderViewer(user: { role: UserRole; email?: string | null }): boolean {
+  const email = user.email?.trim().toLowerCase();
+  return user.role === UserRole.ADMIN || isOmar(user) || Boolean(email && PO_GLOBAL_VIEWER_EMAILS.has(email));
+}
+
 function normalizeEmail(email: string) { return email.trim().toLowerCase(); }
 
 function recipientEmailsForUploader(email: string): string[] {
@@ -67,33 +72,29 @@ async function resolvePurchaseOrderRecipientIds(tx: PoAccessDb, poId: string) {
 export async function getPurchaseOrderRecipientIds(poId: string) { return resolvePurchaseOrderRecipientIds(prisma, poId); }
 
 export async function canViewPurchaseOrder(user: { userId: string; role: UserRole; email?: string | null }, poId: string) {
-  if (user.role === UserRole.ADMIN) return true;
+  if (isGlobalPurchaseOrderViewer(user)) return true;
 
-  if (isRestrictedClerk(user)) {
-    const linkedToOwnMr = await prisma.purchaseOrderMrLink.findFirst({
-      where: {
-        purchaseOrderId: poId,
-        document: { createdById: user.userId },
-      },
-      select: { id: true },
-    });
-    return linkedToOwnMr !== null;
+  const [viewer, linkedMrs] = await Promise.all([
+    prisma.user.findUnique({ where: { id: user.userId }, select: { location: true } }),
+    prisma.purchaseOrderMrLink.findMany({
+      where: { purchaseOrderId: poId },
+      select: { document: { select: { createdBy: { select: { location: true } } } } },
+    }),
+  ]);
+
+  if (!viewer?.location || linkedMrs.length === 0) {
+    return isRestrictedClerk(user) && (await getPurchaseOrderRecipientIds(poId)).includes(user.userId);
   }
 
-  if (isOmar(user)) {
-    const purchaseOrder = await prisma.purchaseOrder.findUnique({
-      where: { id: poId },
-      select: { uploadedById: true },
-    });
-    if (purchaseOrder?.uploadedById === user.userId) return true;
-  }
+  return linkedMrs.some((link) => link.document.createdBy.location === viewer.location);
+}
 
-  const normalizedUserEmail = user.email?.trim().toLowerCase();
-  if (normalizedUserEmail && PO_GLOBAL_VIEWER_EMAILS.has(normalizedUserEmail)) {
-    return true;
-  }
-
-  return (await getPurchaseOrderRecipientIds(poId)).includes(user.userId);
+export async function getPurchaseOrderLocations(poId: string) {
+  const links = await prisma.purchaseOrderMrLink.findMany({
+    where: { purchaseOrderId: poId },
+    select: { document: { select: { createdBy: { select: { location: true } } } } },
+  });
+  return new Set(links.map((link) => link.document.createdBy.location).filter((location): location is NonNullable<typeof location> => Boolean(location)));
 }
 
 export async function resolvePurchaseOrderRecipients(tx: PoAccessDb, poId: string) {

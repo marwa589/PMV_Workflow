@@ -31,6 +31,7 @@ export default function PurchaseOrderListTable({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(10);
   const searchParams = useSearchParams();
   const [receivedIds, setReceivedIds] = useState(() => new Set(
     purchaseOrders.filter((po) => po.receivedAt).map((po) => po.id),
@@ -54,6 +55,7 @@ export default function PurchaseOrderListTable({
       return terms.every((term) => searchableText.includes(term));
     });
   }, [purchaseOrders, searchQuery]);
+  const pagedPurchaseOrders = visiblePurchaseOrders.slice(0, visibleCount);
 
   const allSelected = visiblePurchaseOrders.length > 0 && selectedIds.length === visiblePurchaseOrders.length;
 
@@ -190,7 +192,7 @@ export default function PurchaseOrderListTable({
             </tr>
           </thead>
           <tbody>
-            {visiblePurchaseOrders.map((po) => (
+            {pagedPurchaseOrders.map((po) => (
               <tr key={po.id} className="border-t border-slate-100">
                 <td className="px-3 py-4">
                   <input
@@ -263,6 +265,17 @@ export default function PurchaseOrderListTable({
           </tbody>
         </table>
       </div>
+      {visibleCount < visiblePurchaseOrders.length ? (
+        <div className="border-t border-slate-200 px-5 py-4 text-center">
+          <button
+            type="button"
+            onClick={() => setVisibleCount((count) => count + 10)}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Load more
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }

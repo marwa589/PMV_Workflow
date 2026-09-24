@@ -49,6 +49,7 @@ type SidebarCounts = {
   comparisons: number;
   pendingApprovals: number;
   errs: number;
+  userLocation: "AVR" | "AVK" | "KUWAIT" | null;
 };
 
 type NotificationItem = {
@@ -139,7 +140,7 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
   ],
 };
 
-function getVisibleNavItems(role: AppRole, userName: string, isUploader?: boolean): NavItem[] {
+function getVisibleNavItems(role: AppRole, userName: string, userLocation: SidebarCounts["userLocation"], isUploader?: boolean): NavItem[] {
   const visibility = getModuleVisibility(userName, role);
 
   if (visibility === "ERR_ONLY") {
@@ -174,16 +175,27 @@ function getVisibleNavItems(role: AppRole, userName: string, isUploader?: boolea
     return true;
   });
 
+  const locationMrItems: NavItem[] = userLocation === "AVR"
+    ? [{ label: "MRs - AVR", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVR`, icon: FileText }]
+    : userLocation === "AVK"
+      ? [{ label: "MRs - AVK", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVK`, icon: FileText }]
+      : [
+          { label: "MRs - Kuwait", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=KUWAIT`, icon: FileText },
+          { label: "MRs - AVR", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVR`, icon: FileText },
+          { label: "MRs - AVK", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVK`, icon: FileText },
+        ];
+  const navItemsWithLocationMrs = items.flatMap((item) => item.label === "MRs" ? locationMrItems : [item]);
+
   if ((role === "ADMIN" || role === "APPROVER_3") && visibility !== "DOCUMENTS_ONLY") {
     const onHoldItem: NavItem = { label: "On Hold", href: "/errs?view=on-hold", icon: PauseCircle };
-    return [...items, onHoldItem];
+    return [...navItemsWithLocationMrs, onHoldItem];
   }
 
   if (visibility === "DOCUMENTS_ONLY" && role === "CLERK" && !items.some((item) => item.label === "Dashboard")) {
-    return [{ label: "Dashboard", href: "/clerk", icon: LayoutDashboard }, ...items];
+    return [{ label: "Dashboard", href: "/clerk", icon: LayoutDashboard }, ...navItemsWithLocationMrs];
   }
 
-  return items;
+  return navItemsWithLocationMrs;
 }
 
 function Sidebar({
@@ -205,17 +217,19 @@ function Sidebar({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const navItems = getVisibleNavItems(role, userName, isUploader);
+  const navItems = getVisibleNavItems(role, userName, counts.userLocation, isUploader);
   const settingsItem = navItems.find((item) => item.href.endsWith("/settings"));
   const primaryNavItems = navItems.filter((item) => item !== settingsItem);
   const renderNavItem = (item: NavItem) => {
     const Icon = item.icon;
     const itemUrl = new URL(item.href, "http://localhost");
     const itemDocumentType = itemUrl.searchParams.get("documentType");
+    const itemLocation = itemUrl.searchParams.get("location");
     const itemStatus = itemUrl.searchParams.get("status");
     const itemView = itemUrl.searchParams.get("view");
     const itemSection = itemUrl.searchParams.get("section");
     const currentDocumentType = searchParams.get("documentType") ?? "";
+    const currentLocation = searchParams.get("location") ?? "";
     const currentStatus = searchParams.get("status") ?? "";
     const currentView = searchParams.get("view") ?? "";
     const currentSection = searchParams.get("section") ?? "";
@@ -228,7 +242,7 @@ function Sidebar({
         : itemSection
           ? currentSection === itemSection
           : itemDocumentType
-            ? currentDocumentType === itemDocumentType
+            ? currentDocumentType === itemDocumentType && (!itemLocation || currentLocation === itemLocation)
             : itemStatus
               ? currentStatus === itemStatus
               : !currentDocumentType && !currentStatus && !currentView && !currentSection);
@@ -370,7 +384,7 @@ export default function DashboardShell({
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [sidebarCounts, setSidebarCounts] = useState<SidebarCounts>({ materialRequisitions: 0, comparisons: 0, pendingApprovals: 0, errs: 0 });
+  const [sidebarCounts, setSidebarCounts] = useState<SidebarCounts>({ materialRequisitions: 0, comparisons: 0, pendingApprovals: 0, errs: 0, userLocation: null });
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
   const pathname = usePathname();

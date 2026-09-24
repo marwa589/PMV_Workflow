@@ -4,7 +4,7 @@ import DocumentListTable from "@/components/document-list-table";
 import DocumentStatusFilter from "@/components/document-status-filter";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
-import { getPoStatus, parseDocumentStatusFilter, parseDocumentTypeFilter, parseMrTypeFilter, parsePoStatusFilter } from "@/lib/document-status";
+import { getPoStatus, parseDocumentStatusFilter, parseDocumentTypeFilter, parseMrLocationFilter, parseMrTypeFilter, parsePoStatusFilter } from "@/lib/document-status";
 import { parseSearchQuery, matchesDocumentSearch } from "@/lib/document-search";
 import { getDocumentsForApprover, getPurchaseOrderStatuses } from "@/lib/document-queries";
 import { roleLabel } from "@/lib/auth/roles";
@@ -25,6 +25,7 @@ export default async function ApproverMyDocumentsPage({ searchParams }: any) {
   const statusFilter = parseDocumentStatusFilter(resolvedSearchParams?.status);
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
   const mrTypeFilter = parseMrTypeFilter(resolvedSearchParams?.mrType);
+  const locationFilter = parseMrLocationFilter(resolvedSearchParams?.location);
   const poStatusFilter = parsePoStatusFilter(resolvedSearchParams?.poStatus);
   const poStatuses = await getPurchaseOrderStatuses([...data.myDocuments, ...data.errMyDocuments].map((doc) => doc.id));
   const searchQuery = parseSearchQuery(resolvedSearchParams?.search);
@@ -51,6 +52,7 @@ export default async function ApproverMyDocumentsPage({ searchParams }: any) {
     ...data.myDocuments
       .filter((doc) => !statusFilter || doc.status === statusFilter)
       .filter((doc) => !documentTypeFilter || doc.documentType === documentTypeFilter)
+      .filter((doc) => !locationFilter || (doc.documentType === "MATERIAL_REQUISITION" && (doc.uploaderLocation ?? doc.createdBy.location) === locationFilter))
       .filter((doc) => !mrTypeFilter || (doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === mrTypeFilter))
       .filter((doc) => !poStatusFilter || getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id)) === poStatusFilter)
       .map((doc) => ({
@@ -134,6 +136,7 @@ export default async function ApproverMyDocumentsPage({ searchParams }: any) {
           <DocumentStatusFilter
             value={statusFilter}
             documentType={documentTypeFilter}
+            location={locationFilter}
             mrType={mrTypeFilter}
             showMrTypeFilter
             showPoStatusFilter

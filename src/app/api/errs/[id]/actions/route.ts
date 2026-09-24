@@ -542,6 +542,7 @@ export async function POST(
               projectName: pendingErr.projectNameSnapshot,
               currentStatus: result.status,
               actorName: access.name,
+              comments: comments || null,
               documentUrl: new URL(`/errs/${id}`, appConfig.appUrl()).toString(),
             };
             const template = buildApprovalAssignedEmail(emailContext);
@@ -609,6 +610,7 @@ export async function POST(
               projectName: errForEmail.projectNameSnapshot,
               currentStatus: result.status,
               actorName: access.name,
+              comments: comments || null,
               documentUrl: new URL(`/errs/${id}`, appConfig.appUrl()).toString(),
             };
             const template = result.status === "APPROVED"
