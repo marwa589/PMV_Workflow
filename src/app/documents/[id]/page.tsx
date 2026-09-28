@@ -13,7 +13,8 @@ import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-function getDocumentTypeLabel(documentType: "COMPARISON" | "MATERIAL_REQUISITION", mrType?: "CASH" | "CREDIT" | null) {
+function getDocumentTypeLabel(documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY", mrType?: "CASH" | "CREDIT" | null) {
+  if (documentType === "CUSTODY") return "Custody File";
   if (documentType === "MATERIAL_REQUISITION") {
     if (mrType === "CASH") return "MR - Cash";
     if (mrType === "CREDIT") return "MR - Credit";

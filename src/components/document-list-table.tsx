@@ -16,7 +16,7 @@ export type DocumentListItem = {
   title: string;
   status: DocumentStatus;
   statusLabel?: string;
-  documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | "ERR" | null;
+  documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR" | null;
   mrType?: "CASH" | "CREDIT" | null;
   poStatus?: "UPLOADED" | "PENDING" | "NOT_APPLICABLE";
   currentVersion: number;
@@ -147,6 +147,10 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
 
     if (doc.documentType === "ERR") {
       return "ERR";
+    }
+
+    if (doc.documentType === "CUSTODY") {
+      return "Custody File";
     }
 
     return "Comparison Sheet";

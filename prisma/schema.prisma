@@ -179,6 +179,12 @@ model PurchaseOrderSequence {
   updatedAt  DateTime @updatedAt
 }
 
+model CustodyFileSequence {
+  id         Int      @id @default(1)
+  nextNumber Int      @default(1)
+  updatedAt  DateTime @updatedAt
+}
+
 model PurchaseOrder {
   id           String   @id @default(cuid())
   poNumber     String   @unique
@@ -371,6 +377,7 @@ enum DeletionRequestStatus {
 enum DocumentType {
   COMPARISON
   MATERIAL_REQUISITION
+  CUSTODY
 }
 
 enum ComparisonType {
@@ -398,11 +405,13 @@ enum EmailEventType {
   APPROVAL_OVERDUE
   COMPARISON_MR_OVERDUE
   PURCHASE_ORDER_AVAILABLE
+  ERR_WORKFLOW_UPDATE
 }
 
 enum ErrType {
   RENTAL_ACTC
   RENTAL_EXTERNAL
+  RENEWAL
   PURCHASE
 }
 

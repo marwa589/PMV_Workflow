@@ -31,6 +31,7 @@ const stageLabels = {
 const typeLabels = {
   RENTAL_ACTC: "Rental ACTC",
   RENTAL_EXTERNAL: "Rental External",
+  RENEWAL: "Renewal",
   PURCHASE: "Purchase",
 };
 

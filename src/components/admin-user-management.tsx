@@ -113,7 +113,7 @@ export default function AdminUserManagement({
     setForm((current) => ({
       ...current,
       [field]: value,
-      ...(field === "role" && value !== "ERR_USER" ? { errAccess: [] } : {}),
+      ...(field === "role" && value !== "ERR_USER" && value !== "APPROVER_1" ? { errAccess: [] } : {}),
     }));
   }
 
@@ -250,7 +250,7 @@ export default function AdminUserManagement({
       location: form.location,
       projectName: form.projectName.trim(),
       errAccess:
-        form.role === "ERR_USER"
+        form.role === "ERR_USER" || form.role === "APPROVER_1"
           ? form.errAccess.map((g) => ({
               role: g.role,
               projectId: g.projectId,
@@ -316,7 +316,7 @@ export default function AdminUserManagement({
   }
 
   function formatAccessSummary(user: User) {
-    if (user.role !== "ERR_USER") {
+    if (user.role !== "ERR_USER" && user.role !== "APPROVER_1") {
       return roleOptions.find((r) => r.value === user.role)?.label || user.role;
     }
 
@@ -417,7 +417,7 @@ export default function AdminUserManagement({
             />
           </label>
 
-          {form.role === "ERR_USER" ? (
+          {form.role === "ERR_USER" || form.role === "APPROVER_1" ? (
             <fieldset className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
               <legend className="text-sm font-semibold text-slate-800 flex items-center gap-2 px-1">
                 <ShieldCheck className="h-4 w-4 text-indigo-600" />

@@ -162,7 +162,7 @@ export async function savePurchaseOrderFile(file: File, storageFolder = "POs"): 
 
 // Compute the structured storage directory based on document type and relationship.
 export function resolveStorageDir(params: {
-  documentType: "COMPARISON" | "MATERIAL_REQUISITION";
+  documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
   mrNumber?: string | null;
   mrType?: "CASH" | "CREDIT" | null;
   hasLinkedComparison: boolean;
@@ -205,7 +205,7 @@ export async function saveDocumentVersionFile(params: {
   versionNumber: number;
   file: File;
   // Structured storage params — when provided, file goes to the right named folder.
-  documentType?: "COMPARISON" | "MATERIAL_REQUISITION";
+  documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
   documentNumber?: string;
   mrNumber?: string | null;
   hasLinkedComparison?: boolean;

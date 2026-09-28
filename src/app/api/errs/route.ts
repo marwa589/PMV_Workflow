@@ -1,17 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { ErrType, Prisma } from "@prisma/client";
+import { EmailEventType, ErrType, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getErrAccess } from "@/lib/err/permissions";
 import { saveErrFile } from "@/lib/err/files";
 import { deleteDocumentFiles } from "@/lib/files";
 import { isErrUploaderAccount } from "@/lib/err/uploader-access";
-import { errDocumentStorageFolder } from "@/lib/err-storage";
+import { errDocumentStorageFolder, marcOnlyErrStorageFolder } from "@/lib/err-storage";
 import { isAllowedRequestOrigin } from "@/lib/request-origin";
-import { appConfig } from "@/lib/env";
-import { sendEmail } from "@/lib/mail";
-import { buildApprovalAssignedEmail } from "@/lib/email-templates";
 import { runInBackground } from "@/lib/background";
+import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 
 export const runtime = "nodejs";
 
@@ -23,8 +21,7 @@ export async function POST(request: Request) {
   let submissionKey: string | null = null;
   let uploaderId: string | null = null;
   let documentNumber = "";
-  let approverName = "";
-  let approverEmail = "";
+  let approverId: string | null = null;
 
   try {
     if (!isAllowedRequestOrigin(request)) {
@@ -80,6 +77,7 @@ export async function POST(request: Request) {
     const descriptionValue = form.get("description");
     const typeValue = form.get("type");
     const projectValue = form.get("projectId");
+    const marcOnly = String(form.get("marcOnly") || "").toLowerCase() === "true";
     const uploadedFiles = form.getAll("files").filter((value): value is File => value instanceof File && value.size > 0);
     const legacyErrPdf = form.get("errPdf");
     if (legacyErrPdf instanceof File && legacyErrPdf.size > 0) uploadedFiles.unshift(legacyErrPdf);
@@ -128,7 +126,7 @@ export async function POST(request: Request) {
     if (
       typeof titleValue !== "string" ||
       typeof typeValue !== "string" ||
-      typeof projectValue !== "string"
+      (!marcOnly && typeof projectValue !== "string")
     ) {
       throw new SubmissionError(
         "Title, ERR type, and project are required.",
@@ -136,7 +134,7 @@ export async function POST(request: Request) {
     }
 
     const title = titleValue.trim();
-    const rawProjectId = projectValue.trim();
+    const rawProjectId = typeof projectValue === "string" ? projectValue.trim() : "";
     let projectId = rawProjectId;
     let explicitDirectorId: string | null = null;
     if (rawProjectId.includes("::")) {
@@ -158,7 +156,7 @@ export async function POST(request: Request) {
       throw new SubmissionError("Select a valid ERR type.");
     }
 
-    if (!projectId || projectId.length > 100) {
+    if (!marcOnly && (!projectId || projectId.length > 100)) {
       throw new SubmissionError("Select a valid project.");
     }
 
@@ -178,29 +176,39 @@ export async function POST(request: Request) {
       }
     }
 
-    const storageProject = await prisma.errProject.findFirst({
-  where: {
-    id: projectId,
-    isActive: true,
-  },
-  select: {
-    name: true,
-    country: true,
-  },
-});
+    const storageProject = projectId
+      ? await prisma.errProject.findFirst({
+          where: {
+            id: projectId,
+            isActive: true,
+          },
+          select: {
+            name: true,
+            country: true,
+          },
+        })
+      : null;
 
-if (!storageProject) {
+if (!marcOnly && !storageProject) {
   throw new SubmissionError("Select an existing, active project.");
 }
 
     const errId = randomUUID();
-    const storageFolder = errDocumentStorageFolder(
-      storageProject.country,
-      storageProject.name,
-      typeValue as ErrType,
-      uploadedFiles[0].name,
-      errId,
-    );
+    const storageFolder = marcOnly
+      ? marcOnlyErrStorageFolder(
+          typeValue as ErrType,
+          uploadedFiles[0].name,
+          errId,
+        )
+      : storageProject
+        ? errDocumentStorageFolder(
+          storageProject.country,
+          storageProject.name,
+          typeValue as ErrType,
+          uploadedFiles[0].name,
+          errId,
+          )
+        : null;
 
     const errFile = await saveErrFile({
       errId,
@@ -266,7 +274,7 @@ if (!storageProject) {
           );
         }
 
-        const project = await tx.errProject.findFirst({
+        const project = projectId ? await tx.errProject.findFirst({
           where: {
             id: projectId,
             isActive: true,
@@ -317,35 +325,41 @@ if (!storageProject) {
               select: { userId: true, role: true },
             },
           },
-        });
+        }) : null;
 
-        if (!project) {
+        if (!marcOnly && !project) {
           throw new SubmissionError(
             "This project or its director is no longer available.",
           );
         }
 
         const activeAssignedDirectorId =
-          (project.director?.errAccess.length ? project.directorId : null) ||
-          project.userAccess.find((entry) => entry.role === "PROJECT_DIRECTOR")?.userId ||
+          (project?.director?.errAccess.length ? project?.directorId : null) ||
+          project?.userAccess.find((entry) => entry.role === "PROJECT_DIRECTOR")?.userId ||
           null;
         const projectManagerId =
-          project.userAccess.find((entry) => entry.role === "PROJECT_MANAGER")?.userId ||
+          project?.userAccess.find((entry) => entry.role === "PROJECT_MANAGER")?.userId ||
           null;
 
         let projectDirectorId: string | null = null;
         if (requestedDirectorId) {
           const isValid =
             activeAssignedDirectorId === requestedDirectorId ||
-            project.userAccess.some(
+            project?.userAccess.some(
               (u) => u.userId === requestedDirectorId,
-            );
+            ) === true;
           if (isValid) {
             projectDirectorId = requestedDirectorId;
           }
         }
         if (!projectDirectorId) {
           projectDirectorId = activeAssignedDirectorId || projectManagerId;
+        }
+
+        if (marcOnly) {
+          const marc = await tx.user.findFirst({ where: { role: "APPROVER_3" }, select: { id: true } });
+          if (!marc) throw new SubmissionError("PMV Manager account is not configured.");
+          projectDirectorId = marc.id;
         }
 
         if (!projectDirectorId) {
@@ -363,10 +377,10 @@ if (!storageProject) {
             description: typeof descriptionValue === "string" && descriptionValue.trim() ? descriptionValue.trim() : null,
             type: typeValue as ErrType,
             status: "PENDING",
-            currentStage: "PROJECT_DIRECTOR",
+            currentStage: marcOnly ? "PMV_MANAGER" : "PROJECT_DIRECTOR",
             createdById: access.userId,
-            projectId: project.id,
-            projectNameSnapshot: project.name,
+            projectId: project?.id ?? null,
+            projectNameSnapshot: project?.name ?? null,
             projectDirectorId,
             currentApproverId: projectDirectorId,
             currentApproverAssignedAt: new Date(),
@@ -402,7 +416,7 @@ if (!storageProject) {
             errId,
             performedById: access.userId,
             action: "SUBMITTED",
-            stage: "PROJECT_DIRECTOR",
+            stage: marcOnly ? "PMV_MANAGER" : "PROJECT_DIRECTOR",
             revisionNumber: 1,
             outputFileId: initialPdf.id,
           },
@@ -420,41 +434,22 @@ if (!storageProject) {
           },
         });
 
-        const approver = await tx.user.findUnique({
-          where: { id: projectDirectorId },
-          select: { name: true, email: true },
-        });
-
-        if (approver?.email) {
-          approverName = approver.name;
-          approverEmail = approver.email;
-        }
+        approverId = projectDirectorId;
       },
       { timeout: 15000 },
     );
 
-    if (approverEmail) {
+    if (approverId) {
+      const recipientId = approverId;
       runInBackground(async () => {
         try {
-          const emailContext = {
-            recipientName: approverName,
-            docNumber: documentNumber,
-            title,
-            workflowType: `ERR - ${typeValue}`,
-            projectName: storageProject.name,
-            currentStatus: "PENDING",
-            actorName: access.name,
-            documentUrl: new URL(`/errs/${errId}`, appConfig.appUrl()).toString(),
-          };
-
-          const template = buildApprovalAssignedEmail(emailContext);
-          await sendEmail({
-            to: approverEmail,
-            subject: template.subject,
-            html: template.html,
-          });
+          await queueWorkflowEmailEvents([{
+            recipientId,
+            type: EmailEventType.ERR_WORKFLOW_UPDATE,
+            documentId: errId,
+          }]);
         } catch (emailError) {
-          console.error("ERR approver email could not be sent.", emailError);
+          console.error("ERR approver email could not be queued.", emailError);
         }
       });
     }

@@ -12,9 +12,15 @@ function getOption(name, fallback = "") {
   return index >= 0 ? process.argv[index + 1] || fallback : fallback;
 }
 
+const CUSTOM_EMAIL = "marwa.mehieddine@ahmadiah.com";
+const CUSTOM_PASSWORD = "khaled.almanzalawy@ahmadiah.com"
+
 function passwordForUser(email) {
-  const localPart = email.trim().toLowerCase().split("@")[0] || "user";
-  return `${localPart}@ahmadiah26`;
+  if (email.toLowerCase() === CUSTOM_EMAIL.toLowerCase()) {
+    return CUSTOM_PASSWORD;
+  }
+
+  throw new Error(`This script is restricted to ${CUSTOM_EMAIL}`);
 }
 
 function hasFlag(name) {
@@ -83,9 +89,9 @@ if (mode === "all" && (applyChanges || sendEmails) && !confirmAll) {
   throw new Error("All-user changes require --confirm-all.");
 }
 
-if (sendEmails && !applyChanges) {
-  throw new Error("--send-email requires --apply so emailed passwords match the database.");
-}
+// if (sendEmails && !applyChanges) {
+//   throw new Error("--send-email requires --apply so emailed passwords match the database.");
+// }
 
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL is missing.");

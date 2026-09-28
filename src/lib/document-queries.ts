@@ -19,7 +19,7 @@ export type DocumentRow = {
   documentNumber: string;
   title: string;
   status: DocumentStatus;
-  documentType: "COMPARISON" | "MATERIAL_REQUISITION";
+  documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
   mrType?: "CASH" | "CREDIT" | null;
   mrNumber?: string | null;
   relatedComparison?: { documentNumber: string; title: string } | null;
@@ -33,7 +33,7 @@ export type ActionDocumentRow = {
   documentNumber: string;
   title: string;
   status: DocumentStatus;
-  documentType: "COMPARISON" | "MATERIAL_REQUISITION";
+  documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
   mrType?: "CASH" | "CREDIT" | null;
   mrNumber?: string | null;
   relatedComparison?: { documentNumber: string; title: string } | null;

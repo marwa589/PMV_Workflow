@@ -219,7 +219,7 @@ export async function POST(request: Request) {
   }
 
   let errAccessGrants: ErrAccessGrant[] = [];
-  if (role === UserRole.ERR_USER) {
+  if (role === UserRole.ERR_USER || role === UserRole.APPROVER_1) {
     const validated = await parseAndValidateErrAccess(body);
     if (validated.error) {
       return NextResponse.json({ message: validated.error }, { status: 400 });
@@ -340,7 +340,7 @@ export async function PATCH(request: Request) {
   }
 
   let errAccessGrants: ErrAccessGrant[] = [];
-  if (role === UserRole.ERR_USER) {
+  if (role === UserRole.ERR_USER || role === UserRole.APPROVER_1) {
     const validated = await parseAndValidateErrAccess(body);
     if (validated.error) {
       return NextResponse.json({ message: validated.error }, { status: 400 });

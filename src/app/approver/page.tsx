@@ -21,7 +21,7 @@ export default async function ApproverDashboardPage() {
     id: string;
     documentNumber: string;
     title: string;
-    documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "ERR";
+    documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR";
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     uploadedAt: string;
@@ -32,7 +32,7 @@ export default async function ApproverDashboardPage() {
     id: string;
     documentNumber: string;
     title: string;
-    documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "ERR";
+    documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR";
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     uploadedAt: string;
@@ -44,7 +44,7 @@ export default async function ApproverDashboardPage() {
     documentNumber: string;
     title: string;
     status: DocumentStatus;
-    documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "ERR";
+    documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR";
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     performedAt: Date;

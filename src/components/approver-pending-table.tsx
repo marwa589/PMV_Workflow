@@ -8,7 +8,7 @@ type PendingDocument = {
   id: string;
   documentNumber: string;
   title: string;
-  documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | "ERR" | null;
+  documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR" | null;
   mrType?: "CASH" | "CREDIT" | null;
   currentVersion: number;
   uploadedAt: string;
@@ -31,6 +31,9 @@ export default function ApproverPendingTable({ documents, showQuotation }: { doc
     }
     if (document.documentType === "ERR") {
       return "ERR";
+    }
+    if (document.documentType === "CUSTODY") {
+      return "Custody File";
     }
     return "Comparison Sheet";
   }

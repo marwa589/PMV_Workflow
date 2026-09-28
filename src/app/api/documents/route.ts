@@ -4,6 +4,8 @@ import { saveDocumentVersionFile } from "@/lib/files";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
+import { createNotification } from "@/lib/notifications";
+import { runInBackground } from "@/lib/background";
 import { resolveWorkflowApproverIdsForUploader } from "@/lib/workflow-locations";
 import { resolveDocumentWorkflowForSubmission } from "@/lib/document-workflow-config";
 import { documentStorageFolder } from "@/lib/storage-layout";
@@ -20,6 +22,16 @@ async function nextDocumentNumber(tx: Prisma.TransactionClient): Promise<string>
   const current = latestNumber ? Number.parseInt(latestNumber, 10) : 0;
   const next = current + 1;
   return `DOC-${String(next).padStart(4, "0")}`;
+}
+
+async function nextCustodyNumber(tx: Prisma.TransactionClient): Promise<string> {
+  const sequence = await tx.custodyFileSequence.upsert({
+    where: { id: 1 },
+    update: { nextNumber: { increment: 1 } },
+    create: { id: 1, nextNumber: 2 },
+    select: { nextNumber: true },
+  });
+  return `C${String(sequence.nextNumber - 1).padStart(4, "0")}`;
 }
 
 export async function POST(request: Request) {
@@ -48,8 +60,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "At least one document title is required." }, { status: 400 });
   }
 
-  if (!["COMPARISON", "MATERIAL_REQUISITION"].includes(documentType)) {
+  if (!["COMPARISON", "MATERIAL_REQUISITION", "CUSTODY"].includes(documentType)) {
     return NextResponse.json({ message: "Document type is required." }, { status: 400 });
+  }
+
+  if (documentType === "CUSTODY" && session.role !== UserRole.CLERK && session.role !== UserRole.ADMIN) {
+    return NextResponse.json({ message: "Only AVR uploaders can submit custody files." }, { status: 403 });
   }
 
   if (documentType === "MATERIAL_REQUISITION" && !["CASH", "CREDIT"].includes(mrType)) {
@@ -77,7 +93,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  const configuredWorkflow = await resolveDocumentWorkflowForSubmission(prisma, {
+  if (documentType === "CUSTODY" && uploader.location !== UserLocation.AVR) {
+    return NextResponse.json({ message: "Custody files can only be submitted by an AVR uploader." }, { status: 403 });
+  }
+
+  const configuredWorkflow = documentType === "CUSTODY" ? null : await resolveDocumentWorkflowForSubmission(prisma, {
     uploaderLocation: uploader.location,
     documentType,
     documentSubtype: documentType === "COMPARISON" ? comparisonType : mrType,
@@ -109,7 +129,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Approver 1 account is missing for the configured location." }, { status: 400 });
   }
 
-  const requiresApprover2 = configuredWorkflow?.status === DocumentStatus.PENDING_APPROVER_2 || requiresApprover1 || location === UserLocation.KUWAIT || documentType === "MATERIAL_REQUISITION" || (documentType === "COMPARISON" && comparisonType === "SPARE_PARTS");
+  const requiresApprover2 = documentType !== "CUSTODY" && (configuredWorkflow?.status === DocumentStatus.PENDING_APPROVER_2 || requiresApprover1 || location === UserLocation.KUWAIT || documentType === "MATERIAL_REQUISITION" || (documentType === "COMPARISON" && comparisonType === "SPARE_PARTS"));
 
   if (requiresApprover2 && !approver2) {
     return NextResponse.json({ message: "Approver 2 account is missing for this workflow." }, { status: 400 });
@@ -145,9 +165,13 @@ export async function POST(request: Request) {
       const createdDocuments = [] as Array<{ id: string; documentNumber: string; title: string }>;
 
       for (const [index, file] of files.entries()) {
-        const documentNumber = await nextDocumentNumber(tx);
+        const documentNumber = documentType === "CUSTODY" ? await nextCustodyNumber(tx) : await nextDocumentNumber(tx);
         const perFileTitle = fileTitles[index]?.trim() || file.name.replace(/\.[^.]+$/, "") || title || "Untitled Document";
-        const normalizedDocumentType = documentType === "COMPARISON" ? DocumentType.COMPARISON : DocumentType.MATERIAL_REQUISITION;
+        const normalizedDocumentType = documentType === "COMPARISON"
+          ? DocumentType.COMPARISON
+          : documentType === "CUSTODY"
+            ? DocumentType.CUSTODY
+            : DocumentType.MATERIAL_REQUISITION;
         const normalizedMrType = documentType === "MATERIAL_REQUISITION"
           ? (mrType === "CREDIT" ? MrType.CREDIT : MrType.CASH)
           : null;
@@ -182,7 +206,7 @@ export async function POST(request: Request) {
         const storageFolder = documentStorageFolder({
           uploaderEmail: uploader.email,
           location: uploader.location,
-          documentType: normalizedDocumentType === DocumentType.COMPARISON ? "COMPARISON" : "MATERIAL_REQUISITION",
+          documentType: normalizedDocumentType,
           mrType: normalizedMrType === MrType.CREDIT ? "CREDIT" : normalizedMrType === MrType.CASH ? "CASH" : null,
           hasLinkedComparison: isMrLinked,
         });
@@ -190,7 +214,7 @@ export async function POST(request: Request) {
           documentId: document.id,
           versionNumber: 0,
           file,
-          documentType: normalizedDocumentType === DocumentType.COMPARISON ? "COMPARISON" : "MATERIAL_REQUISITION",
+          documentType: normalizedDocumentType,
           documentNumber,
           mrNumber: documentType === "MATERIAL_REQUISITION" ? mrNumber || null : null,
           hasLinkedComparison: isMrLinked,
@@ -236,6 +260,16 @@ export async function POST(request: Request) {
         documentId: document.id,
       })),
     );
+
+    runInBackground(async () => {
+      await Promise.all(result.map((document) => createNotification({
+        userId: initialApprover.id,
+        type: "PENDING_APPROVAL",
+        title: "Document awaiting your review",
+        message: `${document.documentNumber} - ${document.title}`,
+        documentId: document.id,
+      })));
+    });
 
     return NextResponse.json({ message: "Document submitted.", documents: result }, { status: 201 });
   } catch (error) {

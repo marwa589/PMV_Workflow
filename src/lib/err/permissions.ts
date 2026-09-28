@@ -104,7 +104,7 @@ export async function getErrAccess() {
     viewerProjectIds,
 
     canAccessErrModule:
-      (moduleVisibility !== "DOCUMENTS_ONLY" || isWorkshopManager) &&
+      (moduleVisibility !== "DOCUMENTS_ONLY" || isWorkshopManager || isUploader) &&
       (isAdmin || isWorkshopManager || isPmvManager || roles.length > 0 || isUploader),
   };
 }

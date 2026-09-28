@@ -227,7 +227,7 @@ export async function POST(
             documentId: document.id,
             versionNumber: nextVersionNumber,
             file: fileValue,
-            documentType: document.documentType === "COMPARISON" ? "COMPARISON" : "MATERIAL_REQUISITION",
+            documentType: document.documentType,
             documentNumber: document.documentNumber,
             mrNumber: document.mrNumber,
             hasLinkedComparison: !!document.relatedComparisonId,
@@ -314,7 +314,7 @@ export async function POST(
         documentId: document.id,
         versionNumber: nextVersionNumber,
         file: fileValue,
-        documentType: document.documentType === "COMPARISON" ? "COMPARISON" : "MATERIAL_REQUISITION",
+        documentType: document.documentType,
         documentNumber: document.documentNumber,
         mrNumber: document.mrNumber,
         hasLinkedComparison: !!document.relatedComparisonId,
@@ -378,8 +378,13 @@ export async function POST(
         },
       });
 
+      const nextApproverRole = document.documentType === "CUSTODY" && session.role === UserRole.APPROVER_1
+        ? UserRole.APPROVER_3
+        : workflow.nextApproverRole;
       let nextApproverId: string | null = null;
-      let nextStatus = workflow.nextStatus;
+      let nextStatus = document.documentType === "CUSTODY" && session.role === UserRole.APPROVER_1
+        ? DocumentStatus.PENDING_APPROVER_3
+        : workflow.nextStatus;
       let nextWorkflowStep: number | null = null;
       const templateTransition = resolveNextWorkflowStepForApproval(document.workflowTemplate, document.currentWorkflowStep);
 
@@ -394,14 +399,14 @@ export async function POST(
           nextStatus = DocumentStatus.APPROVED;
           nextWorkflowStep = templateTransition.currentStep.stepNumber;
         }
-      } else if (workflow.nextApproverRole) {
+      } else if (nextApproverRole) {
         const nextApprover = await tx.user.findFirst({
-          where: { role: workflow.nextApproverRole},
+          where: { role: nextApproverRole },
           select: { id: true },
         });
 
         if (!nextApprover) {
-          throw new Error(`User for ${workflow.nextApproverRole} not found.`);
+          throw new Error(`User for ${nextApproverRole} not found.`);
         }
 
         nextApproverId = nextApprover.id;
@@ -439,19 +444,19 @@ export async function POST(
       await writeAuditLog({
         documentId: document.id,
         performedById: session.userId,
-        action: workflow.nextApproverRole ? "DOCUMENT_APPROVED_STAGE" : "DOCUMENT_APPROVED",
+        action: nextApproverRole ? "DOCUMENT_APPROVED_STAGE" : "DOCUMENT_APPROVED",
         details: JSON.stringify({
           decision,
           comments: comments || null,
           approverRole: session.role,
-          nextStatus: workflow.nextStatus,
+          nextStatus,
           previousStatus: document.status,
-          nextApproverRole: workflow.nextApproverRole,
+          nextApproverRole,
           signatureCount: Number.isFinite(signatureCount) ? signatureCount : 0,
         }),
       });
 
-      if (workflow.nextApproverRole) {
+      if (nextApproverRole) {
         if (nextApproverId) {
           runInBackground(async () => {
             await createNotification({
@@ -476,7 +481,7 @@ export async function POST(
       }
 
       return {
-        status: workflow.nextStatus,
+        status: nextStatus,
         currentVersion: nextVersionNumber,
         previousFilePaths: previousVersions.map((v) => v.filePath),
         currentFilePath: finalFilePath,
@@ -654,7 +659,7 @@ export async function POST(
 
       if (
         result.status === DocumentStatus.APPROVED &&
-        documentForEmail?.documentType === "COMPARISON" &&
+        (documentForEmail?.documentType === "COMPARISON" || documentForEmail?.documentType === "CUSTODY") &&
         documentForEmail?.createdBy?.email
       ) {
         if (creatorEmail && !targetEmails.includes(creatorEmail)) {
@@ -686,6 +691,10 @@ export async function POST(
         if (document.mrType === "CASH") return "MR Cash";
         if (document.mrType === "CREDIT") return "MR Credit";
         return "MR";
+      }
+
+      if (document.documentType === "CUSTODY") {
+        return "Custody File";
       }
 
       return "Comparison";

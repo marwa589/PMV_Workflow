@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import { EmailEventType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getErrAccess, canApproveErr } from "@/lib/err/permissions";
 import {
@@ -15,18 +16,9 @@ import {
 import { getNextErrStage, resolveErrApprover } from "@/lib/err/workflow";
 import { projectStorageFolderFromFile } from "@/lib/err-storage";
 import { getRequestOrigin } from "@/lib/request-origin";
-import { appConfig } from "@/lib/env";
-import { sendEmail } from "@/lib/mail";
 import { runInBackground } from "@/lib/background";
-// semd err to uploaders
 import { isErrUploaderAccount } from "@/lib/err/uploader-access";
-import {
-  buildApprovalAssignedEmail,
-  buildDocumentRejectedEmail,
-  buildErrOnHoldEmail,
-  buildFinalApprovalEmail,
-  buildRevisionRequiredEmail,
-} from "@/lib/email-templates";
+import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 
 export const runtime = "nodejs";
 
@@ -522,44 +514,47 @@ export async function POST(
     if (result.status === "PENDING") {
       runInBackground(async () => {
         try {
+          await prisma.emailNotificationEvent.updateMany({
+            where: {
+              recipientId: access.userId,
+              documentId: id,
+              type: EmailEventType.ERR_WORKFLOW_UPDATE,
+              emailSent: false,
+              claimedAt: null,
+            },
+            data: { emailSent: true, claimedAt: null },
+          });
           const pendingErr = await prisma.err.findUnique({
             where: { id },
             select: {
-              documentNumber: true,
-              title: true,
-              type: true,
-              projectNameSnapshot: true,
-              currentApprover: { select: { name: true, email: true } },
+              currentApproverId: true,
             },
           });
 
-          if (pendingErr?.currentApprover?.email) {
-            const emailContext = {
-              recipientName: pendingErr.currentApprover.name,
-              docNumber: pendingErr.documentNumber,
-              title: pendingErr.title,
-              workflowType: `ERR - ${pendingErr.type}`,
-              projectName: pendingErr.projectNameSnapshot,
-              currentStatus: result.status,
-              actorName: access.name,
-              comments: comments || null,
-              documentUrl: new URL(`/errs/${id}`, appConfig.appUrl()).toString(),
-            };
-            const template = buildApprovalAssignedEmail(emailContext);
-
-            await sendEmail({
-              to: pendingErr.currentApprover.email,
-              subject: template.subject,
-              html: template.html,
-            });
+          if (pendingErr?.currentApproverId) {
+            await queueWorkflowEmailEvents([{
+              recipientId: pendingErr.currentApproverId,
+              type: EmailEventType.ERR_WORKFLOW_UPDATE,
+              documentId: id,
+            }]);
           }
         } catch (error) {
-          console.error("ERR next approver email could not be sent.", error);
+          console.error("ERR next approver email could not be queued.", error);
         }
       });
     } else {
       runInBackground(async () => {
         try {
+        await prisma.emailNotificationEvent.updateMany({
+          where: {
+            recipientId: access.userId,
+            documentId: id,
+            type: EmailEventType.ERR_WORKFLOW_UPDATE,
+            emailSent: false,
+            claimedAt: null,
+          },
+          data: { emailSent: true, claimedAt: null },
+        });
         const errForEmail = await prisma.err.findUnique({
           where: { id },
           select: {
@@ -581,6 +576,7 @@ export async function POST(
           select: {
             name: true,
             email: true,
+            id: true,
             role: true,
             location: true,
             errAccess: {
@@ -601,39 +597,14 @@ export async function POST(
         );
 
         if (errForEmail && recipients.length > 0) {
-          const templateForRecipient = (recipient: { name: string; email: string }) => {
-            const emailContext = {
-              recipientName: recipient.name,
-              docNumber: errForEmail.documentNumber,
-              title: errForEmail.title,
-              workflowType: `ERR - ${errForEmail.type}`,
-              projectName: errForEmail.projectNameSnapshot,
-              currentStatus: result.status,
-              actorName: access.name,
-              comments: comments || null,
-              documentUrl: new URL(`/errs/${id}`, appConfig.appUrl()).toString(),
-            };
-            const template = result.status === "APPROVED"
-              ? buildFinalApprovalEmail(emailContext)
-              : result.status === "REJECTED"
-                ? buildDocumentRejectedEmail(emailContext)
-                : result.status === "REVISION_REQUIRED"
-                  ? buildRevisionRequiredEmail(emailContext)
-                  : buildErrOnHoldEmail(emailContext);
-
-            return sendEmail({
-              to: recipient.email,
-              subject: template.subject,
-              html: template.html,
-            });
-          };
-
-          for (const recipient of recipients) {
-            await templateForRecipient(recipient);
-          }
+          await queueWorkflowEmailEvents(recipients.map((recipient) => ({
+            recipientId: recipient.id,
+            type: EmailEventType.ERR_WORKFLOW_UPDATE,
+            documentId: id,
+          })));
         }
         } catch (error) {
-          console.error("ERR uploader email could not be sent.", error);
+          console.error("ERR uploader email could not be queued.", error);
         }
       });
     }

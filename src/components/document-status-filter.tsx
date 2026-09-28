@@ -34,6 +34,7 @@ export default function DocumentStatusFilter({ value = "", title = "Status", doc
             <option value="">All</option>
             <option value="MATERIAL_REQUISITION">MRs</option>
             <option value="COMPARISON">Comparison Sheets</option>
+            <option value="CUSTODY">Custody Files</option>
             {showErrDocumentType ? <option value="ERR">ERRs</option> : null}
           </select>
         </div>
@@ -67,6 +68,7 @@ export default function DocumentStatusFilter({ value = "", title = "Status", doc
             <option value="">All ERR Types</option>
             <option value="RENTAL_ACTC">Rental ACTC</option>
             <option value="RENTAL_EXTERNAL">Rental External</option>
+            <option value="RENEWAL">Renewal</option>
             <option value="PURCHASE">Purchase</option>
           </select>
         </div>

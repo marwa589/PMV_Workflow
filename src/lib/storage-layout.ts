@@ -84,7 +84,7 @@ function resolveStorageGroupFromUser(location?: string | null, uploaderEmail?: s
 export function documentStorageFolder(params: {
   uploaderEmail: string;
   location?: string | null;
-  documentType: "COMPARISON" | "MATERIAL_REQUISITION";
+  documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
   mrType?: "CASH" | "CREDIT" | null;
   hasLinkedComparison?: boolean;
 }): string | null {
@@ -92,6 +92,10 @@ export function documentStorageFolder(params: {
   const group = resolveStorageGroupFromUser(params.location, params.uploaderEmail);
 
   if (!location) return null;
+
+  if (params.documentType === "CUSTODY") {
+    return "Custody Files/AVR";
+  }
 
   const baseFolder = location === "KSA" && group ? `MRs/${location}/${group}` : `MRs/${location}`;
 

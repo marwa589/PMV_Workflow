@@ -21,7 +21,7 @@ export default async function ClerkDashboardPage() {
     documentNumber: string;
     title: string;
     status: DocumentStatus;
-    documentType: "COMPARISON" | "MATERIAL_REQUISITION";
+    documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     createdAt: Date;

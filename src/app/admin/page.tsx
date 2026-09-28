@@ -31,7 +31,7 @@ export default async function AdminDashboardPage() {
     documentNumber: string;
     title: string;
     status: DocumentStatus;
-    documentType: "COMPARISON" | "MATERIAL_REQUISITION";
+    documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     currentApprover: { id: string; name: string; email: string } | null;

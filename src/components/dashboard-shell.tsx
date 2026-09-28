@@ -49,8 +49,19 @@ type SidebarCounts = {
   comparisons: number;
   pendingApprovals: number;
   errs: number;
+  isErrUploader: boolean;
   userLocation: "AVR" | "AVK" | "KUWAIT" | null;
 };
+
+const emptySidebarCounts: SidebarCounts = {
+  materialRequisitions: 0,
+  comparisons: 0,
+  pendingApprovals: 0,
+  errs: 0,
+  isErrUploader: false,
+  userLocation: null,
+};
+let lastSidebarCounts: { key: string; counts: SidebarCounts } | null = null;
 
 type NotificationItem = {
   id: string;
@@ -72,6 +83,7 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "My Documents", href: "/clerk/my-documents", icon: FileText },
     { label: "MRs", href: "/clerk/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "Comparison Sheets", href: "/clerk/my-documents?documentType=COMPARISON", icon: FileText },
+    { label: "Custody Files", href: "/clerk/my-documents?documentType=CUSTODY", icon: FileText },
     { label: "Rejected Documents", href: "/clerk/rejected-documents", icon: FileCheck2 },
     { label: "Revision Required", href: "/clerk/my-documents?status=REVISION_REQUIRED", icon: ClipboardCheck },
     { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
@@ -84,6 +96,7 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "My Documents", href: "/approver/my-documents", icon: FileText },
     { label: "MRs", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "Comparison Sheets", href: "/approver/my-documents?documentType=COMPARISON", icon: FileText },
+    { label: "Custody Files", href: "/approver/my-documents?documentType=CUSTODY", icon: FileText },
     { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
     { label: "ERRs", href: "/errs", icon: FileText },
     { label: "Pending Approvals", href: "/approver/pending-approvals", icon: ClipboardCheck },
@@ -98,6 +111,7 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "My Documents", href: "/approver/my-documents", icon: FileText },
     { label: "MRs", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "Comparison Sheets", href: "/approver/my-documents?documentType=COMPARISON", icon: FileText },
+    { label: "Custody Files", href: "/approver/my-documents?documentType=CUSTODY", icon: FileText },
     { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
     { label: "ERRs", href: "/errs", icon: FileText },
     { label: "Pending Approvals", href: "/approver/pending-approvals", icon: ClipboardCheck },
@@ -112,6 +126,7 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "My Documents", href: "/approver/my-documents", icon: FileText },
     { label: "MRs", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "Comparison Sheets", href: "/approver/my-documents?documentType=COMPARISON", icon: FileText },
+    { label: "Custody Files", href: "/approver/my-documents?documentType=CUSTODY", icon: FileText },
     { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
     { label: "ERRs", href: "/errs", icon: FileText },
     { label: "Pending Approvals", href: "/approver/pending-approvals", icon: ClipboardCheck },
@@ -127,6 +142,7 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "All Documents", href: "/admin/all-documents", icon: FileText },
     { label: "MRs", href: "/admin/all-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "Comparison Sheets", href: "/admin/all-documents?documentType=COMPARISON", icon: FileText },
+    { label: "Custody Files", href: "/admin/all-documents?documentType=CUSTODY", icon: FileText },
     { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
     { label: "ERRs", href: "/errs", icon: FileText },
     { label: "Pending Approvals", href: "/admin/pending-approvals", icon: ClipboardCheck },
@@ -149,6 +165,7 @@ function getVisibleNavItems(role: AppRole, userName: string, userLocation: Sideb
       { label: "Dashboard", href: "/errs?view=all&section=dashboard", icon: LayoutDashboard },
       { label: "My Documents", href: "/errs?view=all&section=my-documents", icon: FileText },
       ...(canUpload ? [{ label: "New Document", href: "/new-document", icon: FilePlus2 }] : []),
+      ...(canUpload ? [{ label: "ERR - Marc Only", href: "/errs/new?marcOnly=1", icon: FilePlus2 }] : []),
       { label: "ERRs", href: "/errs", icon: FileText },
       ...(canUpload ? [{ label: "Attach Vouchers", href: "/errs/vouchers", icon: FilePlus2 }] : []),
       { label: "Pending Approvals", href: "/errs?view=pending", icon: ClipboardCheck },
@@ -175,7 +192,9 @@ function getVisibleNavItems(role: AppRole, userName: string, userLocation: Sideb
     return true;
   });
 
-  const locationMrItems: NavItem[] = userLocation === "AVR"
+  const locationMrItems: NavItem[] = !userLocation && role === "APPROVER_1"
+    ? []
+    : userLocation === "AVR"
     ? [{ label: "MRs - AVR", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVR`, icon: FileText }]
     : userLocation === "AVK"
       ? [{ label: "MRs - AVK", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVK`, icon: FileText }]
@@ -185,17 +204,27 @@ function getVisibleNavItems(role: AppRole, userName: string, userLocation: Sideb
           { label: "MRs - AVK", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVK`, icon: FileText },
         ];
   const navItemsWithLocationMrs = items.flatMap((item) => item.label === "MRs" ? locationMrItems : [item]);
+  const navItemsWithErrUpload = role === "APPROVER_1" && isUploader
+    ? [
+        ...navItemsWithLocationMrs.filter((item) => item.label !== "ERRs"),
+        { label: "ERRs", href: "/errs", icon: FileText },
+        { label: "New ERR", href: "/errs/new", icon: FilePlus2 },
+      ]
+    : navItemsWithLocationMrs;
+  const navItemsWithMarcErr = isUploader && role !== "APPROVER_1"
+    ? [...navItemsWithErrUpload, { label: "ERR - Marc Only", href: "/errs/new?marcOnly=1", icon: FilePlus2 }]
+    : navItemsWithErrUpload;
 
   if ((role === "ADMIN" || role === "APPROVER_3") && visibility !== "DOCUMENTS_ONLY") {
     const onHoldItem: NavItem = { label: "On Hold", href: "/errs?view=on-hold", icon: PauseCircle };
-    return [...navItemsWithLocationMrs, onHoldItem];
+    return [...navItemsWithMarcErr, onHoldItem];
   }
 
   if (visibility === "DOCUMENTS_ONLY" && role === "CLERK" && !items.some((item) => item.label === "Dashboard")) {
-    return [{ label: "Dashboard", href: "/clerk", icon: LayoutDashboard }, ...navItemsWithLocationMrs];
+    return [{ label: "Dashboard", href: "/clerk", icon: LayoutDashboard }, ...navItemsWithMarcErr];
   }
 
-  return navItemsWithLocationMrs;
+  return navItemsWithMarcErr;
 }
 
 function Sidebar({
@@ -384,7 +413,10 @@ export default function DashboardShell({
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [sidebarCounts, setSidebarCounts] = useState<SidebarCounts>({ materialRequisitions: 0, comparisons: 0, pendingApprovals: 0, errs: 0, userLocation: null });
+  const sidebarCountsKey = `${role}:${userName.trim().toLowerCase()}`;
+  const [sidebarCounts, setSidebarCounts] = useState<SidebarCounts>(
+    lastSidebarCounts?.key === sidebarCountsKey ? lastSidebarCounts.counts : emptySidebarCounts,
+  );
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
   const pathname = usePathname();
@@ -393,6 +425,28 @@ export default function DashboardShell({
   useEffect(() => {
     setSearchValue(searchParams?.get("search") ?? "");
   }, [searchParams]);
+
+  useEffect(() => {
+    const currentSearch = searchParams?.get("search") ?? "";
+    const nextSearch = searchValue.trim();
+    if (nextSearch === currentSearch.trim()) return;
+
+    const timeoutId = window.setTimeout(() => {
+      const params = new URLSearchParams(Array.from(searchParams?.entries() ?? []));
+      if (nextSearch) {
+        params.set("search", nextSearch);
+      } else {
+        params.delete("search");
+      }
+      params.delete("page");
+
+      const queryString = params.toString();
+      const targetUrl = queryString ? `${pathname}?${queryString}` : pathname;
+      router.replace(targetUrl, { scroll: false });
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [pathname, router, searchParams, searchValue]);
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -450,7 +504,11 @@ export default function DashboardShell({
     const loadSidebarCounts = () => {
       void fetch("/api/sidebar-counts", { cache: "no-store" })
         .then((response) => response.ok ? response.json() as Promise<SidebarCounts> : null)
-        .then((counts) => { if (active && counts) setSidebarCounts(counts); })
+        .then((counts) => {
+          if (!active || !counts) return;
+          lastSidebarCounts = { key: sidebarCountsKey, counts };
+          setSidebarCounts(counts);
+        })
         .catch(() => undefined);
     };
 
@@ -485,13 +543,13 @@ export default function DashboardShell({
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-0 h-80 bg-gradient-to-br from-slate-200 via-slate-100 to-cyan-100" />
       <div className="relative z-10 flex min-h-screen">
         <div className="hidden lg:block">
-              <Sidebar role={role} userName={userName} counts={sidebarCounts} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader} />
+              <Sidebar role={role} userName={userName} counts={sidebarCounts} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader || sidebarCounts.isErrUploader} />
         </div>
 
         {menuOpen && (
           <div className="fixed inset-0 z-40 flex lg:hidden">
             <div className="h-full shadow-2xl">
-              <Sidebar role={role} userName={userName} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader} />
+              <Sidebar role={role} userName={userName} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader || sidebarCounts.isErrUploader} />
             </div>
             <button
               type="button"
@@ -527,17 +585,11 @@ export default function DashboardShell({
                     event.preventDefault();
                     const params = new URLSearchParams(Array.from(searchParams?.entries() ?? []));
                     const nextSearch = searchValue.trim();
-
-                    if (nextSearch) {
-                      params.set("search", nextSearch);
-                    } else {
-                      params.delete("search");
-                    }
-
+                    if (nextSearch) params.set("search", nextSearch);
+                    else params.delete("search");
+                    params.delete("page");
                     const queryString = params.toString();
-                    const targetUrl = queryString ? `${pathname}?${queryString}` : pathname;
-                    router.push(targetUrl, { scroll: false });
-                    router.refresh();
+                    router.replace(queryString ? `${pathname}?${queryString}` : pathname, { scroll: false });
                   }}
                 >
                   <Search className="h-4 w-4" />

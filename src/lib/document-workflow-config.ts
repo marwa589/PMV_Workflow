@@ -25,7 +25,13 @@ export async function resolveDocumentWorkflowForSubmission(
   tx: WorkflowTemplateLookup,
   context: SubmissionWorkflowContext,
 ): Promise<ResolvedSubmissionWorkflow | null> {
-  const documentType = context.documentType === "MATERIAL_REQUISITION" ? DocumentType.MATERIAL_REQUISITION : context.documentType === "COMPARISON" ? DocumentType.COMPARISON : null;
+  const documentType = context.documentType === "MATERIAL_REQUISITION"
+    ? DocumentType.MATERIAL_REQUISITION
+    : context.documentType === "COMPARISON"
+      ? DocumentType.COMPARISON
+      : context.documentType === "CUSTODY"
+        ? DocumentType.CUSTODY
+        : null;
 
   if (!documentType) {
     return null;
