@@ -11,7 +11,17 @@ export default async function ApproverDocumentReviewPage({ params }: { params: P
   const { id } = await params;
   const document = await prisma.document.findUnique({
     where: { id },
-    select: { id: true, documentNumber: true, title: true, currentApproverId: true, currentVersion: true, versions: { where: { versionNumber: { equals: 0 } }, select: { id: true } }, createdById: true },
+    select: {
+      id: true,
+      documentNumber: true,
+      title: true,
+      currentApproverId: true,
+      currentVersion: true,
+      documentType: true,
+      createdBy: { select: { location: true } },
+      versions: { where: { versionNumber: { equals: 0 } }, select: { id: true } },
+      createdById: true,
+    },
   });
 
   if (!document) notFound();
@@ -26,6 +36,9 @@ export default async function ApproverDocumentReviewPage({ params }: { params: P
     "mohammad.mehieddine@ahmadiah.com",
     "joemar.paraiso@ahmadiah.com",
   ].includes(user?.email?.trim().toLowerCase() || "");
+  const isGeorgeAvrOrAvkMr = user?.email?.trim().toLowerCase() === "george.azzi@ahmadiah.com"
+    && document.documentType === "MATERIAL_REQUISITION"
+    && (document.createdBy.location === "AVR" || document.createdBy.location === "AVK");
 
   return (
     <DocumentReviewEditor
@@ -33,7 +46,7 @@ export default async function ApproverDocumentReviewPage({ params }: { params: P
       documentNumber={document.documentNumber}
       title={document.title}
       hasSignature={Boolean(user?.signaturePath)}
-      allowNoSignature={allowNoSignature}
+      allowNoSignature={allowNoSignature || isGeorgeAvrOrAvkMr}
     />
   );
 }

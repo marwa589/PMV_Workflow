@@ -1,5 +1,7 @@
 import {
   flushWorkflowEmailBatches,
+  isEmailQuietHours,
+  nextEmailSendTime,
   queueComparisonMrReminders,
   queuePendingApprovalReminders,
 } from "@/lib/workflow-email-batching";
@@ -18,6 +20,7 @@ async function processWorkflowEmails() {
   workerState.workflowEmailWorkerRunning = true;
 
   try {
+    if (isEmailQuietHours()) return;
     await queuePendingApprovalReminders();
     await queueComparisonMrReminders();
     await flushWorkflowEmailBatches();
@@ -25,6 +28,13 @@ async function processWorkflowEmails() {
     console.error("Workflow email worker failed:", error);
   } finally {
     workerState.workflowEmailWorkerRunning = false;
+    const now = new Date();
+    const nextRunDelay = isEmailQuietHours(now)
+      ? Math.max(1000, nextEmailSendTime(now).getTime() - now.getTime())
+      : WORKER_INTERVAL_MS;
+    setTimeout(() => {
+      void processWorkflowEmails();
+    }, nextRunDelay);
   }
 }
 
@@ -33,7 +43,4 @@ export function startWorkflowEmailWorker() {
   workerState.workflowEmailWorkerStarted = true;
 
   void processWorkflowEmails();
-  setInterval(() => {
-    void processWorkflowEmails();
-  }, WORKER_INTERVAL_MS);
 }

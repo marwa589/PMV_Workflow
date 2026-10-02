@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { ErrFileKind } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { resolveStoredFilePath } from "@/lib/files";
-import { canViewErr, getErrAccess } from "@/lib/err/permissions";
+import { canViewErr, canViewErrQuotation, getErrAccess } from "@/lib/err/permissions";
 
 export const runtime = "nodejs";
 
@@ -72,14 +72,21 @@ export async function GET(
     );
   }
 
+  if (file.kind === "QUOTATION" && !canViewErrQuotation(access)) {
+    return NextResponse.json(
+      { message: "You do not have access to this quotation." },
+      { status: 403 },
+    );
+  }
+
   if (
-    (file.kind === "QUOTATION" || file.kind === "ATTACHMENT") &&
+    file.kind === "ATTACHMENT" &&
     !access.isUploader &&
     !access.isAdmin &&
     !access.isPmvManager
   ) {
     return NextResponse.json(
-      { message: "You do not have access to this quotation." },
+      { message: "You do not have access to this attachment." },
       { status: 403 },
     );
   }

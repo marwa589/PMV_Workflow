@@ -4,7 +4,7 @@ import DocumentListTable from "@/components/document-list-table";
 import DocumentStatusFilter from "@/components/document-status-filter";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
-import { getPoStatus, parseDocumentStatusFilter, parseDocumentTypeFilter, parseDownloadStatusFilter, parseMrTypeFilter, parsePoStatusFilter } from "@/lib/document-status";
+import { getPoStatus, parseDocumentStatusFilter, parseDocumentTypeFilter, parseDownloadStatusFilter, parseMrLocationFilter, parseMrTypeFilter, parsePoStatusFilter } from "@/lib/document-status";
 import { parseSearchQuery, matchesDocumentSearch } from "@/lib/document-search";
 import { getDocumentsForClerk, getPurchaseOrderStatuses } from "@/lib/document-queries";
 
@@ -18,6 +18,7 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
   const downloadStatusFilter = parseDownloadStatusFilter(resolvedSearchParams?.downloadStatus);
   const mrTypeFilter = parseMrTypeFilter(resolvedSearchParams?.mrType);
+  const locationFilter = parseMrLocationFilter(resolvedSearchParams?.location);
   const poStatusFilter = parsePoStatusFilter(resolvedSearchParams?.poStatus);
   const poStatuses = await getPurchaseOrderStatuses(data.documents.map((doc) => doc.id));
   const approvalFrom = typeof resolvedSearchParams?.approvalFrom === "string" ? resolvedSearchParams.approvalFrom : "";
@@ -48,6 +49,7 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
   const documents = data.documents
     .filter((doc) => !statusFilter || doc.status === statusFilter)
     .filter((doc) => !documentTypeFilter || doc.documentType === documentTypeFilter)
+    .filter((doc) => !locationFilter || (doc.documentType === "MATERIAL_REQUISITION" && (doc.uploaderLocation ?? doc.createdBy.location) === locationFilter))
     .filter((doc) => !mrTypeFilter || (doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === mrTypeFilter))
     .filter((doc) => !poStatusFilter || getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id)) === poStatusFilter)
     .filter((doc) => !downloadStatusFilter || (downloadStatusFilter === "DOWNLOADED" ? doc.downloadedAt : !doc.downloadedAt))
@@ -118,6 +120,7 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
           <DocumentStatusFilter
             value={statusFilter}
             documentType={documentTypeFilter}
+            location={locationFilter}
             mrType={mrTypeFilter}
             showMrTypeFilter
             showPoStatusFilter

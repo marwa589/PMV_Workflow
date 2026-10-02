@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import { EmailEventType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getErrAccess, canApproveErr } from "@/lib/err/permissions";
 import {
   ERR_PDF_LIMITS,
+  saveErrFile,
   saveErrPdf,
 } from "@/lib/err/files";
 import { deleteDocumentFiles } from "@/lib/files";
@@ -14,14 +16,9 @@ import {
 import { getNextErrStage, resolveErrApprover } from "@/lib/err/workflow";
 import { projectStorageFolderFromFile } from "@/lib/err-storage";
 import { getRequestOrigin } from "@/lib/request-origin";
-import { appConfig } from "@/lib/env";
-import { sendEmail } from "@/lib/mail";
-import {
-  buildDocumentRejectedEmail,
-  buildErrOnHoldEmail,
-  buildFinalApprovalEmail,
-  buildRevisionRequiredEmail,
-} from "@/lib/email-templates";
+import { runInBackground } from "@/lib/background";
+import { isErrUploaderAccount } from "@/lib/err/uploader-access";
+import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 
 export const runtime = "nodejs";
 
@@ -88,6 +85,8 @@ export async function POST(
   const comments = String(formData.get("comments") || "").trim();
   const fileValue = formData.get("file");
   const file = fileValue instanceof File ? fileValue : null;
+  const quotationValue = formData.get("quotation");
+  const quotationFile = quotationValue instanceof File && quotationValue.size > 0 ? quotationValue : null;
   const signatureCount = Number(formData.get("signatureCount") || 0);
 
   if (decision !== "APPROVE" && decision !== "REJECT" && decision !== "COMMENT" && decision !== "HOLD") {
@@ -102,6 +101,23 @@ export async function POST(
       { message: "A signed PDF is required to approve an ERR." },
       { status: 400 },
     );
+  }
+
+  if (quotationFile && !access.isPmvManager) {
+    return NextResponse.json(
+      { message: "Only the PMV Manager can add quotations during ERR review." },
+      { status: 403 },
+    );
+  }
+
+  if (quotationFile) {
+    const extension = quotationFile.name.toLowerCase().split(".").pop() || "";
+    if (!["pdf", "doc", "docx", "xls", "xlsx", "jpg", "jpeg", "png"].includes(extension)) {
+      return NextResponse.json({ message: "Unsupported quotation file type." }, { status: 400 });
+    }
+    if (quotationFile.size > 20 * 1024 * 1024) {
+      return NextResponse.json({ message: "The quotation must be 20 MB or smaller." }, { status: 400 });
+    }
   }
 
   let validatedSignedPdf: Awaited<ReturnType<typeof validatePdfUpload>> | null = null;
@@ -145,6 +161,23 @@ export async function POST(
     }
   }
 
+  let savedQuotation: Awaited<ReturnType<typeof saveErrFile>> | null = null;
+  if (quotationFile) {
+    try {
+      savedQuotation = await saveErrFile({
+        errId: id,
+        kind: "QUOTATION",
+        file: quotationFile,
+        storageName: quotationFile.name,
+        storageFolder: errForStorage?.files[0]?.storageFolder || projectStorageFolderFromFile(errForStorage?.files[0]?.filePath),
+      });
+      savedPaths.push(savedQuotation.filePath);
+    } catch (error) {
+      console.error("ERR quotation preparation failed.", error);
+      return NextResponse.json({ message: "Unable to prepare the quotation." }, { status: 500 });
+    }
+  }
+
   try {
     const result = await prisma.$transaction(async (tx) => {
       const err = await tx.err.findUnique({
@@ -185,6 +218,30 @@ export async function POST(
 
       if (err.currentApproverId !== access.userId) {
         throw new ErrActionError("This ERR is not assigned to you.");
+      }
+
+      if (savedQuotation && err.currentStage !== "PMV_MANAGER") {
+        throw new ErrActionError("Quotations can only be added during PMV Manager review.");
+      }
+
+      if (savedQuotation) {
+        const quotationCount = await tx.errFile.count({
+          where: { errId: err.id, kind: "QUOTATION" },
+        });
+        await tx.errFile.create({
+          data: {
+            errId: err.id,
+            kind: "QUOTATION",
+            versionNumber: quotationCount + 1,
+            revisionNumber: err.revisionNumber,
+            filePath: savedQuotation.filePath,
+            storageFolder: savedQuotation.storageFolder,
+            originalName: savedQuotation.originalName,
+            mimeType: savedQuotation.mimeType,
+            fileSize: savedQuotation.fileSize,
+            uploadedById: access.userId,
+          },
+        });
       }
 
       const latestErrPdf = err.files[0] ?? null;
@@ -454,47 +511,102 @@ export async function POST(
       };
     });
 
-    if (result.status !== "PENDING") {
-      try {
-        const uploader = await prisma.err.findUnique({
+    if (result.status === "PENDING") {
+      runInBackground(async () => {
+        try {
+          await prisma.emailNotificationEvent.updateMany({
+            where: {
+              recipientId: access.userId,
+              documentId: id,
+              type: EmailEventType.ERR_WORKFLOW_UPDATE,
+              emailSent: false,
+              claimedAt: null,
+            },
+            data: { emailSent: true, claimedAt: null },
+          });
+          const pendingErr = await prisma.err.findUnique({
+            where: { id },
+            select: {
+              currentApproverId: true,
+            },
+          });
+
+          if (pendingErr?.currentApproverId) {
+            await queueWorkflowEmailEvents([{
+              recipientId: pendingErr.currentApproverId,
+              type: EmailEventType.ERR_WORKFLOW_UPDATE,
+              documentId: id,
+            }]);
+          }
+        } catch (error) {
+          console.error("ERR next approver email could not be queued.", error);
+        }
+      });
+    } else {
+      runInBackground(async () => {
+        try {
+        await prisma.emailNotificationEvent.updateMany({
+          where: {
+            recipientId: access.userId,
+            documentId: id,
+            type: EmailEventType.ERR_WORKFLOW_UPDATE,
+            emailSent: false,
+            claimedAt: null,
+          },
+          data: { emailSent: true, claimedAt: null },
+        });
+        const errForEmail = await prisma.err.findUnique({
           where: { id },
           select: {
             documentNumber: true,
             title: true,
             type: true,
             projectNameSnapshot: true,
-            createdBy: { select: { name: true, email: true } },
+            createdBy: { select: { location: true } },
           },
         });
 
-        if (uploader?.createdBy.email) {
-          const emailContext = {
-            recipientName: uploader.createdBy.name,
-            docNumber: uploader.documentNumber,
-            title: uploader.title,
-            workflowType: `ERR - ${uploader.type}`,
-            projectName: uploader.projectNameSnapshot,
-            currentStatus: result.status,
-            actorName: access.name,
-            documentUrl: new URL(`/errs/${id}`, appConfig.appUrl()).toString(),
-          };
-          const template = result.status === "APPROVED"
-            ? buildFinalApprovalEmail(emailContext)
-            : result.status === "REJECTED"
-              ? buildDocumentRejectedEmail(emailContext)
-              : result.status === "REVISION_REQUIRED"
-                ? buildRevisionRequiredEmail(emailContext)
-                : buildErrOnHoldEmail(emailContext);
+        const uploaderUsers = await prisma.user.findMany({
+          where: {
+            OR: [
+              { errAccess: { some: { role: "UPLOADER", isActive: true } } },
+              { role: "ERR_USER" },
+            ],
+          },
+          select: {
+            name: true,
+            email: true,
+            id: true,
+            role: true,
+            location: true,
+            errAccess: {
+              where: { role: "UPLOADER", isActive: true },
+              select: { id: true },
+            },
+          },
+        });
+        const uploaderIsKuwait = errForEmail?.createdBy.location === "KUWAIT";
+        const recipients = uploaderUsers.filter((user) =>
+          user.email && (
+            user.errAccess?.length > 0 || isErrUploaderAccount(user.name, user.role)
+          ) && (
+            uploaderIsKuwait
+              ? user.location === "KUWAIT"
+              : user.location !== "KUWAIT"
+          ),
+        );
 
-          await sendEmail({
-            to: uploader.createdBy.email,
-            subject: template.subject,
-            html: template.html,
-          });
+        if (errForEmail && recipients.length > 0) {
+          await queueWorkflowEmailEvents(recipients.map((recipient) => ({
+            recipientId: recipient.id,
+            type: EmailEventType.ERR_WORKFLOW_UPDATE,
+            documentId: id,
+          })));
         }
-      } catch (error) {
-        console.error("ERR uploader email could not be sent.", error);
-      }
+        } catch (error) {
+          console.error("ERR uploader email could not be queued.", error);
+        }
+      });
     }
 
     return NextResponse.json(

@@ -45,6 +45,7 @@ model User {
   errNotifications          ErrNotification[]        @relation("ErrNotificationRecipient")
   directedErrProjects       ErrProject[]             @relation("ErrProjectDirectorAccount")
   purchaseOrdersCreated     PurchaseOrder[]          @relation("PurchaseOrdersCreatedBy")
+  purchaseOrdersReceived    PurchaseOrder[]          @relation("PurchaseOrdersReceivedBy")
   purchaseOrderLinksCreated PurchaseOrderMrLink[]     @relation("PurchaseOrderLinksCreatedBy")
   roleAssignments           UserRoleAssignment[]     @relation("UserRoleAssignmentsForUser")
 }
@@ -178,6 +179,12 @@ model PurchaseOrderSequence {
   updatedAt  DateTime @updatedAt
 }
 
+model CustodyFileSequence {
+  id         Int      @id @default(1)
+  nextNumber Int      @default(1)
+  updatedAt  DateTime @updatedAt
+}
+
 model PurchaseOrder {
   id           String   @id @default(cuid())
   poNumber     String   @unique
@@ -188,12 +195,16 @@ model PurchaseOrder {
   fileSize     Int
   uploadedAt   DateTime @default(now())
   uploadedById String
+  receivedAt   DateTime?
+  receivedById String?
 
   uploadedBy User                  @relation("PurchaseOrdersCreatedBy", fields: [uploadedById], references: [id])
+  receivedBy User?                 @relation("PurchaseOrdersReceivedBy", fields: [receivedById], references: [id])
   mrLinks    PurchaseOrderMrLink[]
 
   @@index([uploadedById])
   @@index([uploadedAt])
+  @@index([receivedById])
 }
 
 model PurchaseOrderMrLink {
@@ -366,6 +377,7 @@ enum DeletionRequestStatus {
 enum DocumentType {
   COMPARISON
   MATERIAL_REQUISITION
+  CUSTODY
 }
 
 enum ComparisonType {
@@ -393,11 +405,13 @@ enum EmailEventType {
   APPROVAL_OVERDUE
   COMPARISON_MR_OVERDUE
   PURCHASE_ORDER_AVAILABLE
+  ERR_WORKFLOW_UPDATE
 }
 
 enum ErrType {
   RENTAL_ACTC
   RENTAL_EXTERNAL
+  RENEWAL
   PURCHASE
 }
 

@@ -2,6 +2,7 @@ import "server-only";
 import { UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
+import { isRestrictedClerk } from "@/lib/auth/resource-access";
 
 const ERRO_EMAIL = "dispatcher.pmv@ahmadiah.com";
 const GROUP_B_UPLOADER_EMAILS = new Set([
@@ -12,6 +13,7 @@ const GROUP_B_UPLOADER_EMAILS = new Set([
 const GROUP_A_RECIPIENT_EMAILS = [ERRO_EMAIL, "mohammad.mehieddine@ahmadiah.com"];
 const GROUP_B_RECIPIENT_EMAILS = ["joemar.paraiso@ahmadiah.com", ERRO_EMAIL, "bernabie.rocha@ahmadiah.com", "mohamed.mahran@ahmadiah.com"];
 const GROUP_C_RECIPIENT_EMAILS = ["mohamed.shawky@ahmadiah.com", "mohamed.mahmoud@ahmadiah.com", "jad.kabalan@ahmadiah.com", "muneer.kottappuram@ahmadiah.com"];
+const MUNEER_EMAIL = "muneer.kottappuram@ahmadiah.com";
 const PO_GLOBAL_VIEWER_EMAILS = new Set([
   "george.azzi@ahmadiah.com",
   "marc.baddour@ahmadiah.com",
@@ -20,6 +22,15 @@ const PO_GLOBAL_VIEWER_EMAILS = new Set([
 
 export function isOmar(user: { email?: string | null }): boolean {
   return user.email?.trim().toLowerCase() === "omar.merzek@ahmadiah.com";
+}
+
+export function isMuneer(user: { email?: string | null }): boolean {
+  return user.email?.trim().toLowerCase() === MUNEER_EMAIL;
+}
+
+export function isGlobalPurchaseOrderViewer(user: { role: UserRole; email?: string | null }): boolean {
+  const email = user.email?.trim().toLowerCase();
+  return user.role === UserRole.ADMIN || isOmar(user) || Boolean(email && PO_GLOBAL_VIEWER_EMAILS.has(email));
 }
 
 function normalizeEmail(email: string) { return email.trim().toLowerCase(); }
@@ -61,21 +72,29 @@ async function resolvePurchaseOrderRecipientIds(tx: PoAccessDb, poId: string) {
 export async function getPurchaseOrderRecipientIds(poId: string) { return resolvePurchaseOrderRecipientIds(prisma, poId); }
 
 export async function canViewPurchaseOrder(user: { userId: string; role: UserRole; email?: string | null }, poId: string) {
-  if (user.role === UserRole.ADMIN) return true;
-  if (isOmar(user)) {
-    const purchaseOrder = await prisma.purchaseOrder.findUnique({
-      where: { id: poId },
-      select: { uploadedById: true },
-    });
-    if (purchaseOrder?.uploadedById === user.userId) return true;
+  if (isGlobalPurchaseOrderViewer(user)) return true;
+
+  const [viewer, linkedMrs] = await Promise.all([
+    prisma.user.findUnique({ where: { id: user.userId }, select: { location: true } }),
+    prisma.purchaseOrderMrLink.findMany({
+      where: { purchaseOrderId: poId },
+      select: { document: { select: { createdBy: { select: { location: true } } } } },
+    }),
+  ]);
+
+  if (!viewer?.location || linkedMrs.length === 0) {
+    return isRestrictedClerk(user) && (await getPurchaseOrderRecipientIds(poId)).includes(user.userId);
   }
 
-  const normalizedUserEmail = user.email?.trim().toLowerCase();
-  if (normalizedUserEmail && PO_GLOBAL_VIEWER_EMAILS.has(normalizedUserEmail)) {
-    return true;
-  }
+  return linkedMrs.some((link) => link.document.createdBy.location === viewer.location);
+}
 
-  return (await getPurchaseOrderRecipientIds(poId)).includes(user.userId);
+export async function getPurchaseOrderLocations(poId: string) {
+  const links = await prisma.purchaseOrderMrLink.findMany({
+    where: { purchaseOrderId: poId },
+    select: { document: { select: { createdBy: { select: { location: true } } } } },
+  });
+  return new Set(links.map((link) => link.document.createdBy.location).filter((location): location is NonNullable<typeof location> => Boolean(location)));
 }
 
 export async function resolvePurchaseOrderRecipients(tx: PoAccessDb, poId: string) {

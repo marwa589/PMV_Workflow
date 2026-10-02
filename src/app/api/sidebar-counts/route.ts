@@ -11,11 +11,14 @@ export const runtime = "nodejs";
 
 export async function GET() {
   const session = await getSession();
-  if (!session) return NextResponse.json({ materialRequisitions: 0, comparisons: 0, pendingApprovals: 0, errs: 0 }, { status: 401 });
+  if (!session) return NextResponse.json({ materialRequisitions: 0, comparisons: 0, pendingApprovals: 0, errs: 0, isErrUploader: false, userLocation: null }, { status: 401 });
+
+  const user = await prisma.user.findUnique({ where: { id: session.userId }, select: { location: true } });
 
   const visibility = getModuleVisibility(session.name, session.role);
   const canQueryDocuments = canAccessMrModule(session.role) && visibility !== "ERR_ONLY";
-  const canQueryErrs = visibility !== "DOCUMENTS_ONLY";
+  const errAccess = await getErrAccess();
+  const canQueryErrs = visibility !== "DOCUMENTS_ONLY" || Boolean(errAccess?.isUploader);
 
   let materialRequisitions = 0;
   let comparisons = 0;
@@ -45,9 +48,8 @@ export async function GET() {
   }
 
   if (canQueryErrs) {
-    const access = await getErrAccess();
-    if (access?.canAccessErrModule) {
-      errPendingApprovals = (await getErrCounts(access)).pending;
+    if (errAccess?.canAccessErrModule) {
+      errPendingApprovals = (await getErrCounts(errAccess)).pending;
     }
   }
 
@@ -56,5 +58,7 @@ export async function GET() {
     comparisons,
     pendingApprovals: documentPendingApprovals + errPendingApprovals,
     errs: errPendingApprovals,
+    isErrUploader: Boolean(errAccess?.isUploader && errAccess.canAccessErrModule),
+    userLocation: user?.location ?? null,
   });
 }

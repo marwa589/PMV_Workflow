@@ -24,6 +24,7 @@ export function getErrStages(type: ErrType): readonly ErrStage[] {
   switch (type) {
     case ErrType.RENTAL_ACTC:
     case ErrType.RENTAL_EXTERNAL:
+    case ErrType.RENEWAL:
       return RENTAL_STAGES;
 
     case ErrType.PURCHASE:

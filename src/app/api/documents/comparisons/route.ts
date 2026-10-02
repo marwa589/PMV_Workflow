@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
-import { canAccessMrModuleForSession, isErroUser } from "@/lib/auth/resource-access";
+import { canAccessMrModuleForSession, isRestrictedClerk } from "@/lib/auth/resource-access";
 
 export const runtime = "nodejs";
 
@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const isErro = isErroUser(session);
+  const isRestricted = isRestrictedClerk(session);
   const { searchParams } = new URL(request.url);
   const search = searchParams.get("search")?.trim() || "";
 
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
     where: {
       documentType: "COMPARISON",
       status: "APPROVED",
-      ...(isErro ? { createdById: session.userId } : {}),
+      ...(isRestricted ? { createdById: session.userId } : {}),
       OR: [
         { documentNumber: { contains: search, mode: "insensitive" } },
         { title: { contains: search, mode: "insensitive" } },

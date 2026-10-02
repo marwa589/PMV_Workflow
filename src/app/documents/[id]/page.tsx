@@ -1,7 +1,7 @@
 import { DocumentStatus, UserRole } from "@prisma/client";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, Download, FileText, History } from "lucide-react";
+import { ArrowLeft, Download, FileCheck, FileText, History } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
 import StatusBadge from "@/components/status-badge";
 import WorkflowJourneyChart from "@/components/workflow-journey-chart";
@@ -13,7 +13,8 @@ import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-function getDocumentTypeLabel(documentType: "COMPARISON" | "MATERIAL_REQUISITION", mrType?: "CASH" | "CREDIT" | null) {
+function getDocumentTypeLabel(documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY", mrType?: "CASH" | "CREDIT" | null) {
+  if (documentType === "CUSTODY") return "Custody File";
   if (documentType === "MATERIAL_REQUISITION") {
     if (mrType === "CASH") return "MR - Cash";
     if (mrType === "CREDIT") return "MR - Credit";
@@ -80,6 +81,10 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
   }
 
   const hasPurchaseOrder = document.purchaseOrderLinks.length > 0;
+  const canReview =
+    document.currentApproverId === session.userId &&
+    document.status !== DocumentStatus.APPROVED &&
+    document.status !== DocumentStatus.REJECTED;
   return (
     <DashboardShell
       role={session.role}
@@ -109,9 +114,18 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
           <FileText className="h-4 w-4" />
           Open File
         </a>
+        {canReview ? (
+          <Link
+            href={`/approver/review/${document.id}`}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <FileCheck className="h-4 w-4" />
+            Review
+          </Link>
+        ) : null}
         {document.documentType === "MATERIAL_REQUISITION" && document.status === DocumentStatus.APPROVED && isOmar(session) ? (
           <PurchaseOrderUpload
-            approvedMrs={[{ id: document.id, documentNumber: document.documentNumber, title: document.title, mrNumber: document.mrNumber }]}
+            approvedMrs={[{ id: document.id, documentNumber: document.documentNumber, title: document.title, mrNumber: document.mrNumber, fileName: document.versions[0]?.originalName }]}
             initialMrId={document.id}
             showMrSelection={false}
           />

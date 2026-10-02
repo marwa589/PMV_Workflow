@@ -12,6 +12,11 @@ export function errDocumentStorageFolder(country: ErrProjectCountry, projectName
   return `${projectStorageFolder(country, projectName)}/${safeStorageFolderName(errType)}/${safeStorageFolderName(`${nameWithoutExtension}-${errId.slice(0, 8)}`)}`;
 }
 
+export function marcOnlyErrStorageFolder(errType: ErrType, fileName: string, errId: string): string {
+  const nameWithoutExtension = fileName.replace(/\.[^.]+$/, "");
+  return `${ERR_STORAGE_ROOT}/MARC Only/${safeStorageFolderName(errType)}/${safeStorageFolderName(`${nameWithoutExtension}-${errId.slice(0, 8)}`)}`;
+}
+
 export function projectStorageFolderFromFile(filePath?: string | null): string | null {
   if (!filePath) return null;
 
@@ -20,6 +25,7 @@ export function projectStorageFolderFromFile(filePath?: string | null): string |
   if (parts[0] !== ERR_STORAGE_ROOT || !parts[1]) {
     return ["ERR+Release", "ERR+Release+Receipt"].includes(parts[0]) ? parts[0] : null;
   }
+  if (parts[1] === "MARC Only") return `${ERR_STORAGE_ROOT}/MARC Only`;
   if (parts[1] === "KSA" || parts[1] === "Kuwait") {
     if (!parts[2]) return null;
     const nestedFolder = parts[3];

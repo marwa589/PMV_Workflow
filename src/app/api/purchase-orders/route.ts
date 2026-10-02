@@ -14,13 +14,18 @@ function nextPoNumber(nextNumber: number) {
   return `PO-${String(nextNumber).padStart(6, "0")}`;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   if (!canViewPurchaseOrdersSidebar(session.role)) return NextResponse.json({ message: "Forbidden" }, { status: 403 });
 
+  const location = new URL(request.url).searchParams.get("location");
   const mrs = await prisma.document.findMany({
-    where: { documentType: "MATERIAL_REQUISITION", status: DocumentStatus.APPROVED },
+    where: {
+      documentType: "MATERIAL_REQUISITION",
+      status: DocumentStatus.APPROVED,
+      ...(location === "AVR" || location === "AVK" || location === "KUWAIT" ? { createdBy: { location } } : {}),
+    },
     select: { id: true, documentNumber: true, title: true, mrNumber: true },
     orderBy: { updatedAt: "desc" },
   });
@@ -36,6 +41,7 @@ export async function POST(request: Request) {
 
   const formData = await request.formData();
   const description = String(formData.get("description") || "").trim();
+  const requestedLocation = String(formData.get("location") || "").trim().toUpperCase();
   const fileMrIdsValue = String(formData.get("fileMrIds") || "[]");
   const files = formData.getAll("files").filter((value): value is File => value instanceof File && value.size > 0);
 
@@ -51,11 +57,16 @@ export async function POST(request: Request) {
   if (fileMrIds.length !== files.length || fileMrIds.some((id) => !id)) return NextResponse.json({ message: "Select a related approved MR for every PO file." }, { status: 400 });
 
   const approvedMrs = await prisma.document.findMany({
-    where: { id: { in: [...new Set(fileMrIds)] }, documentType: "MATERIAL_REQUISITION", status: DocumentStatus.APPROVED },
-    select: { id: true, createdBy: { select: { email: true } } },
+    where: {
+      id: { in: [...new Set(fileMrIds)] },
+      documentType: "MATERIAL_REQUISITION",
+      status: DocumentStatus.APPROVED,
+      ...(requestedLocation === "AVR" || requestedLocation === "AVK" || requestedLocation === "KUWAIT" ? { createdBy: { location: requestedLocation } } : {}),
+    },
+    select: { id: true, createdBy: { select: { email: true, location: true } } },
   });
   if (approvedMrs.length !== new Set(fileMrIds).size) {
-    return NextResponse.json({ message: "Every related MR must be approved." }, { status: 400 });
+    return NextResponse.json({ message: requestedLocation ? "Every related MR must be approved and belong to the selected location." : "Every related MR must be approved." }, { status: 400 });
   }
   const mrUploaderEmails = new Map(approvedMrs.map((mr) => [mr.id, mr.createdBy.email]));
 

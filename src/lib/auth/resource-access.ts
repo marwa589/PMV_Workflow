@@ -17,6 +17,17 @@ export function isErroUser(user: { name?: string | null; email?: string | null; 
   return email === "dispatcher.pmv@ahmadiah.com" || name === "erro almacen";
 }
 
+export function isAvkUploader(user: { email?: string | null }): boolean {
+  const email = user.email?.trim().toLowerCase();
+  return email === "joemar.paraiso@ahmadiah.com" ||
+    email === "bernabie.rocha@ahmadiah.com" ||
+    email === "mohamed.mahran@ahmadiah.com";
+}
+
+export function isRestrictedClerk(user: { name?: string | null; email?: string | null; role?: UserRole }): boolean {
+  return isErroUser(user) || isAvkUploader(user);
+}
+
 export function canAccessMrModule(role: UserRole | { role: UserRole; roles?: UserRole[] | null }): boolean {
   const allowedRoles: UserRole[] = [
     UserRole.CLERK,
@@ -59,7 +70,7 @@ export async function canAccessDocument(
     return false;
   }
 
-  if (isErroUser(session) && session.role === UserRole.CLERK) {
+  if (isRestrictedClerk(session) && session.role === UserRole.CLERK) {
     return document.createdById === session.userId;
   }
 

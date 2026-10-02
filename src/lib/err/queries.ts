@@ -22,7 +22,7 @@ export function getErrViewWhere(
   const visibility = getErrVisibilityWhere(access);
 
   // These users track the document's overall status.
-  const tracksAll = access.isAdmin || access.isGlobalUploader || access.isGlobalViewer || access.isUploader;
+  const tracksAll = access.isAdmin || access.isWorkshopManager|| access.isGlobalUploader || access.isGlobalViewer || access.isUploader;
 
   let filter: Prisma.ErrWhereInput = {};
 

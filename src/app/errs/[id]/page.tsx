@@ -4,8 +4,10 @@ import { ArrowLeft, CheckCircle2, Download, FileCheck, FileText, FolderCheck } f
 import DashboardShell from "@/components/dashboard-shell";
 import StatusBadge from "@/components/status-badge";
 import ErrVoucherModal from "@/components/err-voucher-modal";
+import ErrQuotationUpload from "@/components/err-quotation-upload";
 import {
   canApproveErr,
+  canViewErrQuotation,
   canUploadErrVoucher,
   getErrVisibilityWhere,
   requireErrAccess,
@@ -29,6 +31,7 @@ const stageLabels = {
 const typeLabels = {
   RENTAL_ACTC: "Rental ACTC",
   RENTAL_EXTERNAL: "Rental External",
+  RENEWAL: "Renewal",
   PURCHASE: "Purchase",
 };
 
@@ -156,7 +159,7 @@ export default async function ErrDetailsPage({ params }: Props) {
 
   const visibleFiles = err.files.filter((file) => {
     if (file.kind === "QUOTATION") {
-      return access.isUploader || access.isAdmin || access.isPmvManager;
+      return canViewErrQuotation(access);
     }
     if (file.kind === "RELEASE_VOUCHER" || file.kind === "RECEIPT_VOUCHER") {
       return true;
@@ -228,6 +231,7 @@ export default async function ErrDetailsPage({ params }: Props) {
             Review ERR
           </Link>
         )}
+        {canViewErrQuotation(access) ? <ErrQuotationUpload errId={id} /> : null}
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

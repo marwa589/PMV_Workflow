@@ -7,8 +7,10 @@ import { isErrUploaderAccount } from "@/lib/err/uploader-access";
 
 export const dynamic = "force-dynamic";
 
-export default async function NewErrPage() {
+export default async function NewErrPage({ searchParams }: { searchParams: Promise<{ marcOnly?: string }> }) {
   const access = await requireErrAccess();
+  const resolvedSearchParams = await searchParams;
+  const marcOnly = resolvedSearchParams.marcOnly === "1";
 
   if (!access.isUploader && !isErrUploaderAccount(access.name, access.role) && !access.isAdmin) {
     redirect("/unauthorized");
@@ -24,7 +26,7 @@ export default async function NewErrPage() {
       subtitle={`Welcome, ${access.name}`}
       isUploader={true}
     >
-      <NewDocumentForm defaultRedirectPath="/errs" errDirectors={directors} errOnly />
+      <NewDocumentForm defaultRedirectPath="/errs" errDirectors={directors} errOnly marcOnly={marcOnly} />
     </DashboardShell>
   );
 }

@@ -15,10 +15,10 @@ import {
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 type FileKind = "pdf" | "docx" | "xlsx" | "image" | "unknown";
-type DocumentTypeOption = "COMPARISON" | "MATERIAL_REQUISITION" | "ERR";
+type DocumentTypeOption = "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR";
 type MrTypeOption = "CASH" | "CREDIT";
 type ComparisonTypeOption = "SPARE_PARTS" | "OTHER";
-type ErrTypeOption = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "PURCHASE";
+type ErrTypeOption = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "RENEWAL" | "PURCHASE";
 
 const ACCEPTED_EXTENSIONS = ["pdf", "doc", "docx", "xls", "xlsx", "jpg", "jpeg", "png"];
 const ACCEPTED_MIME_TYPES = [
@@ -77,7 +77,7 @@ function FileTypeIcon({ file }: { file: File | null }) {
 
 type ErrDirector = { projectId: string; directorId?: string; name: string; projectName: string; country?: string; accessRole?: "PROJECT_DIRECTOR" | "PROJECT_MANAGER" };
 
-export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDirectors = [], errOnly = false }: { defaultRedirectPath?: string; errDirectors?: ErrDirector[]; errOnly?: boolean }) {
+export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDirectors = [], errOnly = false, marcOnly = false }: { defaultRedirectPath?: string; errDirectors?: ErrDirector[]; errOnly?: boolean; marcOnly?: boolean }) {
   const router = useRouter();
 
   const [title, setTitle] = useState("");
@@ -87,7 +87,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
   const [mrType, setMrType] = useState<MrTypeOption | null>(null);
   const [errType, setErrType] = useState<ErrTypeOption | null>(null);
   const [errProjectId, setErrProjectId] = useState("");
-  const [quotation, setQuotation] = useState<File | null>(null);
+  const [quotations, setQuotations] = useState<File[]>([]);
   const [mrNumber, setMrNumber] = useState("");
   const [comparisonLinkChoice, setComparisonLinkChoice] = useState<"YES" | "NO" | null>(null);
   const [comparisonSearch, setComparisonSearch] = useState("");
@@ -153,7 +153,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
     setMrType(null);
     setErrType(null);
     setErrProjectId("");
-    setQuotation(null);
+    setQuotations([]);
     setMrNumber("");
     setComparisonLinkChoice(null);
     setComparisonSearch("");
@@ -182,8 +182,8 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
       return;
     }
 
-    if (documentType === "ERR" && (!errType || !errProjectId)) {
-      setError("Please select an ERR type and project.");
+    if (documentType === "ERR" && (!errType || (!marcOnly && !errProjectId))) {
+      setError(marcOnly ? "Please select an ERR type." : "Please select an ERR type and project.");
       return;
     }
 
@@ -202,16 +202,19 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
           errFormData.set("title", file.name.replace(/\.[^.]+$/, ""));
           errFormData.set("description", description);
           errFormData.set("type", errType || "");
+          if (marcOnly) errFormData.set("marcOnly", "true");
 
-          const [projId, dirId] = errProjectId.split("::");
-          errFormData.set("projectId", projId);
-          if (dirId) {
-            errFormData.set("projectDirectorId", dirId);
+          if (!marcOnly) {
+            const [projId, dirId] = errProjectId.split("::");
+            errFormData.set("projectId", projId);
+            if (dirId) {
+              errFormData.set("projectDirectorId", dirId);
+            }
           }
 
           errFormData.set("submissionKey", crypto.randomUUID());
           errFormData.append("files", file);
-          if (quotation && index === 0) errFormData.set("quotation", quotation);
+          if (index === 0) quotations.forEach((file) => errFormData.append("quotations", file));
 
           const response = await fetch("/api/errs", {
             method: "POST",
@@ -243,6 +246,10 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
       formData.set("documentType", documentType);
       if (documentType === "COMPARISON" && comparisonType) {
         formData.set("comparisonType", comparisonType);
+      }
+
+      if (documentType === "CUSTODY") {
+        formData.set("documentType", "CUSTODY");
       }
       if (documentType === "MATERIAL_REQUISITION") {
         if (mrType) {
@@ -322,6 +329,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                 {[
                   { value: "COMPARISON", label: "Comparison Sheet" },
                   { value: "MATERIAL_REQUISITION", label: "Material Requisition" },
+                  { value: "CUSTODY", label: "Custody File" },
                   { value: "ERR", label: "ERR" },
                 ].map((option) => (
                   <button
@@ -524,6 +532,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                     {[
                       { value: "RENTAL_ACTC", label: "Rental ACTC" },
                       { value: "RENTAL_EXTERNAL", label: "Rental External" },
+                      { value: "RENEWAL", label: "Renewal" },
                       { value: "PURCHASE", label: "Purchase" },
                     ].map((option) => (
                       <button key={option.value} type="button" onClick={() => setErrType(option.value as ErrTypeOption)} className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${errType === option.value ? "border-cyan-500 bg-cyan-50 text-cyan-700" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
@@ -532,7 +541,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                     ))}
                   </div>
                 </div>
-                <div>
+                {!marcOnly ? <div>
                   <label htmlFor="err-project" className="mb-2 block text-sm font-medium text-slate-700">Project Director or Project Manager <span className="text-rose-600">*</span></label>
                   <select id="err-project" value={errProjectId} onChange={(event) => setErrProjectId(event.target.value)} className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-500">
                     <option value="">Select a project approver</option>
@@ -547,10 +556,15 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                       <span className="font-medium">Country:</span> {errDirectors.find((director) => `${director.projectId}::${director.directorId}` === errProjectId)?.country || "KUWAIT"}
                     </div>
                   ) : null}
-                </div>
+                </div> : null}
                 <div>
                   <label htmlFor="err-quotation" className="mb-2 block text-sm font-medium text-slate-700">Quotation <span className="font-normal text-slate-500">(optional)</span></label>
-                  <input id="err-quotation" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => setQuotation(event.target.files?.[0] ?? null)} className="block w-full rounded-lg border border-slate-300 bg-white text-sm text-slate-700 file:mr-3 file:cursor-pointer file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-700" />
+                  <input id="err-quotation" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => setQuotations(Array.from(event.target.files ?? []))} className="block w-full rounded-lg border border-slate-300 bg-white text-sm text-slate-700 file:mr-3 file:cursor-pointer file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-700" />
+                  {quotations.length > 0 ? (
+                    <ul className="mt-2 space-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                      {quotations.map((file) => <li key={`${file.name}-${file.size}-${file.lastModified}`} className="truncate" title={file.name}>{file.name}</li>)}
+                    </ul>
+                  ) : null}
                 </div>
               </div>
             ) : null}

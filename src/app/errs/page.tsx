@@ -34,6 +34,7 @@ const stageLabels: Record<ErrStage, string> = {
 const typeLabels: Record<ErrType, string> = {
   RENTAL_ACTC: "Rental ACTC",
   RENTAL_EXTERNAL: "Rental External",
+  RENEWAL: "Renewal",
   PURCHASE: "Purchase",
 };
 
@@ -70,11 +71,19 @@ const viewLabels: Record<ErrView, string> = {
   "revision-required": "Revision Required",
 };
 
-function getListUrl(view: ErrView, page: number) {
+function getListUrl(
+  view: ErrView,
+  page: number,
+  filters: { search?: string | string[]; status?: string | string[]; errType?: string | string[]; section?: string | string[] },
+) {
   const params = new URLSearchParams({
     view,
     page: String(page),
   });
+  for (const key of ["search", "status", "errType", "section"] as const) {
+    const value = filters[key];
+    if (typeof value === "string" && value) params.set(key, value);
+  }
 
   return `/errs?${params.toString()}`;
 }
@@ -86,6 +95,7 @@ type PageProps = {
     status?: string | string[];
     errType?: string | string[];
     section?: string | string[];
+    search?: string | string[];
   }>;
 };
 
@@ -124,6 +134,7 @@ export default async function ErrPage({ searchParams }: PageProps) {
 
   const statusFilter = parseErrStatusFilter(params.status);
   const errTypeFilter = parseErrTypeFilter(params.errType);
+  const searchQuery = typeof params.search === "string" ? params.search.trim() : "";
   const isDashboardView = params.section === "dashboard";
   const listView: ErrView = isDashboardView ? "pending" : view;
 
@@ -140,11 +151,14 @@ export default async function ErrPage({ searchParams }: PageProps) {
   const baseWhere = getErrViewWhere(access, listView);
   const statusClause = !isDashboardView && statusFilter ? { status: statusFilter } : {};
   const errTypeClause = !isDashboardView && errTypeFilter ? { type: errTypeFilter } : {};
+  const searchClause = searchQuery
+    ? { title: { contains: searchQuery, mode: "insensitive" as const } }
+    : {};
 
   const where = {
-    AND: [baseWhere, statusClause, errTypeClause],
+    AND: [baseWhere, statusClause, errTypeClause, searchClause],
   };
-  const total = countsByView[listView];
+  const total = await prisma.err.count({ where });
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const page = Math.min(safePage, totalPages);
 
@@ -159,6 +173,12 @@ export default async function ErrPage({ searchParams }: PageProps) {
       currentStage: true,
       currentApproverId: true,
       createdAt: true,
+      files: {
+        where: { kind: "QUOTATION" },
+        orderBy: { versionNumber: "desc" },
+        take: 1,
+        select: { originalName: true },
+      },
       projectDirector: {
         select: {
           name: true,
@@ -228,6 +248,7 @@ export default async function ErrPage({ searchParams }: PageProps) {
           userId={access.userId}
           canDelete={access.isAdmin}
           canRequestDeletion={access.isUploader}
+          showQuotation={access.isUploader || access.isAdmin || access.isPmvManager || access.isActingCeo || access.isCeo}
         />
 
         <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
@@ -238,7 +259,7 @@ export default async function ErrPage({ searchParams }: PageProps) {
           <div className="flex gap-3 text-sm font-medium">
             {page > 1 && (
               <Link
-                href={getListUrl(view, page - 1)}
+                href={getListUrl(view, page - 1, params)}
                 className="text-slate-700 hover:underline"
               >
                 Previous
@@ -247,7 +268,7 @@ export default async function ErrPage({ searchParams }: PageProps) {
 
             {page < totalPages && (
               <Link
-                href={getListUrl(view, page + 1)}
+                href={getListUrl(view, page + 1, params)}
                 className="text-slate-700 hover:underline"
               >
                 Next

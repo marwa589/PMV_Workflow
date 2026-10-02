@@ -22,21 +22,16 @@ function formatTextLine(label: string, value?: string | null) {
 
 function makeFieldList(context: EmailTextContext) {
   return [
-    formatTextLine("Document", context.docNumber ? `${context.docNumber} — ${context.title ?? ""}`.trim() : context.title ?? null),
-    formatTextLine("Workflow", context.workflowType ?? null),
+    formatTextLine("Document", context.title ?? context.docNumber ?? null),
     formatTextLine("Project", context.projectName ?? null),
-    formatTextLine("Current status", context.currentStatus ?? null),
     formatTextLine("Comments", context.comments ?? null),
   ].filter(Boolean).join("");
 }
 
 function buildCommonHtml(context: EmailTextContext, intro: string, actionLabel: string, actionText: string) {
   const escapedName = escapeHtml(context.recipientName || "there");
-  const escapedDoc = escapeHtml(context.docNumber ?? "document");
-  const escapedTitle = escapeHtml(context.title ?? "Untitled document");
-  const escapedWorkflow = escapeHtml(context.workflowType ?? "workflow document");
+  const escapedDocument = escapeHtml(context.title ?? context.docNumber ?? "document");
   const escapedProject = escapeHtml(context.projectName ?? "—");
-  const escapedStatus = escapeHtml(context.currentStatus ?? "—");
   const escapedComments = escapeHtml(context.comments ?? "No comments were provided.");
   const escapedUrl = context.documentUrl ? escapeHtml(context.documentUrl) : null;
 
@@ -58,10 +53,8 @@ function buildCommonHtml(context: EmailTextContext, intro: string, actionLabel: 
 
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;">
                   <tbody>
-                    <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;width:35%;">Document</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedDoc}${context.title ? ` — ${escapedTitle}` : ""}</td></tr>
-                    <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;">Workflow</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedWorkflow}</td></tr>
+                    <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;width:35%;">Document</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedDocument}</td></tr>
                     <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;">Project</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedProject}</td></tr>
-                    <tr><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:700;">Current status</td><td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;">${escapedStatus}</td></tr>
                     <tr><td style="padding:10px 12px;font-weight:700;">Comments</td><td style="padding:10px 12px;">${escapedComments}</td></tr>
                   </tbody>
                 </table>
@@ -100,7 +93,7 @@ export function buildApprovalAssignedEmail(context: EmailTextContext): EmailTemp
     html: buildCommonHtml(
       context,
       "Approval assigned",
-      "Approval assigned",
+      "Review",
       `${context.actorName ?? "A reviewer"} has assigned you this ${context.workflowType ?? "workflow document"} for approval.`,
     ),
     text: buildPlainText(

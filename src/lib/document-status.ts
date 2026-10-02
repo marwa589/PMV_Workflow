@@ -1,13 +1,18 @@
-export type DocumentTypeFilter = "COMPARISON" | "MATERIAL_REQUISITION" | "ERR" | "";
+export type DocumentTypeFilter = "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR" | "";
 export type DownloadStatusFilter = "DOWNLOADED" | "NOT_DOWNLOADED" | "";
 export type MrTypeFilter = "CASH" | "CREDIT" | "";
 export type PoStatusFilter = "UPLOADED" | "PENDING" | "NOT_APPLICABLE" | "";
+export type MrLocationFilter = "AVR" | "AVK" | "KUWAIT" | "";
+
+export function parseMrLocationFilter(value: unknown): MrLocationFilter {
+  return value === "AVR" || value === "AVK" || value === "KUWAIT" ? value : "";
+}
 
 export function getPoStatus(documentType: string, mrType: string | null | undefined, hasPurchaseOrder: boolean): "UPLOADED" | "PENDING" | "NOT_APPLICABLE" {
   if (documentType !== "MATERIAL_REQUISITION" || mrType !== "CREDIT") return "NOT_APPLICABLE";
   return hasPurchaseOrder ? "UPLOADED" : "PENDING";
 }
-export type ErrTypeFilter = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "PURCHASE" | "";
+export type ErrTypeFilter = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "RENEWAL" | "PURCHASE" | "";
 export type ErrStatusFilter = "PENDING" | "ON_HOLD" | "REVISION_REQUIRED" | "REJECTED" | "APPROVED" | "";
 export type DocumentStatusFilterValue =
   | "PENDING_APPROVER_1"
@@ -54,7 +59,7 @@ export function parseDocumentTypeFilter(value: unknown): DocumentTypeFilter {
     return "";
   }
 
-  if (value === "COMPARISON" || value === "MATERIAL_REQUISITION" || value === "ERR") {
+  if (value === "COMPARISON" || value === "MATERIAL_REQUISITION" || value === "CUSTODY" || value === "ERR") {
     return value;
   }
 
@@ -83,7 +88,7 @@ export function parsePoStatusFilter(value: unknown): PoStatusFilter {
 }
 
 export function parseErrTypeFilter(value: unknown): ErrTypeFilter {
-  if (value === "RENTAL_ACTC" || value === "RENTAL_EXTERNAL" || value === "PURCHASE") {
+  if (value === "RENTAL_ACTC" || value === "RENTAL_EXTERNAL" || value === "RENEWAL" || value === "PURCHASE") {
     return value;
   }
 
