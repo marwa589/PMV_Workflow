@@ -1,3 +1,4 @@
+// src/app/forgot-password/page.tsx
 import { redirect } from "next/navigation";
 import ForgotPasswordForm from "@/components/forgot-password-form";
 import { getDefaultRouteForRole } from "@/lib/auth/roles";
@@ -6,7 +7,7 @@ import { getSession } from "@/lib/auth/session";
 export default async function ForgotPasswordPage() {
   const session = await getSession();
   if (session) {
-    redirect(getDefaultRouteForRole(session.role));
+    redirect(getDefaultRouteForRole(session.userType));
   }
 
   return (

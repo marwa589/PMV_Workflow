@@ -1,20 +1,13 @@
-import { UserRole } from "@prisma/client";
+// src/app/approver/settings/signature/page.tsx
 import DashboardShell from "@/components/dashboard-shell";
 import SignatureSettings from "@/components/signature-settings";
-import { requireRole } from "@/lib/auth/guards";
+import { requireAuth } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
 export default async function ApproverSignaturePage() {
-  const session = await requireRole([
-    UserRole.CLERK,
-    UserRole.APPROVER_1,
-    UserRole.APPROVER_2,
-    UserRole.APPROVER_3,
-    UserRole.ADMIN,
-    UserRole.ERR_USER,
-  ]);
+  const session = await requireAuth();
 
   const user = await prisma.user.findUnique({
     where: { id: session.userId },
@@ -23,7 +16,7 @@ export default async function ApproverSignaturePage() {
 
   return (
     <DashboardShell
-      role={session.role}
+      role={session.userType}
       userName={session.name}
       title="Account Settings"
       subtitle="Manage your approval signature"

@@ -1,36 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 
-const KSA_AVR_UPLOADER = "dispatcher.pmv@ahmadiah.com";
-const KSA_AVK_UPLOADERS = new Set([
-  "joemar.paraiso@ahmadiah.com",
-  "bernabie.rocha@ahmadiah.com",
-  "mohamed.mahran@ahmadiah.com",
-  //temp
-  "joemar.paraiso@example.com",
-  "bernabie.rocha@example.com",
-  "mohamed.mahran@example.com",
-]);
-const KUWAIT_UPLOADERS = new Set([
-  "aqueel.sayed@ahmadiah.com",
-  "mohamed.shawky@ahmadiah.com",
-  "mohamed.mahmoud@ahmadiah.com",
-  "jad.kabalan@ahmadiah.com",
-  //temp
-  "aqueel.sayed@example.com",
-  "mohamed.shawky@example.com",
-  "mohamed.mahmoud@example.com",
-  "jad.kabalan@example.com",
-]);
-
-export function normalizeStorageEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
-
-export function storageCountryFolder(country: "KSA" | "KUWAIT"): "KSA" | "Kuwait" {
-  return country === "KSA" ? "KSA" : "Kuwait";
-}
-
 export function safeStorageFolderName(value: string): string {
   const original = value.trim();
   if (!original) throw new Error("A storage folder name is required.");
@@ -52,81 +22,34 @@ export function safeStorageFolderName(value: string): string {
   return `${safe.slice(0, maxLength - suffix.length - 1)}-${suffix}`;
 }
 
-export function resolveStorageLocationFromUser(location?: string | null, uploaderEmail?: string): string | null {
-  const normalizedLocation = location?.trim().toUpperCase();
-  if (normalizedLocation === "AVR") return "KSA";
-  if (normalizedLocation === "AVK") return "KSA";
-  if (normalizedLocation === "KUWAIT") return "Kuwait";
-
-  if (!uploaderEmail) return null;
-
-  const email = normalizeStorageEmail(uploaderEmail);
-  if (email === KSA_AVR_UPLOADER) return "KSA";
-  if (KSA_AVK_UPLOADERS.has(email)) return "KSA";
-  if (KUWAIT_UPLOADERS.has(email)) return "Kuwait";
-
-  return null;
-}
-
-function resolveStorageGroupFromUser(location?: string | null, uploaderEmail?: string): "AVR" | "AVK" | null {
-  const normalizedLocation = location?.trim().toUpperCase();
-  if (normalizedLocation === "AVR") return "AVR";
-  if (normalizedLocation === "AVK") return "AVK";
-
-  if (!uploaderEmail) return null;
-
-  const email = normalizeStorageEmail(uploaderEmail);
-  if (email === KSA_AVR_UPLOADER) return "AVR";
-  if (KSA_AVK_UPLOADERS.has(email)) return "AVK";
-  return null;
-}
-
+/**
+ * Where a document's files are stored, built only from data (no hard-coded people or places):
+ *   Documents/{Location}/{Project code}/{Type code}[/{Sub type code}]
+ * A missing location or project becomes "No Location" / "No Project".
+ */
 export function documentStorageFolder(params: {
-  uploaderEmail: string;
-  location?: string | null;
-  documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
-  mrType?: "CASH" | "CREDIT" | null;
-  hasLinkedComparison?: boolean;
-}): string | null {
-  const location = resolveStorageLocationFromUser(params.location, params.uploaderEmail);
-  const group = resolveStorageGroupFromUser(params.location, params.uploaderEmail);
+  locationName?: string | null;
+  projectCode?: string | null;
+  documentTypeCode: string;
+  documentSubtypeCode?: string | null;
+}): string {
+  const segments = [
+    "Documents",
+    safeStorageFolderName(params.locationName?.trim() || "No Location"),
+    safeStorageFolderName(params.projectCode?.trim() || "No Project"),
+    safeStorageFolderName(params.documentTypeCode),
+  ];
 
-  if (!location) return null;
-
-  if (params.documentType === "CUSTODY") {
-    return "Custody Files/AVR";
+  if (params.documentSubtypeCode?.trim()) {
+    segments.push(safeStorageFolderName(params.documentSubtypeCode));
   }
 
-  const baseFolder = location === "KSA" && group ? `MRs/${location}/${group}` : `MRs/${location}`;
-
-  if (params.documentType === "COMPARISON") {
-    return `${baseFolder}/Comparisons`;
-  }
-
-  if (params.mrType === "CREDIT") {
-    return `${baseFolder}/MRs Credit`;
-  }
-
-  if (params.mrType === "CASH") {
-    return `${baseFolder}/MRs Cash`;
-  }
-
-  return `${baseFolder}/MRs`;
-}
-
-export function purchaseOrderStorageFolder(uploaderEmail: string): string {
-  const location = resolveStorageLocationFromUser(null, uploaderEmail);
-  const group = resolveStorageGroupFromUser(null, uploaderEmail);
-
-  if (!location) return "POs";
-  const baseFolder = location === "KSA" && group ? `MRs/${location}/${group}` : `MRs/${location}`;
-  return `${baseFolder}/POs`;
+  return segments.join("/");
 }
 
 export function folderFromStoredPath(filePath?: string | null): string | null {
   if (!filePath) return null;
   const normalized = filePath.replaceAll("\\", "/");
-  if (normalized.startsWith("uploads/")) return path.posix.dirname(normalized);
   const folder = path.posix.dirname(normalized);
   return folder === "." ? null : folder;
 }

@@ -3,9 +3,9 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { appConfig } from "@/lib/env";
+import { isUserTypeCode, type UserTypeCode } from "@/lib/auth/roles";
 
 export const SESSION_COOKIE_NAME = "docflow_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
@@ -14,8 +14,7 @@ type SessionPayload = {
   userId: string;
   email: string;
   name: string;
-  role: UserRole;
-  roles: UserRole[];
+  userType: UserTypeCode;
   sessionVersion: number;
   exp: number;
 };
@@ -53,6 +52,9 @@ export function verifyToken(token: string): SessionPayload | null {
     if (!parsed.exp || Date.now() > parsed.exp * 1000) {
       return null;
     }
+    if (!isUserTypeCode(parsed.userType)) {
+      return null;
+    }
 
     return parsed;
   } catch {
@@ -62,16 +64,14 @@ export function verifyToken(token: string): SessionPayload | null {
 
 export function attachSessionCookie(
   response: NextResponse,
-  user: { id: string; email: string; name: string; role: UserRole; roles?: UserRole[] },
+  user: { id: string; email: string; name: string; userType: UserTypeCode },
   sessionVersion = 0,
 ): void {
-  const roles = user.roles && user.roles.length > 0 ? Array.from(new Set(user.roles)) : [user.role];
   const payload: SessionPayload = {
     userId: user.id,
     email: user.email,
     name: user.name,
-    role: user.role,
-    roles,
+    userType: user.userType,
     sessionVersion,
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
   };
@@ -104,58 +104,33 @@ export async function getSession(): Promise<AuthSession | null> {
 
   const payload = verifyToken(token);
   if (!payload) return null;
-  try {
-    const user = await prisma.user.findUnique({
-      where: { id: payload.userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        sessionVersion: true,
-        roleAssignments: { select: { role: true } },
-      },
-    });
 
-    if (!user) {
-      return null;
-    }
+  const user = await prisma.user.findUnique({
+    where: { id: payload.userId },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      isActive: true,
+      sessionVersion: true,
+      userType: { select: { code: true } },
+    },
+  });
 
-    const roles = Array.from(new Set([user.role, ...user.roleAssignments.map((assignment) => assignment.role)]));
+  // Deactivated users lose access immediately, even with a valid cookie.
+  if (!user || !user.isActive) return null;
+  if (!isUserTypeCode(user.userType.code)) return null;
 
-    return {
-      userId: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      roles,
-      sessionVersion: user.sessionVersion ?? payload.sessionVersion,
-    };
-  } catch {
-    const fallbackUser = await prisma.user.findUnique({
-      where: { id: payload.userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        sessionVersion: true,
-      },
-    });
+  // A password change or reset raises the user's sessionVersion, which signs out every session opened before it.
+  if ((payload.sessionVersion ?? 0) !== user.sessionVersion) return null;
 
-    if (!fallbackUser) {
-      return null;
-    }
-
-    return {
-      userId: fallbackUser.id,
-      email: fallbackUser.email,
-      name: fallbackUser.name,
-      role: fallbackUser.role,
-      roles: [fallbackUser.role],
-      sessionVersion: fallbackUser.sessionVersion ?? payload.sessionVersion,
-    };
-  }
+  return {
+    userId: user.id,
+    email: user.email,
+    name: user.name,
+    userType: user.userType.code,
+    sessionVersion: user.sessionVersion ?? payload.sessionVersion,
+  };
 }
 
 export function getSessionFromToken(token: string | undefined): AuthSession | null {
@@ -168,8 +143,7 @@ export function getSessionFromToken(token: string | undefined): AuthSession | nu
     userId: payload.userId,
     email: payload.email,
     name: payload.name,
-    role: payload.role,
-    roles: payload.roles ?? [payload.role],
+    userType: payload.userType,
     sessionVersion: payload.sessionVersion,
   };
 }

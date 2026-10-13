@@ -28,10 +28,12 @@ type DocumentReviewEditorProps = {
   documentId: string;
   documentNumber: string;
   title: string;
-  errStage?: "PROJECT_DIRECTOR" | "PMV_MANAGER" | "ACTING_CEO" | "CEO";
   hasSignature: boolean;
   allowNoSignature?: boolean;
-  allowQuotationUpload?: boolean;
+  // The document's status: a document on hold can only be resumed.
+  documentStatus?: string;
+  // Earlier steps the document can be sent back to (0 = the uploader), named from the document's own flow.
+  revisionTargets?: Array<{ levelNumber: number; label: string }>;
   downloadUrl?: string;
   actionUrl?: string;
   returnUrl?: string;
@@ -42,10 +44,10 @@ export default function DocumentReviewEditor({
   documentId,
   documentNumber,
   title,
-  errStage,
   hasSignature,
   allowNoSignature = false,
-  allowQuotationUpload = false,
+  documentStatus = "PENDING",
+  revisionTargets = [],
   downloadUrl = `/api/documents/${documentId}/download`,
   actionUrl = `/api/documents/${documentId}/actions`,
   returnUrl = "/approver/pending-approvals",
@@ -71,10 +73,9 @@ export default function DocumentReviewEditor({
   const [textBoxFontSize, setTextBoxFontSize] = useState(12);
   const [selectedTextBoxId, setSelectedTextBoxId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [decision, setDecision] = useState<"APPROVE" | "REJECT" | "COMMENT" | "HOLD">("APPROVE");
-  const [approvalRoute, setApprovalRoute] = useState<"FINALIZE" | "ACTING_CEO" | "ACTING_CEO_THEN_CEO">("FINALIZE");
+  const [decision, setDecision] = useState<"APPROVE" | "REJECT" | "REQUEST_REVISION" | "HOLD" | "RESUME">(documentStatus === "ON_HOLD" ? "RESUME" : "APPROVE");
+  const [targetLevel, setTargetLevel] = useState<number>(revisionTargets[revisionTargets.length - 1]?.levelNumber ?? 0);
   const [comments, setComments] = useState("");
-  const [quotationFile, setQuotationFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -291,15 +292,18 @@ export default function DocumentReviewEditor({
       setError("Click Sign and place at least one signature before approving.");
       return;
     }
+    if (decision === "REQUEST_REVISION" && !comments.trim()) {
+      setError("Write a comment that tells the person what to fix.");
+      return;
+    }
     setSaving(true);
     setError(null);
     const startedAt = performance.now();
     try {
       const formData = new FormData();
       formData.set("decision", decision);
-      if (errStage) formData.set("approvalRoute", approvalRoute);
       formData.set("comments", comments);
-      if (allowQuotationUpload && quotationFile) formData.set("quotation", quotationFile);
+      if (decision === "REQUEST_REVISION") formData.set("targetLevel", String(targetLevel));
       if (decision === "APPROVE") {
         const pdfBytes = pdfBytesRef.current;
         const coordinatePdf = pdfJsDocumentRef.current;
@@ -416,50 +420,31 @@ export default function DocumentReviewEditor({
             <div className="min-w-52 flex-1">
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Decision</label>
               <select value={decision} onChange={(event) => setDecision(event.target.value as typeof decision)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-                <option value="APPROVE">Approve</option>
-                <option value="REJECT">Reject</option>
-                <option value="COMMENT">Revision Required</option>
-                {allowHold ? <option value="HOLD">On Hold</option> : null}
+                {documentStatus === "ON_HOLD" ? (
+                  <option value="RESUME">Resume</option>
+                ) : (
+                  <>
+                    <option value="APPROVE">Approve</option>
+                    <option value="REJECT">Reject</option>
+                    {revisionTargets.length > 0 ? <option value="REQUEST_REVISION">Revision Required</option> : null}
+                    {allowHold ? <option value="HOLD">On Hold</option> : null}
+                  </>
+                )}
               </select>
             </div>
-            {errStage === "PMV_MANAGER" ? (
+            {decision === "REQUEST_REVISION" ? (
               <div className="min-w-60 flex-1">
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Approval path</label>
-                <select value={approvalRoute} onChange={(event) => setApprovalRoute(event.target.value as typeof approvalRoute)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-                  <option value="FINALIZE">Finalize Approval</option>
-                  <option value="ACTING_CEO">Send to Acting CEO</option>
-                  <option value="ACTING_CEO_THEN_CEO">Send to Acting CEO then CEO</option>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Send back to</label>
+                <select value={targetLevel} onChange={(event) => setTargetLevel(Number(event.target.value))} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                  {revisionTargets.map((target) => (
+                    <option key={target.levelNumber} value={target.levelNumber}>{target.label}</option>
+                  ))}
                 </select>
               </div>
             ) : null}
-            {allowQuotationUpload ? (
-              <div className="min-w-60 flex-1">
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600" htmlFor="review-quotation">Additional quotation</label>
-                <input
-  id="review-quotation"
-  type="file"
-  accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-  onChange={(event) => setQuotationFile(event.target.files?.[0] || null)}
-  disabled={saving}
-  className="
-    w-full text-sm
-    border border-slate-300 rounded-md
-    file:bg-blue-600
-    file:text-white
-    file:border-0
-    file:px-4
-    file:py-2
-    file:mr-3
-    file:font-medium
-    hover:file:bg-blue-700
-    file:cursor-pointer
-  "
-/>
-</div>
-            ) : null}
             <div className="min-w-72 flex-[2]">
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Comments</label>
-              <input value={comments} onChange={(event) => setComments(event.target.value)} placeholder="Comments (optional)" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              <input value={comments} onChange={(event) => setComments(event.target.value)} placeholder={decision === "REQUEST_REVISION" ? "Comment (required)" : "Comments (optional)"} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
             </div>
             <button type="button" onClick={submit} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}

@@ -1,26 +1,19 @@
-import { UserRole } from "@prisma/client";
+// src/app/api/documents/[id]/delete/route.ts
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { deleteDocumentFiles } from "@/lib/files";
-import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
-export async function POST(
-  _request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+// Direct deletion is intentionally not available. Documents are removed through a deletion request
+// (POST /api/documents/deletion-requests) that is reviewed before an admin deletes anything.
+export async function POST() {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  if (session.role !== UserRole.CLERK && session.role !== UserRole.ADMIN) {
-    return NextResponse.json({ message: "Only Clerk or Admin can request document deletion." }, { status: 403 });
-  }
-
   return NextResponse.json(
-    { message: "Deletion requests are reviewed by Admin before documents are deleted." },
+    { message: "Deletion requests are reviewed before documents are deleted. Submit a deletion request instead." },
     { status: 403 },
   );
 }

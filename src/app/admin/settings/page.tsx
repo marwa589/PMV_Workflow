@@ -1,16 +1,17 @@
+// src/app/admin/settings/page.tsx
 import Link from "next/link";
-import { UserRole } from "@prisma/client";
 import { KeyRound, PenLine } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
-import { requireRole } from "@/lib/auth/guards";
+import { requireUserType } from "@/lib/auth/guards";
+import { USER_TYPE } from "@/lib/auth/roles";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminSettingsPage() {
-  const session = await requireRole([UserRole.ADMIN]);
+  const session = await requireUserType([USER_TYPE.ADMIN]);
 
   return (
-    <DashboardShell role={session.role} userName={session.name} title="Account Settings" subtitle="Manage your account and profile preferences">
+    <DashboardShell role={session.userType} userName={session.name} title="Account Settings" subtitle="Manage your account and profile preferences">
       <div className="grid gap-6 lg:grid-cols-2">
         <Link
           href="/approver/settings/change-password"

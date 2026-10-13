@@ -1,38 +1,24 @@
-import { UserRole } from "@prisma/client";
-import { APPROVER_ROLES } from "@/lib/auth/roles";
-import { hasUserRole } from "@/lib/user-capabilities";
+// Pure helpers (no database access) so they are safe to use from middleware.
+import { APPROVER_USER_TYPES, USER_TYPE, type UserTypeCode } from "@/lib/auth/roles";
 
-export function hasRequiredRole(userRole: UserRole | { role: UserRole; roles?: UserRole[] | null }, allowedRoles: UserRole[]): boolean {
-  if (typeof userRole === "object") {
-    return allowedRoles.some((role) => hasUserRole(userRole, role));
-  }
-  return allowedRoles.includes(userRole);
+export function hasRequiredRole(userType: UserTypeCode, allowed: UserTypeCode[]): boolean {
+  return allowed.includes(userType);
 }
 
-export function getRoleAccessErrorMessage(allowedRoles: UserRole[]): string {
-  return `Access denied. Required role: ${allowedRoles.join(", ")}`;
+export function getRoleAccessErrorMessage(allowed: UserTypeCode[]): string {
+  return `Access denied. Required user type: ${allowed.join(", ")}`;
 }
 
-export function getRouteAccessPolicy(pathname: string): UserRole[] | null {
-  if (pathname.startsWith("/admin")) {
-    return [UserRole.ADMIN];
-  }
-
-  if (pathname.startsWith("/approver")) {
-    return APPROVER_ROLES;
-  }
-
-  if (pathname.startsWith("/clerk")) {
-    return [UserRole.CLERK];
-  }
-
-  if (pathname.startsWith("/new-document")) {
-    return [UserRole.CLERK, UserRole.ADMIN];
-  }
-
-  if (pathname.startsWith("/documents") || pathname.startsWith("/procurement-packages")) {
-    return [UserRole.CLERK, UserRole.ADMIN, ...APPROVER_ROLES];
-  }
-
+// Area-level gate only. Whether someone may upload, approve or view a specific document
+// is decided per document by the workflow engine and src/lib/auth/access.ts.
+export function getRouteAccessPolicy(pathname: string): UserTypeCode[] | null {
+  // /admin/* screens are gated page by page with requirePermission (a Flow Admin who is not an Admin
+  // user type can open the flow screens), so only the dashboard itself is limited to the Admin type there.
+  if (pathname === "/admin") return [USER_TYPE.ADMIN];
+  // The review screen serves whoever the flow names, including the uploader when a document is sent back to them,
+  // so it is not limited to an area; the page checks eligibility itself.
+  if (pathname.startsWith("/approver/review/")) return null;
+  if (pathname.startsWith("/approver")) return [...APPROVER_USER_TYPES, USER_TYPE.ADMIN];
+  if (pathname.startsWith("/clerk")) return [USER_TYPE.CLERK, USER_TYPE.ADMIN];
   return null;
 }

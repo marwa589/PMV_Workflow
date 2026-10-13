@@ -1,39 +1,46 @@
-import { UserRole } from "@prisma/client";
+// The four fixed user types (PDF: user_types.code). A user's type never changes after creation.
+// "Roles" in the new system are permission bundles held through UserAssignment, not these.
+export const USER_TYPE = {
+  CLERK: "clerk",
+  ENGINEER: "eng",
+  MANAGER: "manager",
+  ADMIN: "admin",
+} as const;
 
-export const APPROVER_ROLES: UserRole[] = [
-  UserRole.APPROVER_1,
-  UserRole.APPROVER_2,
-  UserRole.APPROVER_3,
-];
+export type UserTypeCode = (typeof USER_TYPE)[keyof typeof USER_TYPE];
 
-export function getDefaultRouteForRole(role: UserRole): string {
-  switch (role) {
-    case UserRole.CLERK:
+export const USER_TYPE_CODES: UserTypeCode[] = Object.values(USER_TYPE);
+
+// User types that normally act as approvers (used for the /approver area).
+export const APPROVER_USER_TYPES: UserTypeCode[] = [USER_TYPE.ENGINEER, USER_TYPE.MANAGER];
+
+export function isUserTypeCode(value: unknown): value is UserTypeCode {
+  return typeof value === "string" && (USER_TYPE_CODES as string[]).includes(value);
+}
+
+export function getDefaultRouteForRole(userType: UserTypeCode): string {
+  switch (userType) {
+    case USER_TYPE.CLERK:
       return "/clerk";
-    case UserRole.APPROVER_1:
-    case UserRole.APPROVER_2:
-    case UserRole.APPROVER_3:
+    case USER_TYPE.ENGINEER:
+    case USER_TYPE.MANAGER:
       return "/approver";
-    case UserRole.ADMIN:
+    case USER_TYPE.ADMIN:
       return "/admin";
-    case UserRole.ERR_USER:
-      return "/errs?section=dashboard";
     default:
       return "/login";
   }
 }
 
-export function roleLabel(role: UserRole): string {
-  switch (role) {
-    case UserRole.CLERK:
+export function roleLabel(userType: UserTypeCode): string {
+  switch (userType) {
+    case USER_TYPE.CLERK:
       return "Clerk";
-    case UserRole.APPROVER_1:
-      return "PMV Engineer";
-    case UserRole.APPROVER_2:
-      return "Workshop Manager";
-    case UserRole.APPROVER_3:
-      return "PMV Manager";
-    case UserRole.ADMIN:
+    case USER_TYPE.ENGINEER:
+      return "Engineer";
+    case USER_TYPE.MANAGER:
+      return "Manager";
+    case USER_TYPE.ADMIN:
       return "Admin";
     default:
       return "User";

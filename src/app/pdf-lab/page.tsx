@@ -1,3 +1,4 @@
+// src/app/pdf-lab/page.tsx
 import DashboardShell from "@/components/dashboard-shell";
 import PdfLabViewer from "@/components/pdf-lab-viewer";
 import { requireAuth } from "@/lib/auth/guards";
@@ -9,7 +10,7 @@ export default async function PdfLabPage() {
 
   return (
     <DashboardShell
-      role={session.role}
+      role={session.userType}
       userName={session.name}
       title="PDF Lab"
       subtitle="Add and export PDF annotations"

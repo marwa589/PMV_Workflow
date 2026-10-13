@@ -1,3 +1,4 @@
+// src/app/api/notifications/route.ts
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { getNotificationsForUser, getUnreadNotificationCount, markNotificationsAsRead } from "@/lib/notifications";

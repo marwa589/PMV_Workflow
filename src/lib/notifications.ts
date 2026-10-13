@@ -9,7 +9,14 @@ export async function pruneExpiredNotifications() {
   });
 }
 
-export type NotificationKind = "PENDING_APPROVAL" | "DOCUMENT_APPROVED" | "DOCUMENT_REJECTED" | "DOCUMENT_REVISED" | "DOCUMENT_DELETED";
+export type NotificationKind =
+  | "PENDING_APPROVAL"
+  | "DOCUMENT_APPROVED"
+  | "DOCUMENT_REJECTED"
+  | "DOCUMENT_REVISED"
+  | "DOCUMENT_DELETED"
+  | "DOCUMENT_ON_HOLD"
+  | "DOCUMENT_RESUMED";
 
 type NotificationRecord = {
   id: string;

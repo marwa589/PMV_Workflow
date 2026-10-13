@@ -12,54 +12,56 @@ import {
   FileCheck2,
   FilePlus2,
   FileText,
+  GitBranch,
   LayoutDashboard,
   Menu,
+  Network,
   Search,
   Settings,
+  ShieldCheck,
   UserCircle2,
   Users,
   X,
-  PauseCircle,
   RotateCcw,
 } from "lucide-react";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
-import { getModuleVisibility } from "@/lib/auth/module-visibility";
-import { isErrUploaderAccount } from "@/lib/err/uploader-access";
-import type { UserRole } from "@prisma/client";
+import type { UserTypeCode } from "@/lib/auth/roles";
 
 type NavItem = {
   label: string;
   href: string;
   icon: LucideIcon;
+  // Which sidebar counter to show next to the label.
+  badge?: { kind: "pending" } | { kind: "type"; documentTypeId: string };
 };
 
-type AppRole = UserRole;
+// The prop is still called `role`, but it carries the user's fixed type (clerk, eng, manager, admin).
+type AppRole = UserTypeCode;
 
 type DashboardShellProps = {
   role: AppRole;
   userName: string;
   title: string;
   subtitle: string;
-  isUploader?: boolean;
   children: ReactNode;
 };
 
 type SidebarCounts = {
-  materialRequisitions: number;
-  comparisons: number;
   pendingApprovals: number;
-  errs: number;
-  isErrUploader: boolean;
-  userLocation: "AVR" | "AVK" | "KUWAIT" | null;
+  pendingByType: Array<{ documentTypeId: string; code: string; name: string; count: number }>;
+  canUpload: boolean;
+  // One sidebar entry per active document type; nothing here is hard-coded any more.
+  documentTypes: Array<{ id: string; code: string; name: string }>;
+  // Which administration screens this person may open.
+  manage: Partial<Record<"flows" | "types" | "processes" | "users" | "assignments" | "delegations" | "projects" | "deletionReview", boolean>>;
 };
 
 const emptySidebarCounts: SidebarCounts = {
-  materialRequisitions: 0,
-  comparisons: 0,
   pendingApprovals: 0,
-  errs: 0,
-  isErrUploader: false,
-  userLocation: null,
+  pendingByType: [],
+  canUpload: false,
+  documentTypes: [],
+  manage: {},
 };
 let lastSidebarCounts: { key: string; counts: SidebarCounts } | null = null;
 
@@ -72,209 +74,112 @@ type NotificationItem = {
   documentId?: string | null;
 };
 
-const navItemsByRole: Record<AppRole, NavItem[]> = {
-    ERR_USER: [
-    { label: "ERRs", href: "/errs", icon: FileText },
-    { label: "Account Settings", href: "/errs/settings", icon: Settings },
-  ],
-  CLERK: [
-    { label: "Dashboard", href: "/clerk", icon: LayoutDashboard },
-    { label: "New Document", href: "/new-document", icon: FilePlus2 },
-    { label: "My Documents", href: "/clerk/my-documents", icon: FileText },
-    { label: "MRs", href: "/clerk/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
-    { label: "Comparison Sheets", href: "/clerk/my-documents?documentType=COMPARISON", icon: FileText },
-    { label: "Custody Files", href: "/clerk/my-documents?documentType=CUSTODY", icon: FileText },
-    { label: "Rejected Documents", href: "/clerk/rejected-documents", icon: FileCheck2 },
-    { label: "Revision Required", href: "/clerk/my-documents?status=REVISION_REQUIRED", icon: ClipboardCheck },
-    { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
-    { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
-    { label: "ERRs", href: "/errs", icon: FileText },
-    { label: "Account Settings", href: "/clerk/settings", icon: Settings },
-  ],
-  APPROVER_1: [
-    { label: "Dashboard", href: "/approver", icon: LayoutDashboard },
-    { label: "My Documents", href: "/approver/my-documents", icon: FileText },
-    { label: "MRs", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
-    { label: "Comparison Sheets", href: "/approver/my-documents?documentType=COMPARISON", icon: FileText },
-    { label: "Custody Files", href: "/approver/my-documents?documentType=CUSTODY", icon: FileText },
-    { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
-    { label: "ERRs", href: "/errs", icon: FileText },
-    { label: "Pending Approvals", href: "/approver/pending-approvals", icon: ClipboardCheck },
-    { label: "Revision Required", href: "/approver/my-documents?status=REVISION_REQUIRED", icon: RotateCcw },
-    { label: "Approved Documents", href: "/approver/approved-documents", icon: CheckCircle2 },
-    { label: "Rejected Documents", href: "/approver/rejected-documents", icon: FileCheck2 },
-    { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
-    { label: "Account Settings", href: "/approver/settings", icon: Settings },
-  ],
-  APPROVER_2: [
-    { label: "Dashboard", href: "/approver", icon: LayoutDashboard },
-    { label: "My Documents", href: "/approver/my-documents", icon: FileText },
-    { label: "MRs", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
-    { label: "Comparison Sheets", href: "/approver/my-documents?documentType=COMPARISON", icon: FileText },
-    { label: "Custody Files", href: "/approver/my-documents?documentType=CUSTODY", icon: FileText },
-    { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
-    { label: "ERRs", href: "/errs", icon: FileText },
-    { label: "Pending Approvals", href: "/approver/pending-approvals", icon: ClipboardCheck },
-    { label: "Revision Required", href: "/approver/my-documents?status=REVISION_REQUIRED", icon: RotateCcw },
-    { label: "Approved Documents", href: "/approver/approved-documents", icon: CheckCircle2 },
-    { label: "Rejected Documents", href: "/approver/rejected-documents", icon: FileCheck2 },
-    { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
-    { label: "Account Settings", href: "/approver/settings", icon: Settings },
-  ],
-  APPROVER_3: [
-    { label: "Dashboard", href: "/approver", icon: LayoutDashboard },
-    { label: "My Documents", href: "/approver/my-documents", icon: FileText },
-    { label: "MRs", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
-    { label: "Comparison Sheets", href: "/approver/my-documents?documentType=COMPARISON", icon: FileText },
-    { label: "Custody Files", href: "/approver/my-documents?documentType=CUSTODY", icon: FileText },
-    { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
-    { label: "ERRs", href: "/errs", icon: FileText },
-    { label: "Pending Approvals", href: "/approver/pending-approvals", icon: ClipboardCheck },
-    { label: "Revision Required", href: "/approver/my-documents?status=REVISION_REQUIRED", icon: RotateCcw },
-    { label: "Approved Documents", href: "/approver/approved-documents", icon: CheckCircle2 },
-    { label: "Rejected Documents", href: "/approver/rejected-documents", icon: FileCheck2 },
-    { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
-    { label: "Account Settings", href: "/approver/settings", icon: Settings },
-  ],
-  ADMIN: [
-    { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
-    { label: "New Document", href: "/new-document", icon: FilePlus2 },
-    { label: "All Documents", href: "/admin/all-documents", icon: FileText },
-    { label: "MRs", href: "/admin/all-documents?documentType=MATERIAL_REQUISITION", icon: FileText },
-    { label: "Comparison Sheets", href: "/admin/all-documents?documentType=COMPARISON", icon: FileText },
-    { label: "Custody Files", href: "/admin/all-documents?documentType=CUSTODY", icon: FileText },
-    { label: "MRs + Comparisons", href: "/procurement-packages", icon: FileText },
-    { label: "ERRs", href: "/errs", icon: FileText },
-    { label: "Pending Approvals", href: "/admin/pending-approvals", icon: ClipboardCheck },
-    { label: "Revision Required", href: "/admin/all-documents?status=REVISION_REQUIRED", icon: RotateCcw },
-    { label: "Approved Documents", href: "/admin/approved-documents", icon: CheckCircle2 },
-    { label: "Rejected Documents", href: "/admin/rejected-documents", icon: FileCheck2 },
-    { label: "Users", href: "/admin/users", icon: Users },
-    { label: "Workflow Templates", href: "/admin/workflows", icon: ClipboardCheck },
-    { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
-    { label: "Account Settings", href: "/admin/settings", icon: Settings },
-  ],
+const HOME_BY_USER_TYPE: Record<AppRole, { dashboard: string; list: string; settings: string }> = {
+  clerk: { dashboard: "/clerk", list: "/clerk/my-documents", settings: "/clerk/settings" },
+  eng: { dashboard: "/approver", list: "/approver/my-documents", settings: "/approver/settings" },
+  manager: { dashboard: "/approver", list: "/approver/my-documents", settings: "/approver/settings" },
+  admin: { dashboard: "/admin", list: "/admin/all-documents", settings: "/admin/settings" },
 };
 
-function getVisibleNavItems(role: AppRole, userName: string, userLocation: SidebarCounts["userLocation"], isUploader?: boolean): NavItem[] {
-  const visibility = getModuleVisibility(userName, role);
+/**
+ * The sidebar is built from data: the user's area, one entry per active document type, processes, and the
+ * administration screens they are allowed to use.
+ */
+function getVisibleNavItems(role: AppRole, counts: SidebarCounts): NavItem[] {
+  const home = HOME_BY_USER_TYPE[role];
+  const isApprover = role === "eng" || role === "manager" || role === "admin";
+  const manage = counts.manage;
 
-  if (visibility === "ERR_ONLY") {
-    const canUpload = isUploader ?? isErrUploaderAccount(userName, role);
-    const items: NavItem[] = [
-      { label: "Dashboard", href: "/errs?view=all&section=dashboard", icon: LayoutDashboard },
-      { label: "My Documents", href: "/errs?view=all&section=my-documents", icon: FileText },
-      ...(canUpload ? [{ label: "New Document", href: "/new-document", icon: FilePlus2 }] : []),
-      ...(canUpload ? [{ label: "ERR - Marc Only", href: "/errs/new?marcOnly=1", icon: FilePlus2 }] : []),
-      { label: "ERRs", href: "/errs", icon: FileText },
-      ...(canUpload ? [{ label: "Attach Vouchers", href: "/errs/vouchers", icon: FilePlus2 }] : []),
-      { label: "Pending Approvals", href: "/errs?view=pending", icon: ClipboardCheck },
-      { label: "Revision Required", href: "/errs?view=revision-required", icon: RotateCcw },
-      { label: "On Hold", href: "/errs?view=on-hold", icon: PauseCircle },
-      { label: "Approved Documents", href: "/errs?view=approved", icon: CheckCircle2 },
-      { label: "Rejected Documents", href: "/errs?view=rejected", icon: FileCheck2 },
-      { label: "Account Settings", href: "/errs/settings", icon: Settings },
-    ];
+  const items: NavItem[] = [{ label: "Dashboard", href: home.dashboard, icon: LayoutDashboard }];
 
-    return items;
+  if (counts.canUpload) items.push({ label: "New Document", href: "/new-document", icon: FilePlus2 });
+
+  items.push({ label: role === "admin" ? "All Documents" : "My Documents", href: home.list, icon: FileText });
+
+  for (const type of counts.documentTypes) {
+    items.push({
+      label: type.name,
+      href: `${home.list}?documentType=${encodeURIComponent(type.code)}`,
+      icon: FileText,
+      badge: { kind: "type", documentTypeId: type.id },
+    });
   }
 
-  const items = navItemsByRole[role].filter((item) => {
-    if (item.label === "Purchase Orders" && !["CLERK", "APPROVER_1", "APPROVER_2", "APPROVER_3", "ADMIN"].includes(role)) {
-      return false;
-    }
-    if (visibility === "DOCUMENTS_ONLY") {
-      return item.label === "ERRs" && role === "APPROVER_2"
-      ? true
-      : !["ERRs", "Users", "On Hold"].includes(item.label);
-    }
+  items.push({ label: "Processes", href: "/processes", icon: Network });
 
-    return true;
-  });
-
-  const locationMrItems: NavItem[] = !userLocation && role === "APPROVER_1"
-    ? []
-    : userLocation === "AVR"
-    ? [{ label: "MRs - AVR", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVR`, icon: FileText }]
-    : userLocation === "AVK"
-      ? [{ label: "MRs - AVK", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVK`, icon: FileText }]
-      : [
-          { label: "MRs - Kuwait", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=KUWAIT`, icon: FileText },
-          { label: "MRs - AVR", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVR`, icon: FileText },
-          { label: "MRs - AVK", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVK`, icon: FileText },
-        ];
-  const navItemsWithLocationMrs = items.flatMap((item) => item.label === "MRs" ? locationMrItems : [item]);
-  const navItemsWithErrUpload = role === "APPROVER_1" && isUploader
-    ? [
-        ...navItemsWithLocationMrs.filter((item) => item.label !== "ERRs"),
-        { label: "ERRs", href: "/errs", icon: FileText },
-        { label: "New ERR", href: "/errs/new", icon: FilePlus2 },
-      ]
-    : navItemsWithLocationMrs;
-  const navItemsWithMarcErr = isUploader && role !== "APPROVER_1"
-    ? [...navItemsWithErrUpload, { label: "ERR - Marc Only", href: "/errs/new?marcOnly=1", icon: FilePlus2 }]
-    : navItemsWithErrUpload;
-
-  if ((role === "ADMIN" || role === "APPROVER_3") && visibility !== "DOCUMENTS_ONLY") {
-    const onHoldItem: NavItem = { label: "On Hold", href: "/errs?view=on-hold", icon: PauseCircle };
-    return [...navItemsWithMarcErr, onHoldItem];
+  if (isApprover) {
+    const base = role === "admin" ? "/admin" : "/approver";
+    items.push({ label: "Pending Approvals", href: `${base}/pending-approvals`, icon: ClipboardCheck, badge: { kind: "pending" } });
   }
 
-  if (visibility === "DOCUMENTS_ONLY" && role === "CLERK" && !items.some((item) => item.label === "Dashboard")) {
-    return [{ label: "Dashboard", href: "/clerk", icon: LayoutDashboard }, ...navItemsWithMarcErr];
+  items.push({ label: "Revision Required", href: `${home.list}?status=REVISION_REQUIRED`, icon: RotateCcw });
+
+  if (isApprover) {
+    const base = role === "admin" ? "/admin" : "/approver";
+    items.push({ label: "Approved Documents", href: `${base}/approved-documents`, icon: CheckCircle2 });
+    items.push({ label: "Rejected Documents", href: `${base}/rejected-documents`, icon: FileCheck2 });
+  } else {
+    items.push({ label: "Rejected Documents", href: `${home.list}?status=CANCELLED`, icon: FileCheck2 });
   }
 
-  return navItemsWithMarcErr;
+  // Administration: shown by permission, so a Flow Admin who is not an Admin user type sees only their screens.
+  if (manage.users) items.push({ label: "Users", href: "/admin/users", icon: Users });
+  if (manage.assignments) items.push({ label: "Roles & Access", href: "/admin/roles", icon: ShieldCheck });
+  if (manage.delegations) items.push({ label: "Delegations", href: "/admin/delegations", icon: Users });
+  if (manage.types) items.push({ label: "Document Types", href: "/admin/document-types", icon: FileText });
+  if (manage.flows) {
+    items.push({ label: "Approval Flows", href: "/admin/flows", icon: GitBranch });
+    items.push({ label: "Flow Assignments", href: "/admin/flow-assignments", icon: ClipboardCheck });
+  }
+  if (manage.processes) items.push({ label: "Process Setup", href: "/admin/processes", icon: Network });
+  if (manage.projects) items.push({ label: "Projects & Locations", href: "/admin/projects", icon: Network });
+
+  items.push({ label: "Account Settings", href: home.settings, icon: Settings });
+
+  return items;
 }
 
 function Sidebar({
   role,
-  userName,
   closeMenu,
   counts,
-  combinedErrLayout = false,
-  isUploader,
 }: {
   role: AppRole;
-  userName: string;
   closeMenu?: () => void;
   counts: SidebarCounts;
-  combinedErrLayout?: boolean;
-  isUploader?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const navItems = getVisibleNavItems(role, userName, counts.userLocation, isUploader);
+  const navItems = getVisibleNavItems(role, counts);
   const settingsItem = navItems.find((item) => item.href.endsWith("/settings"));
   const primaryNavItems = navItems.filter((item) => item !== settingsItem);
+
+  const badgeCount = (item: NavItem): number => {
+    if (!item.badge) return 0;
+    if (item.badge.kind === "pending") return counts.pendingApprovals;
+    const typeId = item.badge.documentTypeId;
+    return counts.pendingByType.find((row) => row.documentTypeId === typeId)?.count ?? 0;
+  };
+
   const renderNavItem = (item: NavItem) => {
     const Icon = item.icon;
     const itemUrl = new URL(item.href, "http://localhost");
     const itemDocumentType = itemUrl.searchParams.get("documentType");
-    const itemLocation = itemUrl.searchParams.get("location");
     const itemStatus = itemUrl.searchParams.get("status");
-    const itemView = itemUrl.searchParams.get("view");
-    const itemSection = itemUrl.searchParams.get("section");
     const currentDocumentType = searchParams.get("documentType") ?? "";
-    const currentLocation = searchParams.get("location") ?? "";
     const currentStatus = searchParams.get("status") ?? "";
-    const currentView = searchParams.get("view") ?? "";
-    const currentSection = searchParams.get("section") ?? "";
 
     const active =
-      item.href !== "#" &&
       pathname === itemUrl.pathname &&
-      (itemView
-        ? currentView === itemView && (!itemSection || currentSection === itemSection)
-        : itemSection
-          ? currentSection === itemSection
-          : itemDocumentType
-            ? currentDocumentType === itemDocumentType && (!itemLocation || currentLocation === itemLocation)
-            : itemStatus
-              ? currentStatus === itemStatus
-              : !currentDocumentType && !currentStatus && !currentView && !currentSection);
+      (itemDocumentType
+        ? currentDocumentType === itemDocumentType
+        : itemStatus
+          ? currentStatus === itemStatus
+          : !currentDocumentType && !currentStatus);
+
+    const count = badgeCount(item);
 
     return (
       <button
@@ -282,9 +187,7 @@ function Sidebar({
         type="button"
         onClick={() => {
           closeMenu?.();
-          if (item.href !== "#") {
-            router.push(item.href);
-          }
+          router.push(item.href);
         }}
         className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm font-medium transition ${
           active ? "bg-slate-900 text-white shadow-sm" : "text-slate-700 hover:bg-slate-100"
@@ -295,24 +198,9 @@ function Sidebar({
           <span className="truncate">{item.label}</span>
         </span>
         <span className="flex items-center gap-2">
-          {item.label === "MRs" && counts.materialRequisitions > 0 ? (
+          {count > 0 ? (
             <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"}`}>
-              {counts.materialRequisitions}
-            </span>
-          ) : null}
-          {item.label === "Comparison Sheets" && counts.comparisons > 0 ? (
-            <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"}`}>
-              {counts.comparisons}
-            </span>
-          ) : null}
-          {item.label === "ERRs" && counts.errs > 0 ? (
-            <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"}`}>
-              {counts.errs}
-            </span>
-          ) : null}
-          {item.label === "Pending Approvals" && counts.pendingApprovals > 0 ? (
-            <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"}`}>
-              {counts.pendingApprovals}
+              {count}
             </span>
           ) : null}
           <ChevronRight className={`h-4 w-4 ${active ? "text-white/70" : "text-slate-400"}`} />
@@ -357,7 +245,7 @@ function Sidebar({
             {settingsOpen ? (
               <div className="mt-1 space-y-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
                 <Link
-                  href={role === "ERR_USER" ? "/approver/settings/change-password" : "/approver/settings/change-password"}
+                  href="/approver/settings/change-password"
                   onClick={() => {
                     closeMenu?.();
                     setSettingsOpen(false);
@@ -366,7 +254,7 @@ function Sidebar({
                 >
                   Change Password
                 </Link>
-                {role !== "CLERK" ? (
+                {role !== "clerk" ? (
                   <Link
                     href="/approver/settings/signature"
                     onClick={() => {
@@ -383,15 +271,6 @@ function Sidebar({
           </div>
         )}
       </nav>
-
-      {/* <div className="border-t border-slate-200 px-4 py-4">
-        <div className="rounded-xl bg-slate-100 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Workflow Chain</p>
-          <p className="mt-1 text-sm text-slate-800">
-            Clerk {"->"} PMV Engineer {"->"} Workshop Manager {"->"} PMV Manager {"->"} Approved
-          </p>
-        </div>
-      </div> */}
     </aside>
   );
 }
@@ -401,7 +280,6 @@ export default function DashboardShell({
   userName,
   title,
   subtitle,
-  isUploader,
   children,
 }: DashboardShellProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -543,13 +421,13 @@ export default function DashboardShell({
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-0 h-80 bg-gradient-to-br from-slate-200 via-slate-100 to-cyan-100" />
       <div className="relative z-10 flex min-h-screen">
         <div className="hidden lg:block">
-              <Sidebar role={role} userName={userName} counts={sidebarCounts} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader || sidebarCounts.isErrUploader} />
+              <Sidebar role={role} counts={sidebarCounts} />
         </div>
 
         {menuOpen && (
           <div className="fixed inset-0 z-40 flex lg:hidden">
             <div className="h-full shadow-2xl">
-              <Sidebar role={role} userName={userName} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader || sidebarCounts.isErrUploader} />
+              <Sidebar role={role} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} />
             </div>
             <button
               type="button"

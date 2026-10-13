@@ -1,19 +1,18 @@
-import { DeletionRequestStatus, UserRole } from "@prisma/client";
+// src/app/api/documents/deletion-requests/route.ts
+import { DeletionRequestStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
+import { userHasPermissionForDocument } from "@/lib/auth/access";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
+// Asking for a document to be deleted needs the documents.delete_request permission for that document.
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-  }
-
-  if (session.role !== UserRole.CLERK && session.role !== UserRole.ADMIN) {
-    return NextResponse.json({ message: "Only Clerk or Admin can request document deletion." }, { status: 403 });
   }
 
   let payload: { ids?: unknown };
@@ -32,22 +31,25 @@ export async function POST(request: Request) {
   }
 
   let createdCount = 0;
+  let notAllowedCount = 0;
 
   for (const documentId of ids) {
     const document = await prisma.document.findUnique({
       where: { id: documentId },
-      select: { id: true },
+      select: { id: true, projectId: true, documentTypeId: true, documentSubtypeId: true, project: { select: { locationId: true } } },
     });
 
     if (!document) {
       continue;
     }
 
+    if (!(await userHasPermissionForDocument(session, "documents.delete_request", document))) {
+      notAllowedCount += 1;
+      continue;
+    }
+
     const pendingRequest = await prisma.deletionRequest.findFirst({
-      where: {
-        documentId: document.id,
-        status: DeletionRequestStatus.PENDING,
-      },
+      where: { documentId: document.id, status: DeletionRequestStatus.PENDING },
       select: { id: true },
     });
 
@@ -59,7 +61,7 @@ export async function POST(request: Request) {
       data: {
         documentId: document.id,
         requestedById: session.userId,
-        reason: `${session.role === UserRole.ADMIN ? "Admin" : "Clerk"} requested deletion`,
+        reason: "Deletion requested",
       },
     });
 
@@ -67,18 +69,23 @@ export async function POST(request: Request) {
       documentId: document.id,
       performedById: session.userId,
       action: "DELETION_REQUESTED",
-      details: JSON.stringify({ requestedByRole: session.role, documentId: document.id }),
+      details: JSON.stringify({ requestedByUserType: session.userType, documentId: document.id }),
     });
 
     createdCount += 1;
   }
 
+  if (createdCount === 0 && notAllowedCount > 0) {
+    return NextResponse.json({ message: "You are not allowed to request deletion of the selected documents.", createdCount, notAllowedCount }, { status: 403 });
+  }
+
   return NextResponse.json(
     {
       message: createdCount > 0
-        ? "Deletion request sent to Admin. The documents will be deleted after approval."
+        ? "Deletion request sent for review. The documents will be deleted after approval."
         : "Deletion requests already exist for the selected documents.",
       createdCount,
+      notAllowedCount,
     },
     { status: 200 },
   );

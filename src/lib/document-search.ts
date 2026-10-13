@@ -1,19 +1,17 @@
-// import { DocumentStatus } from "@prisma/client";
-
-type DocumentStatus = string;
-
 export type SearchableDocument = {
   documentNumber?: string | null;
   title?: string | null;
-  status?: DocumentStatus | null;
+  status?: string | null;
   statusLabel?: string | null;
-  documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR" | null;
-  mrType?: "CASH" | "CREDIT" | null;
-  mrNumber?: string | null;
+  documentTypeName?: string | null;
+  documentTypeCode?: string | null;
+  documentSubtypeName?: string | null;
+  projectName?: string | null;
+  projectCode?: string | null;
   currentApproverName?: string | null;
   rejectionComments?: string | null;
-  relatedComparisonDocumentNumber?: string | null;
-  relatedComparisonTitle?: string | null;
+  // Text of custom field values (e.g. an MR number) so people can search for them.
+  fieldValuesText?: string | null;
 };
 
 export function parseSearchQuery(value: unknown): string {
@@ -24,27 +22,6 @@ export function parseSearchQuery(value: unknown): string {
   return value.trim().toLowerCase();
 }
 
-export function getDocumentStatusLabel(status?: DocumentStatus | null): string {
-  switch (status) {
-    case "PENDING_APPROVER_1":
-      return "pending pmv engineer";
-    case "PENDING_APPROVER_2":
-      return "pending workshop manager";
-    case "PENDING_APPROVER_3":
-      return "pending pmv manager";
-    case "APPROVED":
-      return "approved";
-    case "REJECTED":
-      return "rejected";
-    case "REVISION_REQUIRED":
-      return "revision required";
-    case "ARCHIVED":
-      return "archived";
-    default:
-      return "";
-  }
-}
-
 export function matchesDocumentSearch(documentItem: SearchableDocument, query: string): boolean {
   if (!query) {
     return true;
@@ -53,29 +30,21 @@ export function matchesDocumentSearch(documentItem: SearchableDocument, query: s
   const searchableText = [
     documentItem.documentNumber,
     documentItem.title,
-    documentItem.statusLabel ?? getDocumentStatusLabel(documentItem.status),
-    documentItem.documentType === "MATERIAL_REQUISITION"
-      ? "material requisition mr"
-      : documentItem.documentType === "COMPARISON"
-        ? "comparison sheet"
-        : documentItem.documentType === "CUSTODY"
-          ? "custody"
-          : documentItem.documentType === "ERR"
-          ? "err"
-          : "",
-    documentItem.mrType === "CASH" ? "cash" : documentItem.mrType === "CREDIT" ? "credit" : "",
-    documentItem.mrNumber,
-    documentItem.relatedComparisonDocumentNumber,
-    documentItem.relatedComparisonTitle,
+    documentItem.statusLabel,
+    documentItem.documentTypeName,
+    documentItem.documentTypeCode,
+    documentItem.documentSubtypeName,
+    documentItem.projectName,
+    documentItem.projectCode,
     documentItem.currentApproverName,
     documentItem.rejectionComments,
+    documentItem.fieldValuesText,
   ]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
 
-  const normalizedQuery = query.trim().toLowerCase();
-  const terms = normalizedQuery.split(/\s+/).filter(Boolean);
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
   if (terms.length === 0) {
     return true;

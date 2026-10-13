@@ -1,4 +1,4 @@
-import { ErrAccessRole, UserRole } from "@prisma/client";
+// src/app/api/auth/signature/route.ts
 import { readFile } from "fs/promises";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
@@ -8,16 +8,9 @@ import { writeAuditLog } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
-async function canManageOwnSignature(
-  _userId: string,
-  _role: UserRole,
-): Promise<boolean> {
-  return true;
-}
-
 export async function GET() {
   const session = await getSession();
-  if (!session || !(await canManageOwnSignature(session.userId, session.role))) {
+  if (!session) {
     return NextResponse.json({ message: "You do not have access to this signature." }, { status: 403 });
   }
 
@@ -47,8 +40,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const session = await getSession();
   if (
-  !session ||
-  !(await canManageOwnSignature(session.userId, session.role))
+  !session
 ) {
     return NextResponse.json({ message: "You do not have access to manage this signature." }, { status: 403 });
   }
@@ -88,8 +80,7 @@ export async function POST(request: Request) {
 export async function DELETE() {
   const session = await getSession();
   if (
-  !session ||
-  !(await canManageOwnSignature(session.userId, session.role))
+  !session
 ) {
     return NextResponse.json({ message: "You do not have access to manage this signature." }, { status: 403 });
   }

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 export default function ForgotPasswordForm() {
   const [email, setEmail] = useState("");
@@ -25,6 +26,7 @@ export default function ForgotPasswordForm() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-csrf-token": getCsrfTokenFromBrowser(),
         },
         body: JSON.stringify({ email }),
       });

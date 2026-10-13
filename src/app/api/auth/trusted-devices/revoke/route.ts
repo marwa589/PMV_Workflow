@@ -1,6 +1,7 @@
-import { UserRole } from "@prisma/client";
+// src/app/api/auth/trusted-devices/revoke/route.ts
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
+import { USER_TYPE } from "@/lib/auth/roles";
 import { revokeTrustedDevices, TRUSTED_DEVICE_COOKIE } from "@/lib/auth/otp";
 
 export async function POST(request: Request) {
@@ -9,7 +10,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  if (session.role !== UserRole.ADMIN) {
+  if (session.userType !== USER_TYPE.ADMIN) {
     return NextResponse.json({ message: "Only an administrator can revoke trusted-device access." }, { status: 403 });
   }
 

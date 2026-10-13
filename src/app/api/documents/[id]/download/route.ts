@@ -1,7 +1,8 @@
-import { readFile } from "fs/promises";
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { canAccessDocument } from "@/lib/auth/resource-access";
+import { canAccessDocument } from "@/lib/auth/access";
 import { resolveStoredFilePath } from "@/lib/files";
 import { prisma } from "@/lib/prisma";
 
@@ -12,15 +13,29 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
+
   if (!session) {
-    return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { message: "Unauthorized" },
+      { status: 401 },
+    );
   }
 
   const { id: documentId } = await params;
+  const searchParams = new URL(request.url).searchParams;
+  const inline = searchParams.get("inline") === "1";
 
-  const canAccess = await canAccessDocument(session, documentId);
+  const canAccess = await canAccessDocument(
+    session,
+    documentId,
+    inline ? "documents.view" : "documents.download",
+  );
+
   if (!canAccess) {
-    return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+    return NextResponse.json(
+      { message: "Forbidden" },
+      { status: 403 },
+    );
   }
 
   const document = await prisma.document.findUnique({
@@ -32,12 +47,16 @@ export async function GET(
   });
 
   if (!document) {
-    return NextResponse.json({ message: "Document not found." }, { status: 404 });
+    return NextResponse.json(
+      { message: "Document not found." },
+      { status: 404 },
+    );
   }
 
-  const versionParam = new URL(request.url).searchParams.get("version");
+  const versionParam = searchParams.get("version");
+
   const targetVersionNumber =
-    versionParam !== null && !isNaN(Number(versionParam))
+    versionParam !== null && !Number.isNaN(Number(versionParam))
       ? Number(versionParam)
       : document.currentVersion;
 
@@ -56,21 +75,43 @@ export async function GET(
   });
 
   if (!version) {
-    return NextResponse.json({ message: "Document version not found." }, { status: 404 });
+    return NextResponse.json(
+      { message: "Document version not found." },
+      { status: 404 },
+    );
   }
 
   try {
-    const absolutePath = resolveStoredFilePath(version.filePath);
-    const buffer = await readFile(absolutePath);
+    const buffer = await readFile(
+      resolveStoredFilePath(version.filePath),
+    );
+
+    // Support Arabic and other non-ASCII characters in filenames.
+    const safeFilename = basename(version.originalName).replace(
+      /[\r\n"]/g,
+      "_",
+    );
+    const encodedFilename = encodeURIComponent(safeFilename);
 
     return new NextResponse(buffer, {
       status: 200,
       headers: {
         "Content-Type": version.mimeType || "application/octet-stream",
-        "Content-Disposition": `${new URL(request.url).searchParams.get("inline") === "1" ? "inline" : "attachment"}; filename="${version.originalName}"`,
+        "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="document.pdf"; filename*=UTF-8''${encodeURIComponent(version.originalName)}`,
+        "Content-Length": String(buffer.byteLength),
+        "X-Content-Type-Options": "nosniff",
       },
     });
-  } catch {
-    return NextResponse.json({ message: "File not found on server." }, { status: 404 });
+  } catch (error) {
+    console.error("[document-download] Failed to read stored file", {
+      documentId,
+      filePath: version.filePath,
+      error,
+    });
+
+    return NextResponse.json(
+      { message: "Unable to read the stored document file." },
+      { status: 500 },
+    );
   }
 }

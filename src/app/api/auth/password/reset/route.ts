@@ -1,3 +1,4 @@
+// src/app/api/auth/password/reset/route.ts
 import { createHash } from "crypto";
 import { hash } from "bcryptjs";
 import { NextResponse } from "next/server";

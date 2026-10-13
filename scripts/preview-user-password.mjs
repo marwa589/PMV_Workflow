@@ -102,15 +102,14 @@ const prisma = new PrismaClient({
 });
 
 try {
-  const executiveRoles = ["CEO"];
+  // "Executives" used to be everyone holding a CEO access grant. That table no longer exists, so the
+  // group is now simply the emails listed in EXECUTIVE_EMAILS (comma separated).
+  const executiveEmails = (process.env.EXECUTIVE_EMAILS || "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean);
   const excludedStaffEmails = ["elie.elhani@ahmadiah.com"];
   const groupFilter = group === "staff"
-    ? {
-        email: { notIn: excludedStaffEmails },
-        errAccess: { none: { role: { in: executiveRoles }, isActive: true } },
-      }
+    ? { email: { notIn: [...excludedStaffEmails, ...executiveEmails] } }
     : group === "executives"
-      ? { errAccess: { some: { role: { in: executiveRoles }, isActive: true } } }
+      ? { email: { in: executiveEmails } }
       : {};
 
   const users = await prisma.user.findMany({
@@ -118,7 +117,7 @@ try {
     select: {
       name: true,
       email: true,
-      role: true,
+      userType: { select: { name: true } },
     },
     orderBy: { email: "asc" },
   });
@@ -131,7 +130,9 @@ try {
   const credentials = await Promise.all(users.map(async (user) => {
     const password = passwordForUser(user.email);
     return {
-      ...user,
+      name: user.name,
+      email: user.email,
+      role: user.userType.name,
       password,
       passwordHash: await hash(password, 12),
     };

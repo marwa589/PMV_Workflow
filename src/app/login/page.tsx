@@ -1,3 +1,4 @@
+// src/app/login/page.tsx
 import { redirect } from "next/navigation";
 import LoginForm from "@/components/login-form";
 import { getDefaultRouteForRole } from "@/lib/auth/roles";
@@ -6,7 +7,7 @@ import { getSession } from "@/lib/auth/session";
 export default async function LoginPage() {
   const session = await getSession();
   if (session) {
-    redirect(getDefaultRouteForRole(session.role));
+    redirect(getDefaultRouteForRole(session.userType));
   }
 
   return (

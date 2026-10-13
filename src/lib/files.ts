@@ -2,7 +2,6 @@ import { mkdir, readFile, rm, unlink, writeFile } from "fs/promises";
 import { PDFDocument } from "pdf-lib";
 import path from "path";
 import { randomUUID } from "node:crypto";
-import { documentStorageFolder } from "@/lib/storage-layout";
 
 export function getUploadRoot(): string {
   const uploadPath = process.env.UPLOAD_PATH?.trim();
@@ -146,72 +145,13 @@ export async function saveUserSignatureFile(params: {
   });
 }
 
-export async function savePurchaseOrderFile(file: File, storageFolder = "POs"): Promise<{ relativePath: string }> {
-  const extension = file.name.includes(".")
-    ? file.name.slice(file.name.lastIndexOf("."))
-    : "";
-  const baseName = safeFileName(file.name.slice(0, file.name.length - extension.length)) || "Purchase-Order";
-  const fileName = `${baseName}${extension}`;
-
-  return saveStoredFile({
-    relativePath: `${storageFolder}/${fileName}`,
-    bytes: new Uint8Array(await file.arrayBuffer()),
-    overwrite: false,
-  });
-}
-
-// Compute the structured storage directory based on document type and relationship.
-export function resolveStorageDir(params: {
-  documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
-  mrNumber?: string | null;
-  mrType?: "CASH" | "CREDIT" | null;
-  hasLinkedComparison: boolean;
-  location?: string | null;
-  uploaderEmail?: string;
-}): string {
-  const resolvedPath = params.uploaderEmail
-    ? documentStorageFolder({
-        uploaderEmail: params.uploaderEmail,
-        location: params.location,
-        documentType: params.documentType,
-        mrType: params.mrType,
-        hasLinkedComparison: params.hasLinkedComparison,
-      })
-    : null;
-
-  const fallbackPath = params.location ? `MRs/${params.location}` : "MRs";
-
-  if (resolvedPath) {
-    return resolvedPath;
-  }
-
-  if (params.documentType === "COMPARISON") {
-    return `${fallbackPath}/Comparisons`;
-  }
-
-  if (params.mrType === "CREDIT") {
-    return `${fallbackPath}/MRs Credit`;
-  }
-
-  if (params.mrType === "CASH") {
-    return `${fallbackPath}/MRs Cash`;
-  }
-
-  return `${fallbackPath}/MRs`;
-}
-
+// Saves one file version. With a storageFolder (see documentStorageFolder) the file goes into that named
+// folder; otherwise it goes under documents/{documentId}.
 export async function saveDocumentVersionFile(params: {
   documentId: string;
   versionNumber: number;
   file: File;
-  // Structured storage params — when provided, file goes to the right named folder.
-  documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
   documentNumber?: string;
-  mrNumber?: string | null;
-  hasLinkedComparison?: boolean;
-  uploaderEmail?: string;
-  location?: string | null;
-  mrType?: "CASH" | "CREDIT" | null;
   storageFolder?: string | null;
 }): Promise<{ relativePath: string; extension: string; storageFolder: string | null }> {
   const validation = ensureAllowedFile(params.file);
@@ -220,65 +160,26 @@ export async function saveDocumentVersionFile(params: {
   }
 
   const extension = validation.extension;
-  let dir: string;
-  let fileName: string;
+  const fileName = documentFileName({
+    fileName: params.file.name,
+    documentNumber: params.documentNumber,
+    documentId: params.documentId,
+    versionNumber: params.versionNumber,
+    extension,
+  });
 
-  if (params.documentType && params.documentNumber) {
-    dir = params.storageFolder || (params.uploaderEmail
-      ? documentStorageFolder({
-          uploaderEmail: params.uploaderEmail,
-          location: params.location,
-          documentType: params.documentType,
-          mrType: params.mrType,
-          hasLinkedComparison: params.hasLinkedComparison ?? false,
-        })
-      : null) || resolveStorageDir({
-        documentType: params.documentType,
-        mrNumber: params.mrNumber,
-        mrType: params.mrType,
-        hasLinkedComparison: params.hasLinkedComparison ?? false,
-        location: params.location,
-        uploaderEmail: params.uploaderEmail,
-      });
-    fileName = documentFileName({
-      fileName: params.file.name,
-      documentNumber: params.documentNumber,
-      documentId: params.documentId,
-      versionNumber: params.versionNumber,
-      extension,
-    });
-  } else {
-    // Keep approval uploads in the permanent root when document details are unavailable.
-    dir = path.join(getUploadRoot(), "documents", params.documentId);
-    fileName = documentFileName({
-      fileName: params.file.name,
-      documentNumber: params.documentNumber,
-      documentId: params.documentId,
-      versionNumber: params.versionNumber,
-      extension,
-    });
-  }
+  const folder =
+    params.storageFolder && params.documentNumber
+      ? params.storageFolder.replaceAll("\\", "/").replace(/\/+$/, "")
+      : null;
 
-  const storageFolder = params.documentType && params.documentNumber
-    ? dir.replaceAll("\\", "/").replace(`${getUploadRoot().replaceAll("\\", "/")}/`, "")
-    : null;
-  const relativePath = storageFolder
-    ? `${storageFolder}/${fileName}`
-    : path.relative(getUploadRoot(), path.join(dir, fileName)).replaceAll("\\", "/");
+  const saved = await saveStoredFile({
+    relativePath: `${folder ?? `documents/${params.documentId}`}/${fileName}`,
+    bytes: new Uint8Array(await params.file.arrayBuffer()),
+    overwrite: true,
+  });
 
-  if (relativePath.startsWith("uploads/")) {
-    await mkdir(path.dirname(resolveStoredFilePath(relativePath)), { recursive: true });
-    await writeFile(resolveStoredFilePath(relativePath), Buffer.from(await params.file.arrayBuffer()));
-  } else {
-    const saved = await saveStoredFile({
-      relativePath,
-      bytes: new Uint8Array(await params.file.arrayBuffer()),
-      overwrite: true,
-    });
-    return { relativePath: saved.relativePath, extension, storageFolder };
-  }
-
-  return { relativePath, extension, storageFolder };
+  return { relativePath: saved.relativePath, extension, storageFolder: folder };
 }
 
 export async function mergePdfFiles(params: {
@@ -286,6 +187,7 @@ export async function mergePdfFiles(params: {
   secondFilePath: string;
   fileName: string;
   storageFolder?: string | null;
+  subfolder?: string;
 }): Promise<{ relativePath: string }> {
   const [firstBytes, secondBytes] = await Promise.all([
     readFile(resolveStoredFilePath(params.firstFilePath)),
@@ -305,8 +207,9 @@ export async function mergePdfFiles(params: {
   const safeName = `${safeFileName(params.fileName.replace(/\.[^.]+$/, ""))}.pdf`;
   const normalizedStorageFolder = params.storageFolder
     ? params.storageFolder.replace(/\\/g, "/").replace(/\/+$/, "")
-    : "MRs";
-  const relativePath = `${normalizedStorageFolder.replace(/\/MRs+Comparisons$/, "")}/MRs+Comparisons/${safeName}`;
+    : "Documents";
+  const mergedFolder = params.subfolder ?? "Merged";
+  const relativePath = `${normalizedStorageFolder}/${mergedFolder}/${safeName}`;
   const saved = await saveStoredFile({
     relativePath,
     bytes: await mergedPdf.save(),
@@ -316,28 +219,6 @@ export async function mergePdfFiles(params: {
   return {
     relativePath: saved.relativePath,
   };
-}
-
-// Copy a comparison file into the MR country/group MRs+Comparisons folder so OneDrive sees the pair together.
-export async function copyComparisonToMrFolder(params: {
-  comparisonFilePath: string;
-  comparisonOriginalName: string;
-  mrNumber: string;
-  storageFolder?: string | null;
-}): Promise<void> {
-  const { readFile } = await import("fs/promises");
-  const baseFolder = params.storageFolder
-    ? params.storageFolder.replace(/\\/g, "/").replace(/\/+$/, "")
-    : "MRs";
-  const destDir = path.join(getUploadRoot(), baseFolder.replace(/^\//, ""), "MRs+Comparisons", `MR-${safeFileName(params.mrNumber)}`);
-  await mkdir(destDir, { recursive: true });
-  const destPath = path.join(destDir, safeFileName(params.comparisonOriginalName));
-  try {
-    const buffer = await readFile(resolveStoredFilePath(params.comparisonFilePath));
-    await writeFile(destPath, buffer);
-  } catch {
-    // Non-critical: if comparison file is missing the copy is skipped silently.
-  }
 }
 
 // Delete files by their stored relative paths, then remove empty parent dirs.

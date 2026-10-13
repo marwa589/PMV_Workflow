@@ -1,115 +1,125 @@
-import { DocumentStatus } from "@prisma/client";
-import { DOCUMENT_STATUS_FILTER_OPTIONS, DownloadStatusFilter, ErrStatusFilter, ErrTypeFilter, MrTypeFilter, PoStatusFilter, ERR_STATUS_FILTER_OPTIONS } from "@/lib/document-status";
+import { DOCUMENT_STATUS_FILTER_OPTIONS, type DownloadStatusFilter } from "@/lib/document-status";
+
+export type FilterDocumentType = {
+  code: string;
+  name: string;
+  subtypes: Array<{ code: string; name: string }>;
+};
 
 type Props = {
   value?: string;
   title?: string;
   documentType?: string;
+  documentSubtype?: string;
+  project?: string;
   downloadStatus?: DownloadStatusFilter;
   approvalFrom?: string;
   approvalTo?: string;
   showDownloadFilters?: boolean;
-  mrType?: MrTypeFilter;
-  poStatus?: PoStatusFilter;
-  errType?: ErrTypeFilter;
-  errStatus?: ErrStatusFilter;
-  showMrTypeFilter?: boolean;
-  showPoStatusFilter?: boolean;
-  showErrTypeFilter?: boolean;
-  showErrStatusFilter?: boolean;
   showDocumentTypeFilter?: boolean;
-  showErrDocumentType?: boolean;
+  showProjectFilter?: boolean;
   showStatusFilter?: boolean;
   statusFilterOptions?: Array<{ value: string; label: string }>;
-  location?: string;
+  // Document types (with their sub types) and projects come from the database, so the filter never needs editing.
+  documentTypes?: FilterDocumentType[];
+  projects?: Array<{ id: string; code: string; name: string }>;
 };
 
-export default function DocumentStatusFilter({ value = "", title = "Status", documentType = "", downloadStatus = "", approvalFrom = "", approvalTo = "", showDownloadFilters = false, mrType = "", poStatus = "", errType = "", errStatus = "", location = "", showMrTypeFilter = false, showPoStatusFilter = false, showErrTypeFilter = false, showErrStatusFilter = false, showDocumentTypeFilter = false, showErrDocumentType = true, showStatusFilter = true, statusFilterOptions = DOCUMENT_STATUS_FILTER_OPTIONS }: Props) {
+const selectClass = "w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400";
+const labelClass = "mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600";
+
+export default function DocumentStatusFilter({
+  value = "",
+  title = "Status",
+  documentType = "",
+  documentSubtype = "",
+  project = "",
+  downloadStatus = "",
+  approvalFrom = "",
+  approvalTo = "",
+  showDownloadFilters = false,
+  showDocumentTypeFilter = true,
+  showProjectFilter = true,
+  showStatusFilter = true,
+  statusFilterOptions = DOCUMENT_STATUS_FILTER_OPTIONS,
+  documentTypes = [],
+  projects = [],
+}: Props) {
+  const selectedType = documentTypes.find((type) => type.code === documentType);
+
   return (
     <form method="get" className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       {showDocumentTypeFilter ? (
         <div className="min-w-0 flex-1">
-          <label htmlFor="document-type" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type</label>
-          <select id="document-type" name="documentType" defaultValue={documentType} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400">
+          <label htmlFor="document-type" className={labelClass}>Document Type</label>
+          <select id="document-type" name="documentType" defaultValue={documentType} className={selectClass}>
             <option value="">All</option>
-            <option value="MATERIAL_REQUISITION">MRs</option>
-            <option value="COMPARISON">Comparison Sheets</option>
-            <option value="CUSTODY">Custody Files</option>
-            {showErrDocumentType ? <option value="ERR">ERRs</option> : null}
+            {documentTypes.map((type) => (
+              <option key={type.code} value={type.code}>{type.name}</option>
+            ))}
           </select>
         </div>
-      ) : documentType ? <input type="hidden" name="documentType" value={documentType} /> : null}
-      {location ? <input type="hidden" name="location" value={location} /> : null}
-      {showMrTypeFilter && documentType === "MATERIAL_REQUISITION" ? (
+      ) : documentType ? (
+        <input type="hidden" name="documentType" value={documentType} />
+      ) : null}
+
+      {selectedType && selectedType.subtypes.length > 0 ? (
         <div className="min-w-0 flex-1">
-          <label htmlFor="mr-type" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">MR Type</label>
-          <select id="mr-type" name="mrType" defaultValue={mrType} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400">
-            <option value="">All MR Types</option>
-            <option value="CASH">Cash</option>
-            <option value="CREDIT">Credit</option>
+          <label htmlFor="document-subtype" className={labelClass}>Sub Type</label>
+          <select id="document-subtype" name="documentSubtype" defaultValue={documentSubtype} className={selectClass}>
+            <option value="">All sub types</option>
+            {selectedType.subtypes.map((subtype) => (
+              <option key={subtype.code} value={subtype.code}>{subtype.name}</option>
+            ))}
           </select>
         </div>
       ) : null}
-      {showPoStatusFilter && documentType === "MATERIAL_REQUISITION" ? (
+
+      {showProjectFilter && projects.length > 0 ? (
         <div className="min-w-0 flex-1">
-          <label htmlFor="po-status" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">PO Status</label>
-          <select id="po-status" name="poStatus" defaultValue={poStatus} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400">
-            <option value="">All PO Statuses</option>
-            <option value="UPLOADED">PO Uploaded</option>
-            <option value="PENDING">PO Pending</option>
-            <option value="NOT_APPLICABLE">Not Applicable</option>
+          <label htmlFor="project" className={labelClass}>Project</label>
+          <select id="project" name="project" defaultValue={project} className={selectClass}>
+            <option value="">All projects</option>
+            {projects.map((item) => (
+              <option key={item.id} value={item.id}>{item.code} - {item.name}</option>
+            ))}
           </select>
         </div>
       ) : null}
-      {showErrTypeFilter && documentType === "ERR" ? (
-        <div className="min-w-0 flex-1">
-          <label htmlFor="err-type" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">ERR Type</label>
-          <select id="err-type" name="errType" defaultValue={errType} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400">
-            <option value="">All ERR Types</option>
-            <option value="RENTAL_ACTC">Rental ACTC</option>
-            <option value="RENTAL_EXTERNAL">Rental External</option>
-            <option value="RENEWAL">Renewal</option>
-            <option value="PURCHASE">Purchase</option>
-          </select>
-        </div>
-      ) : null}
+
       {showDownloadFilters ? (
         <>
           <div className="min-w-0 flex-1">
-            <label htmlFor="download-status" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Download Status</label>
-            <select id="download-status" name="downloadStatus" defaultValue={downloadStatus} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400">
+            <label htmlFor="download-status" className={labelClass}>Download Status</label>
+            <select id="download-status" name="downloadStatus" defaultValue={downloadStatus} className={selectClass}>
               <option value="">All</option>
               <option value="DOWNLOADED">Downloaded</option>
               <option value="NOT_DOWNLOADED">Not Downloaded</option>
             </select>
           </div>
           <div className="min-w-0 flex-1">
-            <label htmlFor="approval-from" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Approval Date/Time From</label>
-            <input id="approval-from" type="datetime-local" name="approvalFrom" defaultValue={approvalFrom} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400" />
+            <label htmlFor="approval-from" className={labelClass}>Approval Date/Time From</label>
+            <input id="approval-from" type="datetime-local" name="approvalFrom" defaultValue={approvalFrom} className={selectClass} />
           </div>
           <div className="min-w-0 flex-1">
-            <label htmlFor="approval-to" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Approval Date/Time To</label>
-            <input id="approval-to" type="datetime-local" name="approvalTo" defaultValue={approvalTo} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400" />
+            <label htmlFor="approval-to" className={labelClass}>Approval Date/Time To</label>
+            <input id="approval-to" type="datetime-local" name="approvalTo" defaultValue={approvalTo} className={selectClass} />
           </div>
         </>
       ) : null}
+
       {showStatusFilter ? (
         <div className="min-w-0 flex-1">
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">{title}</label>
-          <select
-            name="status"
-            defaultValue={value}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400"
-          >
+          <label className={labelClass}>{title}</label>
+          <select name="status" defaultValue={value} className={selectClass}>
             <option value="">All</option>
             {statusFilterOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
+              <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
         </div>
       ) : null}
+
       <button
         type="submit"
         className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700"

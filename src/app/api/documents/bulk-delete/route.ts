@@ -1,7 +1,8 @@
-import { UserRole } from "@prisma/client";
+// src/app/api/documents/bulk-delete/route.ts
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { deleteDocumentFiles } from "@/lib/files";
+import { USER_TYPE } from "@/lib/auth/roles";
+import { deleteDocumentsPermanently } from "@/lib/document-deletion";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -18,43 +19,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "No documents selected." }, { status: 400 });
   }
 
-  if (session.role === UserRole.CLERK) {
-    return NextResponse.json({ message: "Use the deletion request endpoint." }, { status: 403 });
+  if (session.userType !== USER_TYPE.ADMIN) {
+    return NextResponse.json({ message: "Only Admin can permanently delete documents. Use a deletion request instead." }, { status: 403 });
   }
 
-  if (session.role !== UserRole.ADMIN) {
-    return NextResponse.json({ message: "Only Admin can permanently delete documents." }, { status: 403 });
-  }
+  const existing = await prisma.document.findMany({ where: { id: { in: ids } }, select: { id: true } });
+  const count = await deleteDocumentsPermanently(existing.map((document) => document.id));
 
-  const documents = await prisma.document.findMany({
-    where: { id: { in: ids } },
-    select: {
-      id: true,
-      mrNumber: true,
-      documentType: true,
-      versions: { select: { filePath: true } },
-      linkedMRs: { select: { mrNumber: true } },
-    },
-  });
-
-  await prisma.$transaction(async (tx) => {
-    const documentIds = documents.map((document) => document.id);
-    await tx.approvalHistory.deleteMany({ where: { documentId: { in: documentIds } } });
-    await tx.emailNotificationEvent.deleteMany({ where: { documentId: { in: documentIds } } });
-    await tx.notification.deleteMany({ where: { documentId: { in: documentIds } } });
-    await tx.document.deleteMany({ where: { id: { in: documents.map((document) => document.id) } } });
-  });
-
-  const directoryPaths = documents.flatMap((document) => [
-    ...(document.mrNumber && document.documentType === "MATERIAL_REQUISITION" ? [`MRs+Comparisons/MR-${document.mrNumber}`] : []),
-    ...document.linkedMRs
-      .filter((mr) => Boolean(mr.mrNumber))
-      .map((mr) => `MRs+Comparisons/MR-${mr.mrNumber}`),
-  ]);
-  await deleteDocumentFiles({
-    filePaths: documents.flatMap((document) => document.versions.map((version) => version.filePath)),
-    directoryPaths,
-  });
-
-  return NextResponse.json({ message: `${documents.length} document(s) permanently deleted.` }, { status: 200 });
+  return NextResponse.json({ message: `${count} document(s) permanently deleted.` }, { status: 200 });
 }

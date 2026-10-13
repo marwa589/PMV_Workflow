@@ -35,7 +35,7 @@ function formatDays(days: number) {
 }
 
 export default function WorkflowPipelineChart({ stages, documents }: Props) {
-  const [selectedStageKey, setSelectedStageKey] = useState<string | null>(stages[1]?.key ?? null);
+  const [selectedStageKey, setSelectedStageKey] = useState<string | null>(stages.find((stage) => stage.count > 0)?.key ?? stages[0]?.key ?? null);
 
   const activeStage = useMemo(
     () => stages.find((stage) => stage.key === selectedStageKey) ?? null,
@@ -84,17 +84,13 @@ export default function WorkflowPipelineChart({ stages, documents }: Props) {
                 onClick={() => setSelectedStageKey(stage.key)}
                 className={`rounded-2xl border p-3 text-left transition ${
                   isActive
-                    ? stage.key === 'APPROVER_1'
+                    ? stage.key.startsWith('LEVEL_')
                       ? 'border-yellow-200 bg-yellow-50 text-yellow-900 shadow-sm ring-1 ring-yellow-200'
-                      : stage.key === 'APPROVER_2'
-                        ? 'border-yellow-200 bg-yellow-50 text-yellow-900 shadow-sm ring-1 ring-yellow-200'
-                        : stage.key === 'APPROVER_3'
-                          ? 'border-yellow-200 bg-yellow-50 text-yellow-900 shadow-sm ring-1 ring-yellow-200'
-                          : stage.key === 'REVISION_REQUIRED'
-                            ? 'border-orange-200 bg-orange-50 text-orange-900 shadow-sm ring-1 ring-orange-200'
-                            : stage.key === 'APPROVED'
-                              ? 'border-emerald-200 bg-emerald-50 text-emerald-900 shadow-sm ring-1 ring-emerald-200'
-                              : 'border-slate-200 bg-slate-100 text-slate-900 shadow-sm ring-1 ring-slate-300'
+                      : stage.key === 'REVISION_REQUIRED'
+                        ? 'border-orange-200 bg-orange-50 text-orange-900 shadow-sm ring-1 ring-orange-200'
+                        : stage.key === 'APPROVED'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-900 shadow-sm ring-1 ring-emerald-200'
+                          : 'border-slate-200 bg-slate-100 text-slate-900 shadow-sm ring-1 ring-slate-300'
                     : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                 }`}
                 title={`Stage: ${stage.label}\nDocuments: ${stage.count}\nAverage days pending: ${formatDays(stage.averageDaysPending)}\nOldest pending: ${stage.oldestPendingDocument ? `${stage.oldestPendingDocument.documentNumber} - ${stage.oldestPendingDocument.title}` : 'None'}`}

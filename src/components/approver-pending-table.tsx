@@ -4,38 +4,38 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useState } from "react";
 
-type PendingDocument = {
+export type PendingDocument = {
   id: string;
   documentNumber: string;
   title: string;
-  documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR" | null;
-  mrType?: "CASH" | "CREDIT" | null;
+  documentTypeName?: string | null;
+  documentSubtypeName?: string | null;
+  projectLabel?: string | null;
+  // Where it is waiting, e.g. "Pending PMV Engineer" (the level's name comes from the flow).
+  statusLabel?: string | null;
   currentVersion: number;
   uploadedAt: string;
-  relatedComparisonId?: string | null;
-  relatedComparisonDocumentNumber?: string | null;
-  quotationFileName?: string | null;
+  latestComment?: string | null;
 };
 
-export default function ApproverPendingTable({ documents, showQuotation }: { documents: PendingDocument[]; showQuotation: boolean }) {
+type Props = {
+  documents: PendingDocument[];
+  // Approvers get a Review button; admins only view (they act only where a flow names them).
+  allowReview?: boolean;
+  emptyMessage?: string;
+};
+
+export default function ApproverPendingTable({ documents, allowReview = true, emptyMessage = "No pending approvals assigned to you." }: Props) {
   const router = useRouter();
   const [visibleCount, setVisibleCount] = useState(10);
 
   if (documents.length === 0) {
-    return <div className="px-5 py-6 text-sm text-slate-500">No pending approvals assigned to you.</div>;
+    return <div className="px-5 py-6 text-sm text-slate-500">{emptyMessage}</div>;
   }
 
   function getDocumentTypeLabel(document: PendingDocument): string {
-    if (document.documentType === "MATERIAL_REQUISITION") {
-      return document.mrType === "CASH" ? "MR - Cash" : document.mrType === "CREDIT" ? "MR - Credit" : "Material Requisition";
-    }
-    if (document.documentType === "ERR") {
-      return "ERR";
-    }
-    if (document.documentType === "CUSTODY") {
-      return "Custody File";
-    }
-    return "Comparison Sheet";
+    if (!document.documentTypeName) return "Document";
+    return document.documentSubtypeName ? `${document.documentTypeName} - ${document.documentSubtypeName}` : document.documentTypeName;
   }
 
   return (
@@ -46,8 +46,8 @@ export default function ApproverPendingTable({ documents, showQuotation }: { doc
             <th className="px-5 py-3 font-semibold">Document Number</th>
             <th className="px-5 py-3 font-semibold">Title</th>
             <th className="px-5 py-3 font-semibold">Type</th>
-            {showQuotation ? <th className="px-5 py-3 font-semibold">Quotation</th> : null}
-            <th className="px-5 py-3 font-semibold">Related Comparison</th>
+            <th className="px-5 py-3 font-semibold">Project</th>
+            <th className="px-5 py-3 font-semibold">Waiting At</th>
             <th className="px-5 py-3 font-semibold">Current Version</th>
             <th className="px-5 py-3 font-semibold">Date</th>
             <th className="px-5 py-3 font-semibold">Actions</th>
@@ -55,10 +55,7 @@ export default function ApproverPendingTable({ documents, showQuotation }: { doc
         </thead>
         <tbody>
           {documents.slice(0, visibleCount).map((document) => {
-            const detailUrl =
-              document.documentType === "ERR"
-                ? `/errs/${document.id}`
-                : `/documents/${document.id}`;
+            const detailUrl = `/documents/${document.id}`;
 
             return (
               <tr key={document.id} className="border-t border-slate-100 hover:bg-slate-50/50">
@@ -71,41 +68,21 @@ export default function ApproverPendingTable({ documents, showQuotation }: { doc
                   <Link href={detailUrl} className="text-slate-800 hover:text-indigo-600 hover:underline">
                     {document.title}
                   </Link>
+                  {document.latestComment ? <div className="mt-1 text-xs text-slate-500">{document.latestComment}</div> : null}
                 </td>
-                {showQuotation ? <td className="px-5 py-4">
+                <td className="px-5 py-4">
                   <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
                     {getDocumentTypeLabel(document)}
                   </span>
-                </td> : null}
-                <td className="px-5 py-4">
-                  {document.documentType === "ERR" && document.quotationFileName ? (
-                    <a href={`/api/errs/${document.id}/download?kind=QUOTATION&inline=1`} target="_blank" rel="noopener noreferrer" className="font-medium text-cyan-700 hover:underline">Open Quotation</a>
-                  ) : "—"}
                 </td>
-                <td className="px-5 py-4">
-                  {document.relatedComparisonId && document.relatedComparisonDocumentNumber ? (
-                    <Link
-                      href={`/documents/${document.relatedComparisonId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-medium text-cyan-700 hover:underline"
-                    >
-                      {document.relatedComparisonDocumentNumber}
-                    </Link>
-                  ) : (
-                    "—"
-                  )}
-                </td>
+                <td className="px-5 py-4 text-slate-700">{document.projectLabel || "—"}</td>
+                <td className="px-5 py-4 text-slate-700">{document.statusLabel || "Pending"}</td>
                 <td className="px-5 py-4 text-slate-700">V{document.currentVersion}</td>
                 <td className="px-5 py-4 text-slate-500">{document.uploadedAt}</td>
                 <td className="px-5 py-4">
                   <div className="flex gap-2">
                     <a
-                      href={
-                        document.documentType === "ERR"
-                          ? `/api/errs/${document.id}/download?kind=ERR_PDF`
-                          : `/api/documents/${document.id}/download`
-                      }
+                      href={`/api/documents/${document.id}/download`}
                       download
                       className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                     >
@@ -113,16 +90,10 @@ export default function ApproverPendingTable({ documents, showQuotation }: { doc
                     </a>
                     <button
                       type="button"
-                      onClick={() =>
-                        router.push(
-                          document.documentType === "ERR"
-                            ? `/errs/${document.id}/review`
-                            : `/approver/review/${document.id}`,
-                        )
-                      }
+                      onClick={() => router.push(allowReview ? `/approver/review/${document.id}` : detailUrl)}
                       className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
                     >
-                      Review
+                      {allowReview ? "Review" : "Open"}
                     </button>
                   </div>
                 </td>

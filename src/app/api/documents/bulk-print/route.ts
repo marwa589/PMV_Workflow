@@ -1,23 +1,18 @@
+// src/app/api/documents/bulk-print/route.ts
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
+import { buildDocumentVisibilityWhere } from '@/lib/auth/access';
 import { prisma } from '@/lib/prisma';
-import { canAccessMrModuleForSession } from "@/lib/auth/resource-access";
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 export async function GET(request: Request) {
   const session = await getSession();
 
   if (!session) {
-    return NextResponse.json(
-      { message: "Unauthorized" },
-      { status: 401 },
-    );
-  }
-
-  if (!canAccessMrModuleForSession(session)) {
-    return NextResponse.json(
-      { message: "You do not have access to MR documents." },
-      { status: 403 },
-    );
+    return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -27,10 +22,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ message: 'No documents selected.' }, { status: 400 });
   }
 
+  // Only documents the person is allowed to print.
+  const visibility = await buildDocumentVisibilityWhere(session, prisma, 'documents.print');
   const documents = await prisma.document.findMany({
-    where: { id: { in: ids } },
+    where: { AND: [{ id: { in: ids } }, visibility] },
     select: { id: true, title: true },
   });
+
+  if (documents.length === 0) {
+    return NextResponse.json({ message: 'None of the selected documents can be printed.' }, { status: 403 });
+  }
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -48,7 +49,7 @@ export async function GET(request: Request) {
   <body>
     <h1>Selected Documents</h1>
     <ul>
-      ${documents.map((doc) => `<li>${doc.title}</li>`).join('')}
+      ${documents.map((doc) => `<li>${escapeHtml(doc.title)}</li>`).join('')}
     </ul>
   </body>
 </html>`;

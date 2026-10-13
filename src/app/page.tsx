@@ -1,3 +1,4 @@
+// src/app/page.tsx
 import { redirect } from "next/navigation";
 import { getDefaultRouteForRole } from "@/lib/auth/roles";
 import { getSession } from "@/lib/auth/session";
@@ -9,5 +10,5 @@ export default async function RootPage() {
     redirect("/login");
   }
 
-  redirect(getDefaultRouteForRole(session.role));
+  redirect(getDefaultRouteForRole(session.userType));
 }

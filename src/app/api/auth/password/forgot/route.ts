@@ -1,3 +1,4 @@
+// src/app/api/auth/password/forgot/route.ts
 import { createHash, randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";

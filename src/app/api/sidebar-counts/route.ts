@@ -1,64 +1,97 @@
-import { DocumentStatus, UserRole } from "@prisma/client";
+// src/app/api/sidebar-counts/route.ts
+import { DocumentStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
+import { USER_TYPE } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
-import { canAccessMrModule } from "@/lib/auth/resource-access";
-import { getModuleVisibility } from "@/lib/auth/module-visibility";
-import { getErrAccess } from "@/lib/err/permissions";
-import { getErrCounts } from "@/lib/err/queries";
+import { getActionableDocuments } from "@/lib/document-queries";
+import { getGlobalPermissionCodes } from "@/lib/auth/access";
+import { canUserUploadAnything } from "@/lib/workflow/eligibility";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
+type TypeCount = { documentTypeId: string; code: string; name: string; count: number };
+
+/**
+ * Counts for the sidebar badges:
+ *  - Admin: every document that is pending
+ *  - Clerk: their own pending documents
+ *  - Anyone else: documents waiting for them to act
+ * `pendingByType` replaces the old hard-coded materialRequisitions / comparisons / errs counters.
+ * `canUpload` says whether to show the "New document" entry.
+ * `documentTypes` is the list the sidebar shows (one entry per active type); `manage` says which
+ * administration screens the person may open.
+ */
 export async function GET() {
   const session = await getSession();
-  if (!session) return NextResponse.json({ materialRequisitions: 0, comparisons: 0, pendingApprovals: 0, errs: 0, isErrUploader: false, userLocation: null }, { status: 401 });
-
-  const user = await prisma.user.findUnique({ where: { id: session.userId }, select: { location: true } });
-
-  const visibility = getModuleVisibility(session.name, session.role);
-  const canQueryDocuments = canAccessMrModule(session.role) && visibility !== "ERR_ONLY";
-  const errAccess = await getErrAccess();
-  const canQueryErrs = visibility !== "DOCUMENTS_ONLY" || Boolean(errAccess?.isUploader);
-
-  let materialRequisitions = 0;
-  let comparisons = 0;
-  let documentPendingApprovals = 0;
-  let errPendingApprovals = 0;
-
-  if (canQueryDocuments) {
-  const baseWhere = session.role === UserRole.CLERK
-    ? { createdById: session.userId }
-    : session.role === UserRole.ADMIN
-      ? {}
-      : { currentApproverId: session.userId };
-
-  const pendingStatuses = {
-    in: [
-      DocumentStatus.PENDING_APPROVER_1,
-      DocumentStatus.PENDING_APPROVER_2,
-      DocumentStatus.PENDING_APPROVER_3,
-    ],
-  };
-
-    [materialRequisitions, comparisons, documentPendingApprovals] = await Promise.all([
-      prisma.document.count({ where: { ...baseWhere, documentType: "MATERIAL_REQUISITION", status: pendingStatuses } }),
-      prisma.document.count({ where: { ...baseWhere, documentType: "COMPARISON", status: pendingStatuses } }),
-      prisma.document.count({ where: { ...baseWhere, status: pendingStatuses } }),
-    ]);
+  if (!session) {
+    return NextResponse.json(
+      { pendingApprovals: 0, pendingByType: [], canUpload: false, documentTypes: [], manage: {} },
+      { status: 401 },
+    );
   }
 
-  if (canQueryErrs) {
-    if (errAccess?.canAccessErrModule) {
-      errPendingApprovals = (await getErrCounts(errAccess)).pending;
+  let pendingByType: TypeCount[] = [];
+
+  if (session.userType === USER_TYPE.ADMIN || session.userType === USER_TYPE.CLERK) {
+    const grouped = await prisma.document.groupBy({
+      by: ["documentTypeId"],
+      where: {
+        status: DocumentStatus.PENDING,
+        ...(session.userType === USER_TYPE.CLERK ? { createdById: session.userId } : {}),
+      },
+      _count: { _all: true },
+    });
+    const types = await prisma.documentType.findMany({
+      where: { id: { in: grouped.map((row) => row.documentTypeId) } },
+      select: { id: true, code: true, name: true },
+    });
+    const typeById = new Map(types.map((type) => [type.id, type]));
+    pendingByType = grouped.map((row) => ({
+      documentTypeId: row.documentTypeId,
+      code: typeById.get(row.documentTypeId)?.code ?? "",
+      name: typeById.get(row.documentTypeId)?.name ?? "",
+      count: row._count._all,
+    }));
+  } else {
+    const documents = await getActionableDocuments(session, [DocumentStatus.PENDING]);
+    const counts = new Map<string, TypeCount>();
+    for (const document of documents) {
+      const entry = counts.get(document.documentType.id) ?? {
+        documentTypeId: document.documentType.id,
+        code: document.documentType.code,
+        name: document.documentType.name,
+        count: 0,
+      };
+      entry.count += 1;
+      counts.set(document.documentType.id, entry);
     }
+    pendingByType = [...counts.values()];
   }
+
+  const canUpload = await canUserUploadAnything(prisma, { id: session.userId, userType: session.userType });
+
+  const [documentTypes, permissionCodes] = await Promise.all([
+    prisma.documentType.findMany({ where: { isActive: true }, select: { id: true, code: true, name: true }, orderBy: { name: "asc" } }),
+    getGlobalPermissionCodes(session),
+  ]);
+  const has = (code: string) => permissionCodes.includes(code);
 
   return NextResponse.json({
-    materialRequisitions,
-    comparisons,
-    pendingApprovals: documentPendingApprovals + errPendingApprovals,
-    errs: errPendingApprovals,
-    isErrUploader: Boolean(errAccess?.isUploader && errAccess.canAccessErrModule),
-    userLocation: user?.location ?? null,
+    pendingApprovals: pendingByType.reduce((sum, row) => sum + row.count, 0),
+    pendingByType,
+    canUpload,
+    documentTypes,
+    manage: {
+      flows: has("flows.manage"),
+      types: has("types.manage"),
+      processes: has("processes.manage"),
+      users: has("users.manage"),
+      assignments: has("assignments.manage"),
+      delegations: has("delegations.manage"),
+      projects: has("projects.manage"),
+      deletionReview: has("documents.delete_review"),
+    },
   });
 }

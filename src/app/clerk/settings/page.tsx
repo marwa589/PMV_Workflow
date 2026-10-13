@@ -1,17 +1,18 @@
+// src/app/clerk/settings/page.tsx
 import Link from "next/link";
-import { UserRole } from "@prisma/client";
 import { KeyRound, PenLine } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
-import { requireRole } from "@/lib/auth/guards";
+import { requireUserType } from "@/lib/auth/guards";
+import { USER_TYPE } from "@/lib/auth/roles";
 
 export const dynamic = "force-dynamic";
 
 export default async function ClerkSettingsPage() {
-  const session = await requireRole([UserRole.CLERK]);
+  const session = await requireUserType([USER_TYPE.CLERK]);
 
   return (
     <DashboardShell
-      role={session.role}
+      role={session.userType}
       userName={session.name}
       title="Account Settings"
       subtitle="Manage your account and profile preferences"

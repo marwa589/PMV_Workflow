@@ -26,15 +26,15 @@ export function getWaitingHours(assignedAt: Date | null): number {
 
 export function getStatusColor(status: DocumentStatus): string {
   switch (status) {
-    case DocumentStatus.PENDING_APPROVER_1:
+    case DocumentStatus.PENDING:
       return "bg-yellow-100 text-yellow-900 ring-1 ring-yellow-200";
-    case DocumentStatus.PENDING_APPROVER_2:
-      return "bg-yellow-100 text-yellow-900 ring-1 ring-yellow-200";
-    case DocumentStatus.PENDING_APPROVER_3:
-      return "bg-yellow-100 text-yellow-900 ring-1 ring-yellow-200";
+    case DocumentStatus.ON_HOLD:
+      return "bg-orange-100 text-orange-900 ring-1 ring-orange-200";
+    case DocumentStatus.REVISION_REQUIRED:
+      return "bg-sky-100 text-sky-900 ring-1 ring-sky-200";
     case DocumentStatus.APPROVED:
       return "bg-emerald-100 text-emerald-900 ring-1 ring-emerald-200";
-    case DocumentStatus.REJECTED:
+    case DocumentStatus.CANCELLED:
       return "bg-rose-100 text-rose-900 ring-1 ring-rose-200";
     default:
       return "bg-slate-100 text-slate-900 ring-1 ring-slate-200";

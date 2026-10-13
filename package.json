@@ -8,7 +8,13 @@
     "start": "next start",
     "lint": "eslint",
     "db:seed": "node prisma/seed.mjs",
-    "users:password-preview": "node scripts/preview-user-passwords.mjs"
+    "users:password-preview": "node scripts/preview-user-password.mjs",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "test:workflow": "tsx scripts/smoke-test-workflow.ts",
+    "test:e2e": "python3 scripts/e2e-http-test.py",
+    "test:e2e-auth": "python3 scripts/e2e-auth-test.py",
+    "test:email": "tsx scripts/test-email-batching.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",
@@ -34,6 +40,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   },
   "allowScripts": {

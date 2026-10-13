@@ -1,6 +1,7 @@
+// src/app/api/auth/login/route.ts
 import { compare } from "bcryptjs";
 import { NextResponse } from "next/server";
-import { getDefaultRouteForRole } from "@/lib/auth/roles";
+import { getDefaultRouteForRole, isUserTypeCode } from "@/lib/auth/roles";
 import { attachSessionCookie} from "@/lib/auth/session";
 import {
   createAdminOtpChallenge,
@@ -33,11 +34,14 @@ export async function POST(request: Request) {
 
     const user = await prisma.user.findUnique({
       where: { email },
+      include: { userType: { select: { code: true } } },
     });
 
-    if (!user) {
+    // Same message for unknown, deactivated and wrong-password accounts.
+    if (!user || !user.isActive || !isUserTypeCode(user.userType.code)) {
       return NextResponse.json({ message: "Invalid credentials." }, { status: 401 });
     }
+    const userType = user.userType.code;
 
     const isValidPassword = await compare(password, user.passwordHash);
     if (!isValidPassword) {
@@ -77,10 +81,10 @@ export async function POST(request: Request) {
     }
 
     // const rotatedVersion = await rotateSession(user.id);
-    const redirectTo = getDefaultRouteForRole(user.role);
+    const redirectTo = getDefaultRouteForRole(userType);
     const response = NextResponse.json({
       message: "Login successful.",
-      role: user.role,
+      userType,
       redirectTo,
     });
 
@@ -88,7 +92,7 @@ export async function POST(request: Request) {
       id: user.id,
       email: user.email,
       name: user.name,
-      role: user.role,
+      userType,
     }, user.sessionVersion);
 
     return response;

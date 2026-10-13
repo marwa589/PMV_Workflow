@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 export default function ResetPasswordForm({
   token,
@@ -55,6 +56,7 @@ export default function ResetPasswordForm({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-csrf-token": getCsrfTokenFromBrowser(),
         },
         body: JSON.stringify({
           token,

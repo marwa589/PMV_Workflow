@@ -1,104 +1,83 @@
-export type DocumentTypeFilter = "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR" | "";
-export type DownloadStatusFilter = "DOWNLOADED" | "NOT_DOWNLOADED" | "";
-export type MrTypeFilter = "CASH" | "CREDIT" | "";
-export type PoStatusFilter = "UPLOADED" | "PENDING" | "NOT_APPLICABLE" | "";
-export type MrLocationFilter = "AVR" | "AVK" | "KUWAIT" | "";
-
-export function parseMrLocationFilter(value: unknown): MrLocationFilter {
-  return value === "AVR" || value === "AVK" || value === "KUWAIT" ? value : "";
-}
-
-export function getPoStatus(documentType: string, mrType: string | null | undefined, hasPurchaseOrder: boolean): "UPLOADED" | "PENDING" | "NOT_APPLICABLE" {
-  if (documentType !== "MATERIAL_REQUISITION" || mrType !== "CREDIT") return "NOT_APPLICABLE";
-  return hasPurchaseOrder ? "UPLOADED" : "PENDING";
-}
-export type ErrTypeFilter = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "RENEWAL" | "PURCHASE" | "";
-export type ErrStatusFilter = "PENDING" | "ON_HOLD" | "REVISION_REQUIRED" | "REJECTED" | "APPROVED" | "";
-export type DocumentStatusFilterValue =
-  | "PENDING_APPROVER_1"
-  | "PENDING_APPROVER_2"
-  | "PENDING_APPROVER_3"
-  | "APPROVED"
-  | "REJECTED"
+// Statuses follow the PDF: pending (at some level), revision, on hold, approved, cancelled (rejected), archived.
+// "Pending at which level" is no longer part of the status; it is the document's currentWorkflowStep,
+// and the level's name comes from the approval flow.
+export type DocumentStatusValue =
+  | "PENDING"
   | "REVISION_REQUIRED"
-  | "ARCHIVED"
-  | "";
+  | "ON_HOLD"
+  | "APPROVED"
+  | "CANCELLED"
+  | "ARCHIVED";
 
-export const DOCUMENT_STATUS_FILTER_OPTIONS: Array<{ value: DocumentStatusFilterValue; label: string }> = [
-  { value: "PENDING_APPROVER_1", label: "Pending PMV Engineer" },
-  { value: "PENDING_APPROVER_2", label: "Pending Workshop Manager" },
-  { value: "PENDING_APPROVER_3", label: "Pending PMV Manager" },
-  { value: "APPROVED", label: "Approved" },
-  { value: "REJECTED", label: "Rejected" },
-  { value: "REVISION_REQUIRED", label: "Revision Required" },
-  { value: "ARCHIVED", label: "Archived" },
-];
+export type DocumentStatusFilterValue = DocumentStatusValue | "";
+export type DownloadStatusFilter = "DOWNLOADED" | "NOT_DOWNLOADED" | "";
 
-export const ERR_STATUS_FILTER_OPTIONS: Array<{ value: ErrStatusFilter; label: string }> = [
+// Document type, sub type and project are data now, so their filters are just the selected code / id.
+export type DocumentTypeFilter = string;
+export type DocumentSubtypeFilter = string;
+export type ProjectFilter = string;
+
+export const DOCUMENT_STATUS_FILTER_OPTIONS: Array<{ value: DocumentStatusValue; label: string }> = [
   { value: "PENDING", label: "Pending" },
   { value: "ON_HOLD", label: "On Hold" },
   { value: "REVISION_REQUIRED", label: "Revision Required" },
-  { value: "REJECTED", label: "Rejected" },
   { value: "APPROVED", label: "Approved" },
+  { value: "CANCELLED", label: "Rejected" },
+  { value: "ARCHIVED", label: "Archived" },
 ];
 
-export function parseDocumentStatusFilter(value: unknown): DocumentStatusFilterValue {
-  if (typeof value !== "string" || value.length === 0) {
-    return "";
-  }
+export type LevelInfo = { levelNumber: number | null; name?: string | null };
 
-  if (DOCUMENT_STATUS_FILTER_OPTIONS.some((option) => option.value === value)) {
-    return value as DocumentStatusFilterValue;
+/** Display text for a status. A pending document also shows which level it waits at, e.g. "Pending PMV Engineer". */
+export function getDocumentStatusDisplay(status: string | null | undefined, level?: LevelInfo | null): string {
+  switch (status) {
+    case "PENDING": {
+      if (!level || level.levelNumber === null) return "Pending";
+      const levelLabel = level.name?.trim() || `Level ${level.levelNumber}`;
+      return `Pending ${levelLabel}`;
+    }
+    case "ON_HOLD":
+      return "On Hold";
+    case "REVISION_REQUIRED":
+      return "Revision Required";
+    case "APPROVED":
+      return "Approved";
+    case "CANCELLED":
+      return "Rejected";
+    case "ARCHIVED":
+      return "Archived";
+    default:
+      return "";
   }
-
-  return "";
 }
 
+export function parseDocumentStatusFilter(value: unknown): DocumentStatusFilterValue {
+  if (typeof value !== "string" || value.length === 0) return "";
+  return DOCUMENT_STATUS_FILTER_OPTIONS.some((option) => option.value === value)
+    ? (value as DocumentStatusValue)
+    : "";
+}
+
+function parseSafeToken(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return /^[A-Za-z0-9_-]{1,64}$/.test(trimmed) ? trimmed : "";
+}
+
+/** The document type's code (e.g. "MR"). Validity is checked against the database when the query runs. */
 export function parseDocumentTypeFilter(value: unknown): DocumentTypeFilter {
-  if (typeof value !== "string" || value.length === 0) {
-    return "";
-  }
+  return parseSafeToken(value);
+}
 
-  if (value === "COMPARISON" || value === "MATERIAL_REQUISITION" || value === "CUSTODY" || value === "ERR") {
-    return value;
-  }
+export function parseDocumentSubtypeFilter(value: unknown): DocumentSubtypeFilter {
+  return parseSafeToken(value);
+}
 
-  return "";
+/** A project id. */
+export function parseProjectFilter(value: unknown): ProjectFilter {
+  return parseSafeToken(value);
 }
 
 export function parseDownloadStatusFilter(value: unknown): DownloadStatusFilter {
-  if (value === "DOWNLOADED" || value === "NOT_DOWNLOADED") {
-    return value;
-  }
-
-  return "";
-}
-
-export function parseMrTypeFilter(value: unknown): MrTypeFilter {
-  if (value === "CASH" || value === "CREDIT") {
-    return value;
-  }
-
-  return "";
-}
-
-export function parsePoStatusFilter(value: unknown): PoStatusFilter {
-  if (value === "UPLOADED" || value === "PENDING" || value === "NOT_APPLICABLE") return value;
-  return "";
-}
-
-export function parseErrTypeFilter(value: unknown): ErrTypeFilter {
-  if (value === "RENTAL_ACTC" || value === "RENTAL_EXTERNAL" || value === "RENEWAL" || value === "PURCHASE") {
-    return value;
-  }
-
-  return "";
-}
-
-export function parseErrStatusFilter(value: unknown): ErrStatusFilter {
-  if (value === "PENDING" || value === "ON_HOLD" || value === "REVISION_REQUIRED" || value === "REJECTED" || value === "APPROVED") {
-    return value;
-  }
-
-  return "";
+  return value === "DOWNLOADED" || value === "NOT_DOWNLOADED" ? value : "";
 }

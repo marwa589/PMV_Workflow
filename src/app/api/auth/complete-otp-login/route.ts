@@ -1,3 +1,4 @@
+// src/app/api/auth/complete-otp-login/route.ts
 import { NextResponse } from "next/server";
 import { getDefaultRouteForRole } from "@/lib/auth/roles";
 import { attachSessionCookie } from "@/lib/auth/session";
@@ -33,8 +34,8 @@ export async function POST(request: Request) {
     const result = await completeAdminOtpLogin(challengeToken, body.rememberDevice === true);
     const response = NextResponse.json({
       message: "Login successful.",
-      role: result.user.role,
-      redirectTo: getDefaultRouteForRole(result.user.role),
+      userType: result.user.userType,
+      redirectTo: getDefaultRouteForRole(result.user.userType),
     });
 
     attachSessionCookie(response, result.user, result.user.sessionVersion );

@@ -2,7 +2,7 @@ import {
   flushWorkflowEmailBatches,
   isEmailQuietHours,
   nextEmailSendTime,
-  queueComparisonMrReminders,
+  queueProcessStepReminders,
   queuePendingApprovalReminders,
 } from "@/lib/workflow-email-batching";
 
@@ -22,7 +22,7 @@ async function processWorkflowEmails() {
   try {
     if (isEmailQuietHours()) return;
     await queuePendingApprovalReminders();
-    await queueComparisonMrReminders();
+    await queueProcessStepReminders();
     await flushWorkflowEmailBatches();
   } catch (error) {
     console.error("Workflow email worker failed:", error);

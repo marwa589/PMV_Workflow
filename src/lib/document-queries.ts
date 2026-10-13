@@ -1,381 +1,251 @@
-import { ApprovalActionType, DocumentStatus, ErrStatus, UserRole } from "@prisma/client";
+import "server-only";
+
+import { ApprovalActionType, ApproverType, DocumentStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getModuleVisibility } from "@/lib/auth/module-visibility";
-import { isRestrictedClerk } from "@/lib/auth/resource-access";
+import { buildDocumentVisibilityWhere } from "@/lib/auth/access";
+import { USER_TYPE, type UserTypeCode } from "@/lib/auth/roles";
+import { createEligibilityChecker } from "@/lib/workflow/eligibility";
+import { getDocumentStatusDisplay } from "@/lib/document-status";
 
-export async function getPurchaseOrderStatuses(documentIds: string[]) {
-  if (documentIds.length === 0) return new Map<string, boolean>();
-  const links = await prisma.purchaseOrderMrLink.findMany({
-    where: { documentId: { in: documentIds } },
-    select: { documentId: true },
-  });
-  return new Map(links.map((link) => [link.documentId, true]));
-}
+// One row shape for every list screen. Document type, sub type and project are data now,
+// and "who it is waiting for" is read from the approval levels copied onto the document.
+const documentListSelect = {
+  id: true,
+  documentNumber: true,
+  title: true,
+  status: true,
+  currentVersion: true,
+  currentWorkflowStep: true,
+  currentApproverAssignedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  approvedAt: true,
+  receivedAt: true,
+  downloadedAt: true,
+  createdById: true,
+  projectId: true,
+  documentTypeId: true,
+  documentSubtypeId: true,
+  createdBy: { select: { name: true } },
+  documentType: { select: { id: true, code: true, name: true } },
+  documentSubtype: { select: { id: true, code: true, name: true } },
+  project: { select: { id: true, code: true, name: true, locationId: true, location: { select: { name: true } } } },
+  approvalSteps: {
+    orderBy: { levelNumber: "asc" },
+    select: {
+      levelNumber: true,
+      name: true,
+      approvers: {
+        select: {
+          approverType: true,
+          userId: true,
+          userTypeId: true,
+          user: { select: { name: true } },
+          userType: { select: { name: true } },
+        },
+      },
+    },
+  },
+  // Recent history, newest first: the latest rejection and the latest comment are both read from it.
+  approvals: {
+    orderBy: { performedAt: "desc" },
+    take: 30,
+    select: { action: true, comments: true, levelNumber: true, performedBy: { select: { name: true } } },
+  },
+} satisfies Prisma.DocumentSelect;
 
-type ApproverRole = "APPROVER_1" | "APPROVER_2" | "APPROVER_3";
+type RawDocument = Prisma.DocumentGetPayload<{ select: typeof documentListSelect }>;
 
 export type DocumentRow = {
   id: string;
   documentNumber: string;
   title: string;
   status: DocumentStatus;
-  documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
-  mrType?: "CASH" | "CREDIT" | null;
-  mrNumber?: string | null;
-  relatedComparison?: { documentNumber: string; title: string } | null;
+  statusLabel: string;
+  documentType: { id: string; code: string; name: string };
+  documentSubtype: { id: string; code: string; name: string } | null;
+  project: { id: string; code: string; name: string; locationName: string | null } | null;
   currentVersion: number;
+  currentWorkflowStep: number | null;
+  currentLevelName: string | null;
+  // When the current level started waiting (used for aging).
+  waitingSince: Date | null;
   createdAt: Date;
+  updatedAt: Date;
+  approvedAt: Date | null;
+  receivedAt: Date | null;
+  latestComment: string | null;
+  downloadedAt: Date | null;
+  createdBy: { name: string };
+  // Who the document is waiting for: named users and user types at the current level.
   currentApprover: { name: string } | null;
+  // The latest rejection, if any (the rejected level stays recorded on the document).
+  rejection: { comments: string | null; levelNumber: number | null; performedByName: string } | null;
 };
 
-export type ActionDocumentRow = {
-  id: string;
-  documentNumber: string;
-  title: string;
-  status: DocumentStatus;
-  documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
-  mrType?: "CASH" | "CREDIT" | null;
-  mrNumber?: string | null;
-  relatedComparison?: { documentNumber: string; title: string } | null;
-  currentVersion: number;
-  createdAt: Date;
-  currentApprover: { name: string } | null;
-};
+export type ActionDocumentRow = DocumentRow;
 
-export async function getDocumentsForClerk(userId: string) {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true, name: true, email: true, role: true },
-  });
+export function toDocumentRow(document: RawDocument): DocumentRow {
+  const levelNumber = document.currentWorkflowStep;
+  const currentStep = levelNumber === null ? null : document.approvalSteps.find((step) => step.levelNumber === levelNumber) ?? null;
 
-  const isRestricted = user ? isRestrictedClerk(user) : false;
-  const whereClause = isRestricted ? { createdById: userId } : {};
+  const names = currentStep
+    ? currentStep.approvers
+        .map((entry) => (entry.approverType === ApproverType.USER ? entry.user?.name : entry.userType?.name))
+        .filter((name): name is string => Boolean(name))
+    : [];
 
-  const [documents, total, pending, approved, rejected] = await Promise.all([
-    prisma.document.findMany({
-      where: whereClause,
-      include: {
-        createdBy: { select: { location: true } },
-        currentApprover: { select: { name: true } },
-        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
-        approvals: {
-          where: { action: { in: [ApprovalActionType.REJECTED, ApprovalActionType.APPROVED] } },
-          orderBy: { performedAt: "desc" },
-          take: 50,
-          include: { performedBy: { select: { name: true } } },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.document.count({ where: whereClause }),
-    prisma.document.count({
-      where: {
-        ...whereClause,
-        status: { in: [DocumentStatus.PENDING_APPROVER_1, DocumentStatus.PENDING_APPROVER_2, DocumentStatus.PENDING_APPROVER_3] },
-      },
-    }),
-    prisma.document.count({ where: { ...whereClause, status: DocumentStatus.APPROVED } }),
-    prisma.document.count({ where: { ...whereClause, status: DocumentStatus.REJECTED } }),
-  ]);
+  const rejection = document.approvals.find((entry) => entry.action === ApprovalActionType.REJECTED);
+  const latestComment = document.approvals.find((entry) => entry.comments)?.comments ?? null;
 
-  return { documents, total, pending, approved, rejected};
+  return {
+    id: document.id,
+    documentNumber: document.documentNumber,
+    title: document.title,
+    status: document.status,
+    statusLabel: getDocumentStatusDisplay(document.status, { levelNumber, name: currentStep?.name }),
+    documentType: document.documentType,
+    documentSubtype: document.documentSubtype,
+    project: document.project
+      ? {
+          id: document.project.id,
+          code: document.project.code,
+          name: document.project.name,
+          locationName: document.project.location?.name ?? null,
+        }
+      : null,
+    currentVersion: document.currentVersion,
+    currentWorkflowStep: levelNumber,
+    currentLevelName: currentStep?.name ?? null,
+    waitingSince: document.currentApproverAssignedAt,
+    createdAt: document.createdAt,
+    updatedAt: document.updatedAt,
+    approvedAt: document.approvedAt,
+    receivedAt: document.receivedAt,
+    latestComment,
+    downloadedAt: document.downloadedAt,
+    createdBy: { name: document.createdBy.name },
+    currentApprover: names.length > 0 ? { name: names.join(", ") } : null,
+    rejection: rejection
+      ? { comments: rejection.comments, levelNumber: rejection.levelNumber, performedByName: rejection.performedBy.name }
+      : null,
+  };
 }
 
-export async function getDocumentsForApprover(userId: string, role: UserRole, userName: string) {
-  const canQueryErrs = getModuleVisibility(userName, role) !== "DOCUMENTS_ONLY";
+async function listDocuments(where: Prisma.DocumentWhereInput, take?: number): Promise<DocumentRow[]> {
+  const documents = await prisma.document.findMany({
+    where,
+    select: documentListSelect,
+    orderBy: { createdAt: "desc" },
+    ...(take ? { take } : {}),
+  });
+  return documents.map(toDocumentRow);
+}
+
+/** Rows for any filter (optionally limited), for screens that need a slice rather than everything. */
+export async function getDocumentRows(where: Prisma.DocumentWhereInput, take?: number): Promise<DocumentRow[]> {
+  return listDocuments(where, take);
+}
+
+/**
+ * Documents that are waiting for this user to act (they may be named by the flow, belong to a named
+ * user type with a matching assignment, or hold someone's delegated tasks):
+ *  - pending or on hold: the user is eligible at the current level
+ *  - sent back to the uploader: the user created it or is eligible at the uploader level
+ */
+export async function getActionableDocuments(
+  user: { userId: string; userType: UserTypeCode },
+  statuses: DocumentStatus[],
+): Promise<DocumentRow[]> {
+  const visibility = await buildDocumentVisibilityWhere(user);
+  const [candidates, canAct] = await Promise.all([
+    prisma.document.findMany({
+      where: { AND: [visibility, { status: { in: statuses } }] },
+      select: documentListSelect,
+      orderBy: { createdAt: "desc" },
+    }),
+    createEligibilityChecker(prisma, user.userId),
+  ]);
+
+  return candidates
+    .filter((document) => {
+      const level = document.status === DocumentStatus.REVISION_REQUIRED ? 0 : document.currentWorkflowStep;
+      if (level === null) return false;
+      if (document.status === DocumentStatus.REVISION_REQUIRED && document.createdById === user.userId) return true;
+
+      const step = document.approvalSteps.find((candidate) => candidate.levelNumber === level);
+      if (!step) return false;
+
+      return canAct(step.approvers, {
+        projectId: document.projectId,
+        locationId: document.project?.locationId ?? null,
+        documentTypeId: document.documentTypeId,
+        documentSubtypeId: document.documentSubtypeId,
+      });
+    })
+    .map(toDocumentRow);
+}
+
+export async function getDocumentsForClerk(userId: string, userType: UserTypeCode = USER_TYPE.CLERK) {
+  const visibility = await buildDocumentVisibilityWhere({ userId, userType });
+
+  const [documents, total, pending, approved, rejected] = await Promise.all([
+    listDocuments(visibility),
+    prisma.document.count({ where: visibility }),
+    prisma.document.count({ where: { AND: [visibility, { status: DocumentStatus.PENDING }] } }),
+    prisma.document.count({ where: { AND: [visibility, { status: DocumentStatus.APPROVED }] } }),
+    prisma.document.count({ where: { AND: [visibility, { status: DocumentStatus.CANCELLED }] } }),
+  ]);
+
+  return { documents, total, pending, approved, rejected };
+}
+
+export async function getDocumentsForApprover(userId: string, userType: UserTypeCode) {
+  const user = { userId, userType };
+  const visibility = await buildDocumentVisibilityWhere(user);
 
   const [
     pendingDocuments,
+    onHoldDocuments,
     revisionRequiredDocuments,
     approvedDocuments,
     rejectedDocuments,
     myDocuments,
     recentActivity,
-    errPendingDocuments,
-    errRevisionRequiredDocuments,
-    errApprovedDocuments,
-    errRejectedDocuments,
-    errMyDocuments,
   ] = await Promise.all([
-    prisma.document.findMany({
-      where: {
-        currentApproverId: userId,
-        status: { in: [DocumentStatus.PENDING_APPROVER_1, DocumentStatus.PENDING_APPROVER_2, DocumentStatus.PENDING_APPROVER_3] },
-      },
-      include: {
-        createdBy: { select: { location: true } },
-        currentApprover: { select: { name: true } },
-        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
-        approvals: {
-          orderBy: { performedAt: "desc" },
-          take: 1,
-          select: { comments: true, action: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
+    getActionableDocuments(user, [DocumentStatus.PENDING]),
+    getActionableDocuments(user, [DocumentStatus.ON_HOLD]),
+    // Documents this person sent back and that are still with the uploader.
+    listDocuments({
+      status: DocumentStatus.REVISION_REQUIRED,
+      approvals: { some: { performedById: userId, action: ApprovalActionType.REQUESTED_REVISION } },
     }),
-    prisma.document.findMany({
-      where: {
-        currentApproverId: userId,
-        status: DocumentStatus.REVISION_REQUIRED,
-      },
-      include: {
-        createdBy: { select: { location: true } },
-        currentApprover: { select: { name: true } },
-        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
-        approvals: {
-          orderBy: { performedAt: "desc" },
-          take: 1,
-          select: { comments: true, action: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.document.findMany({
-      where: { approvals: { some: { performedById: userId, action: ApprovalActionType.APPROVED } } },
-      include: {
-        createdBy: { select: { location: true } },
-        currentApprover: { select: { name: true } },
-        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
-        approvals: {
-          where: { action: ApprovalActionType.REJECTED },
-          orderBy: { performedAt: "desc" },
-          take: 1,
-          include: { performedBy: { select: { name: true } } },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.document.findMany({
-      where: { approvals: { some: { performedById: userId, action: ApprovalActionType.REJECTED } } },
-      include: {
-        createdBy: { select: { location: true } },
-        currentApprover: { select: { name: true } },
-        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
-        approvals: {
-          where: { action: ApprovalActionType.REJECTED },
-          orderBy: { performedAt: "desc" },
-          take: 1,
-          include: { performedBy: { select: { name: true } } },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.document.findMany({
-      where: {
-        OR: [{ currentApproverId: userId }, { approvals: { some: { performedById: userId } } }],
-      },
-      include: {
-        createdBy: { select: { location: true } },
-        currentApprover: { select: { name: true } },
-        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
-        approvals: {
-          where: { action: ApprovalActionType.REJECTED },
-          orderBy: { performedAt: "desc" },
-          take: 1,
-          include: { performedBy: { select: { name: true } } },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
+    listDocuments({ approvals: { some: { performedById: userId, action: { in: [ApprovalActionType.APPROVED, ApprovalActionType.DELEGATED_APPROVED] } } } }),
+    listDocuments({ approvals: { some: { performedById: userId, action: ApprovalActionType.REJECTED } } }),
+    listDocuments(visibility),
     prisma.approvalHistory.findMany({
       where: { performedById: userId },
       include: { document: { select: { documentNumber: true, title: true } } },
       orderBy: { performedAt: "desc" },
       take: 8,
     }),
-    canQueryErrs ? prisma.err.findMany({
-      where: {
-        currentApproverId: userId,
-        status: ErrStatus.PENDING,
-      },
-      select: {
-        id: true,
-        documentNumber: true,
-        title: true,
-        status: true,
-        type: true,
-        currentApproverId: true,
-        currentApprover: { select: { name: true } },
-        createdAt: true,
-        files: {
-          where: { kind: "QUOTATION" },
-          orderBy: { versionNumber: "desc" },
-          take: 1,
-          select: { originalName: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    }) : Promise.resolve([]),
-    canQueryErrs ? prisma.err.findMany({
-      where: {
-        currentApproverId: userId,
-        status: ErrStatus.REVISION_REQUIRED,
-      },
-      select: {
-        id: true,
-        documentNumber: true,
-        title: true,
-        status: true,
-        type: true,
-        currentApproverId: true,
-        currentApprover: { select: { name: true } },
-        createdAt: true,
-      },
-      orderBy: { createdAt: "desc" },
-    }) : Promise.resolve([]),
-    canQueryErrs ? prisma.err.findMany({
-      where: {
-        approvalHistory: {
-          some: {
-            performedById: userId,
-            action: "APPROVED",
-          },
-        },
-      },
-      select: {
-        id: true,
-        documentNumber: true,
-        title: true,
-        status: true,
-        type: true,
-        currentApprover: { select: { name: true } },
-        createdAt: true,
-      },
-      orderBy: { createdAt: "desc" },
-    }) : Promise.resolve([]),
-    canQueryErrs ? prisma.err.findMany({
-      where: {
-        approvalHistory: {
-          some: {
-            performedById: userId,
-            action: "REJECTED",
-          },
-        },
-      },
-      select: {
-        id: true,
-        documentNumber: true,
-        title: true,
-        status: true,
-        type: true,
-        currentApprover: { select: { name: true } },
-        createdAt: true,
-      },
-      orderBy: { createdAt: "desc" },
-    }) : Promise.resolve([]),
-    canQueryErrs ? prisma.err.findMany({
-      where: {
-        ...(role === UserRole.APPROVER_3
-          ? {}
-          : {
-              OR: [
-                { currentApproverId: userId },
-                { approvalHistory: { some: { performedById: userId } } },
-              ],
-            }),
-      },
-      select: {
-        id: true,
-        documentNumber: true,
-        title: true,
-        status: true,
-        type: true,
-        currentApproverId: true,
-        currentApprover: { select: { name: true } },
-        createdAt: true,
-      },
-      orderBy: { createdAt: "desc" },
-    }) : Promise.resolve([]),
   ]);
 
   return {
     pendingDocuments,
+    onHoldDocuments,
     revisionRequiredDocuments,
     approvedDocuments,
     rejectedDocuments,
     myDocuments,
     recentActivity,
-    errPendingDocuments,
-    errRevisionRequiredDocuments,
-    errApprovedDocuments,
-    errRejectedDocuments,
-    errMyDocuments,
-    role,
+    userType,
   };
 }
 
 export async function getDocumentsForAdmin() {
-  const [
-    documents,
-    pendingDocuments,
-    approvedDocuments,
-    rejectedDocuments,
-    recentActivity,
-    usersByRole,
-    errPendingDocuments,
-    errApprovedDocuments,
-    errRejectedDocuments,
-    errRevisionRequiredDocuments,
-    errOnHoldDocuments,
-  ] = await Promise.all([
-    prisma.document.findMany({
-      orderBy: { createdAt: "desc" },
-      include: {
-        createdBy: { select: { location: true } },
-        currentApprover: { select: { name: true } },
-        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
-        approvals: {
-          where: { action: ApprovalActionType.REJECTED },
-          orderBy: { performedAt: "desc" },
-          take: 1,
-          include: { performedBy: { select: { name: true } } },
-        },
-      },
-    }),
-    prisma.document.findMany({
-      where: { status: { in: [DocumentStatus.PENDING_APPROVER_1, DocumentStatus.PENDING_APPROVER_2, DocumentStatus.PENDING_APPROVER_3] } },
-      orderBy: { createdAt: "desc" },
-      include: {
-        createdBy: { select: { location: true } },
-        currentApprover: { select: { name: true } },
-        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
-        approvals: {
-          where: { action: ApprovalActionType.REJECTED },
-          orderBy: { performedAt: "desc" },
-          take: 1,
-          include: { performedBy: { select: { name: true } } },
-        },
-      },
-    }),
-    prisma.document.findMany({
-      where: { status: DocumentStatus.APPROVED },
-      orderBy: { createdAt: "desc" },
-      include: {
-        currentApprover: { select: { name: true } },
-        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
-        approvals: {
-          where: { action: ApprovalActionType.REJECTED },
-          orderBy: { performedAt: "desc" },
-          take: 1,
-          include: { performedBy: { select: { name: true } } },
-        },
-      },
-    }),
-    prisma.document.findMany({
-      where: { status: DocumentStatus.REJECTED },
-      orderBy: { createdAt: "desc" },
-      include: {
-        currentApprover: { select: { name: true } },
-        relatedComparison: { select: { id: true, documentNumber: true, title: true } },
-        approvals: {
-          where: { action: ApprovalActionType.REJECTED },
-          orderBy: { performedAt: "desc" },
-          take: 1,
-          include: { performedBy: { select: { name: true } } },
-        },
-      },
-    }),
+  const [documents, recentActivity, userCounts, userTypes] = await Promise.all([
+    listDocuments({}),
     prisma.approvalHistory.findMany({
       include: {
         document: { select: { documentNumber: true, title: true } },
@@ -384,85 +254,28 @@ export async function getDocumentsForAdmin() {
       orderBy: { performedAt: "desc" },
       take: 8,
     }),
-    prisma.user.groupBy({ by: ["role"], _count: { _all: true } }),
-    prisma.err.findMany({
-      where: { status: ErrStatus.PENDING },
-      select: {
-        id: true,
-        documentNumber: true,
-        title: true,
-        status: true,
-        type: true,
-        currentApprover: { select: { name: true } },
-        createdAt: true,
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.err.findMany({
-      where: { status: ErrStatus.APPROVED },
-      select: {
-        id: true,
-        documentNumber: true,
-        title: true,
-        status: true,
-        type: true,
-        currentApprover: { select: { name: true } },
-        createdAt: true,
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.err.findMany({
-      where: { status: ErrStatus.REJECTED },
-      select: {
-        id: true,
-        documentNumber: true,
-        title: true,
-        status: true,
-        type: true,
-        currentApprover: { select: { name: true } },
-        createdAt: true,
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.err.findMany({
-      where: { status: ErrStatus.REVISION_REQUIRED },
-      select: {
-        id: true,
-        documentNumber: true,
-        title: true,
-        status: true,
-        type: true,
-        currentApprover: { select: { name: true } },
-        createdAt: true,
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.err.findMany({
-      where: { status: ErrStatus.ON_HOLD },
-      select: {
-        id: true,
-        documentNumber: true,
-        title: true,
-        status: true,
-        type: true,
-        currentApprover: { select: { name: true } },
-        createdAt: true,
-      },
-      orderBy: { createdAt: "desc" },
-    }),
+    prisma.user.groupBy({ by: ["userTypeId"], _count: { _all: true } }),
+    prisma.userType.findMany({ select: { id: true, code: true, name: true } }),
   ]);
+
+  const byStatus = (status: DocumentStatus) => documents.filter((document) => document.status === status);
+
+  const typeById = new Map(userTypes.map((type) => [type.id, type]));
+  const usersByType = userCounts.map((row) => ({
+    code: typeById.get(row.userTypeId)?.code ?? "unknown",
+    name: typeById.get(row.userTypeId)?.name ?? "Unknown",
+    count: row._count._all,
+  }));
 
   return {
     documents,
-    pendingDocuments,
-    approvedDocuments,
-    rejectedDocuments,
+    pendingDocuments: byStatus(DocumentStatus.PENDING),
+    onHoldDocuments: byStatus(DocumentStatus.ON_HOLD),
+    revisionRequiredDocuments: byStatus(DocumentStatus.REVISION_REQUIRED),
+    approvedDocuments: byStatus(DocumentStatus.APPROVED),
+    rejectedDocuments: byStatus(DocumentStatus.CANCELLED),
+    archivedDocuments: byStatus(DocumentStatus.ARCHIVED),
     recentActivity,
-    usersByRole,
-    errPendingDocuments,
-    errApprovedDocuments,
-    errRejectedDocuments,
-    errRevisionRequiredDocuments,
-    errOnHoldDocuments,
+    usersByType,
   };
 }

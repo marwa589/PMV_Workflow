@@ -1,11 +1,12 @@
-import { EmailEventType, DocumentStatus, UserRole } from "@prisma/client";
+import { DocumentStatus, EmailEventType, ProcessStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
 import { appConfig } from "@/lib/env";
-import { getPurchaseOrderRecipientIds } from "@/lib/po-access";
+import { getEligibleRecipients, loadDocScope } from "@/lib/workflow/eligibility";
+import { USER_TYPE } from "@/lib/auth/roles";
 
 const EMAIL_DELAY_MS = 10 * 60 * 1000;
-const MR_COMPARISON_EMAIL_DELAY_MS = 20 * 60 * 1000;
+const PROCESS_EMAIL_DELAY_MS = 20 * 60 * 1000;
 const REMINDER_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const CLAIM_TIMEOUT_MS = 15 * 60 * 1000;
 const EMAIL_TIME_ZONE = "Asia/Kuwait";
@@ -62,23 +63,27 @@ export function nextEmailSendTime(date: Date): Date {
   return kuwaitLocalTimeToDate(nextMorning);
 }
 
-type EmailBatchCohort = "ERR" | "MR_COMPARISON" | "OTHER";
+// Documents that belong to a process run are batched over a longer window, so a person who uploads
+// several documents of one run gets a single summary. Everything else uses the shorter window.
+type EmailBatchCohort = "PROCESS" | "OTHER";
 
-function getEmailBatchCohort(documentType?: string | null): EmailBatchCohort {
-  return documentType === "MATERIAL_REQUISITION" || documentType === "COMPARISON"
-    ? "MR_COMPARISON"
-    : "OTHER";
+async function getDocumentCohorts(documentIds: Array<string | null | undefined>) {
+  const ids = [...new Set(documentIds.filter((id): id is string => Boolean(id)))];
+  const cohorts = new Map<string, EmailBatchCohort>();
+  if (ids.length === 0) return cohorts;
+
+  const inProcess = await prisma.processStepDocument.findMany({
+    where: { documentId: { in: ids } },
+    select: { documentId: true },
+    distinct: ["documentId"],
+  });
+  const inProcessIds = new Set(inProcess.map((row) => row.documentId));
+  for (const id of ids) cohorts.set(id, inProcessIds.has(id) ? "PROCESS" : "OTHER");
+  return cohorts;
 }
 
-async function getDocumentTypes(documentIds: Array<string | null | undefined>) {
-  const ids = [...new Set(documentIds.filter((id): id is string => Boolean(id)))];
-  if (ids.length === 0) return new Map<string, string>();
-
-  const documents = await prisma.document.findMany({
-    where: { id: { in: ids } },
-    select: { id: true, documentType: true },
-  });
-  return new Map(documents.map((document) => [document.id, document.documentType]));
+function cohortFor(documentId: string | null | undefined, cohorts: Map<string, EmailBatchCohort>): EmailBatchCohort {
+  return (documentId ? cohorts.get(documentId) : undefined) ?? "OTHER";
 }
 
 async function alignRecipientEmailDueAt(
@@ -86,7 +91,6 @@ async function alignRecipientEmailDueAt(
   desiredDueAt: Date,
   cohort: EmailBatchCohort,
   batchWindowMs: number,
-  documentTypeById: Map<string, string>,
 ) {
   const now = new Date();
   const batchWindowEnd = new Date(now.getTime() + batchWindowMs);
@@ -97,16 +101,11 @@ async function alignRecipientEmailDueAt(
       claimedAt: null,
       emailDueAt: { gte: now, lte: batchWindowEnd },
     },
-    select: { id: true, emailDueAt: true, type: true, documentId: true },
+    select: { id: true, emailDueAt: true, documentId: true },
   });
 
-  const candidateDocumentTypes = await getDocumentTypes(pendingEvents.map((event) => event.documentId));
-  const matchingEvents = pendingEvents.filter((event) => {
-    if (event.type === EmailEventType.ERR_WORKFLOW_UPDATE) return cohort === "ERR";
-    return getEmailBatchCohort(
-      event.documentId ? candidateDocumentTypes.get(event.documentId) : undefined,
-    ) === cohort;
-  });
+  const candidateCohorts = await getDocumentCohorts(pendingEvents.map((event) => event.documentId));
+  const matchingEvents = pendingEvents.filter((event) => cohortFor(event.documentId, candidateCohorts) === cohort);
 
   if (matchingEvents.length === 0) return desiredDueAt;
 
@@ -129,13 +128,6 @@ async function alignRecipientEmailDueAt(
   return earliestDueAt;
 }
 
-const PENDING_STATUSES: DocumentStatus[] = [
-  DocumentStatus.PENDING_APPROVER_1,
-  DocumentStatus.PENDING_APPROVER_2,
-  DocumentStatus.PENDING_APPROVER_3,
-  DocumentStatus.REVISION_REQUIRED,
-];
-
 export async function queueWorkflowEmailEvents(events: Array<{
   recipientId: string;
   type: EmailEventType;
@@ -152,27 +144,17 @@ export async function queueWorkflowEmailEvents(events: Array<{
     ).values(),
   );
 
-  if (dedupedEvents.length === 0) return 0;
-
   const createdAt = new Date();
-  const documentTypeById = await getDocumentTypes(dedupedEvents.map((event) => event.documentId));
+  const cohorts = await getDocumentCohorts(dedupedEvents.map((event) => event.documentId));
   const dueAtByCohort = new Map<string, Date>();
 
   for (const event of dedupedEvents) {
-    const cohort = event.type === EmailEventType.ERR_WORKFLOW_UPDATE
-      ? "ERR"
-      : getEmailBatchCohort(event.documentId ? documentTypeById.get(event.documentId) : undefined);
-    const batchWindowMs = cohort === "OTHER" ? EMAIL_DELAY_MS : MR_COMPARISON_EMAIL_DELAY_MS;
+    const cohort = cohortFor(event.documentId, cohorts);
+    const batchWindowMs = cohort === "PROCESS" ? PROCESS_EMAIL_DELAY_MS : EMAIL_DELAY_MS;
     const key = `${event.recipientId}:${cohort}`;
     if (!dueAtByCohort.has(key)) {
       const desiredDueAt = nextEmailSendTime(new Date(createdAt.getTime() + batchWindowMs));
-      dueAtByCohort.set(key, await alignRecipientEmailDueAt(
-        event.recipientId,
-        desiredDueAt,
-        cohort,
-        batchWindowMs,
-        documentTypeById,
-      ));
+      dueAtByCohort.set(key, await alignRecipientEmailDueAt(event.recipientId, desiredDueAt, cohort, batchWindowMs));
     }
   }
 
@@ -182,7 +164,7 @@ export async function queueWorkflowEmailEvents(events: Array<{
       type: event.type,
       documentId: event.documentId ?? null,
       createdAt,
-      emailDueAt: dueAtByCohort.get(`${event.recipientId}:${event.type === EmailEventType.ERR_WORKFLOW_UPDATE ? "ERR" : getEmailBatchCohort(event.documentId ? documentTypeById.get(event.documentId) : undefined)}`)!,
+      emailDueAt: dueAtByCohort.get(`${event.recipientId}:${cohortFor(event.documentId, cohorts)}`)!,
       emailSent: false,
     })),
     skipDuplicates: true,
@@ -191,133 +173,125 @@ export async function queueWorkflowEmailEvents(events: Array<{
   return dedupedEvents.length;
 }
 
-export async function queuePurchaseOrderAvailableEvents(purchaseOrderIds: string[]) {
-  const events: Array<{ recipientId: string; type: EmailEventType; documentId: string }> = [];
-  for (const purchaseOrderId of [...new Set(purchaseOrderIds)]) {
-    const recipientIds = await getPurchaseOrderRecipientIds(purchaseOrderId);
-    for (const recipientId of recipientIds) {
-      const existing = await prisma.emailNotificationEvent.findFirst({
-        where: {
-          recipientId,
-          documentId: purchaseOrderId,
-          type: EmailEventType.PURCHASE_ORDER_AVAILABLE,
-        },
-        select: { id: true },
-      });
-      if (!existing) {
-        events.push({ recipientId, type: EmailEventType.PURCHASE_ORDER_AVAILABLE, documentId: purchaseOrderId });
-      }
-    }
-  }
-  if (events.length === 0) return 0;
-  const createdAt = new Date();
-  const emailDueAt = nextEmailSendTime(new Date(createdAt.getTime() + EMAIL_DELAY_MS));
-  const recipientDueAtMap = new Map<string, Date>();
+const WAITING_STATUSES: DocumentStatus[] = [DocumentStatus.PENDING, DocumentStatus.REVISION_REQUIRED];
 
-  for (const event of events) {
-    const dueAt = recipientDueAtMap.get(event.recipientId) ?? emailDueAt;
-    recipientDueAtMap.set(event.recipientId, await alignRecipientEmailDueAt(
-      event.recipientId,
-      dueAt,
-      "OTHER",
-      EMAIL_DELAY_MS,
-      new Map(),
-    ));
-  }
+const waitingDocumentSelect = {
+  id: true,
+  status: true,
+  createdById: true,
+  projectId: true,
+  documentTypeId: true,
+  documentSubtypeId: true,
+  currentWorkflowStep: true,
+  currentApproverAssignedAt: true,
+  approvalSteps: { select: { levelNumber: true, approvers: true } },
+} as const;
 
-  const result = await prisma.emailNotificationEvent.createMany({
-    data: events.map((event) => ({
-      recipientId: event.recipientId,
-      type: event.type,
-      documentId: event.documentId,
-      createdAt,
-      emailDueAt: recipientDueAtMap.get(event.recipientId) ?? emailDueAt,
-      emailSent: false,
-    })),
-    skipDuplicates: true,
-  });
-  return result.count;
+type WaitingDocument = {
+  id: string;
+  status: DocumentStatus;
+  createdById: string;
+  projectId: string | null;
+  documentTypeId: string;
+  documentSubtypeId: string | null;
+  currentWorkflowStep: number | null;
+  approvalSteps: Array<{ levelNumber: number; approvers: Array<{ approverType: "USER" | "USER_TYPE"; userId: string | null; userTypeId: string | null }> }>;
+};
+
+/** Who is expected to act now: the uploader when it is back with them, otherwise everyone eligible at the current level. */
+async function getWaitingRecipientIds(document: WaitingDocument): Promise<string[]> {
+  if (document.status === DocumentStatus.REVISION_REQUIRED) return [document.createdById];
+  if (document.status !== DocumentStatus.PENDING || document.currentWorkflowStep === null) return [];
+
+  const step = document.approvalSteps.find((candidate) => candidate.levelNumber === document.currentWorkflowStep);
+  if (!step) return [];
+
+  const scope = await loadDocScope(prisma, document);
+  const recipients = await getEligibleRecipients(prisma, step.approvers, scope);
+  return recipients.map((recipient) => recipient.id);
 }
 
 export async function queuePendingApprovalReminders() {
-  const now = Date.now();
-  const reminderCutoff = new Date(now - REMINDER_INTERVAL_MS);
-  const pendingDocuments = await prisma.document.findMany({
+  const reminderCutoff = new Date(Date.now() - REMINDER_INTERVAL_MS);
+  const waitingDocuments = await prisma.document.findMany({
     where: {
-      status: { in: PENDING_STATUSES },
-      currentApproverId: { not: null },
+      status: { in: WAITING_STATUSES },
       currentApproverAssignedAt: { lte: reminderCutoff },
     },
-    select: { id: true, currentApproverId: true },
+    select: waitingDocumentSelect,
   });
 
   const events: Array<{ recipientId: string; type: EmailEventType; documentId: string }> = [];
-  for (const document of pendingDocuments) {
-    if (!document.currentApproverId) continue;
-
-    const existingReminder = await prisma.emailNotificationEvent.findFirst({
-      where: {
-        recipientId: document.currentApproverId,
-        documentId: document.id,
-        type: EmailEventType.APPROVAL_OVERDUE,
-        createdAt: { gte: reminderCutoff },
-      },
-      select: { id: true },
-    });
-
-    if (!existingReminder) {
-      events.push({
-        recipientId: document.currentApproverId,
-        type: EmailEventType.APPROVAL_OVERDUE,
-        documentId: document.id,
+  for (const document of waitingDocuments) {
+    for (const recipientId of await getWaitingRecipientIds(document)) {
+      const existingReminder = await prisma.emailNotificationEvent.findFirst({
+        where: {
+          recipientId,
+          documentId: document.id,
+          type: EmailEventType.APPROVAL_OVERDUE,
+          createdAt: { gte: reminderCutoff },
+        },
+        select: { id: true },
       });
+
+      if (!existingReminder) {
+        events.push({ recipientId, type: EmailEventType.APPROVAL_OVERDUE, documentId: document.id });
+      }
     }
   }
 
   return queueWorkflowEmailEvents(events);
 }
 
-export async function queueComparisonMrReminders() {
+/**
+ * A process run is stuck when its previous step's document was approved more than 24 hours ago and the
+ * current step still has no document. Admins are reminded once per approved document.
+ * (Replaces the old "approved Comparison waiting for an MR" reminder.)
+ */
+export async function queueProcessStepReminders() {
   const admins = await prisma.user.findMany({
-    where: { role: UserRole.ADMIN },
+    where: { isActive: true, userType: { code: USER_TYPE.ADMIN } },
     select: { id: true },
   });
   if (admins.length === 0) return 0;
 
   const cutoff = new Date(Date.now() - REMINDER_INTERVAL_MS);
-  const comparisons = await prisma.document.findMany({
-    where: {
-      documentType: "COMPARISON",
-      status: DocumentStatus.APPROVED,
-      linkedMRs: { none: {} },
-      approvals: {
-        some: {
-          action: "APPROVED",
-          performedAt: { lte: cutoff },
-        },
+  const runs = await prisma.processInstance.findMany({
+    where: { status: ProcessStatus.IN_PROGRESS },
+    select: {
+      currentStepNumber: true,
+      processDefinition: { select: { steps: { select: { id: true, stepNumber: true } } } },
+      stepDocuments: {
+        where: { isCurrent: true },
+        select: { processStep: { select: { stepNumber: true } }, document: { select: { id: true, status: true, approvedAt: true } } },
       },
     },
-    select: { id: true },
   });
+
+  const stalledDocumentIds = new Set<string>();
+  for (const run of runs) {
+    const hasCurrentDocument = run.stepDocuments.some((link) => link.processStep.stepNumber === run.currentStepNumber);
+    if (hasCurrentDocument) continue;
+
+    const previous = run.stepDocuments
+      .filter((link) => link.processStep.stepNumber < run.currentStepNumber)
+      .sort((a, b) => b.processStep.stepNumber - a.processStep.stepNumber)[0];
+
+    if (previous && previous.document.status === DocumentStatus.APPROVED && previous.document.approvedAt && previous.document.approvedAt <= cutoff) {
+      stalledDocumentIds.add(previous.document.id);
+    }
+  }
 
   const events: Array<{ recipientId: string; type: EmailEventType; documentId: string }> = [];
   for (const admin of admins) {
-    for (const comparison of comparisons) {
+    for (const documentId of stalledDocumentIds) {
       const existingReminder = await prisma.emailNotificationEvent.findFirst({
-        where: {
-          recipientId: admin.id,
-          documentId: comparison.id,
-          type: EmailEventType.COMPARISON_MR_OVERDUE,
-        },
+        where: { recipientId: admin.id, documentId, type: EmailEventType.PROCESS_STEP_OVERDUE },
         select: { id: true },
       });
 
       if (!existingReminder) {
-        events.push({
-          recipientId: admin.id,
-          type: EmailEventType.COMPARISON_MR_OVERDUE,
-          documentId: comparison.id,
-        });
+        events.push({ recipientId: admin.id, type: EmailEventType.PROCESS_STEP_OVERDUE, documentId });
       }
     }
   }
@@ -335,31 +309,24 @@ function summaryForType(type: EmailEventType): string {
       return "approved";
     case EmailEventType.WORKFLOW_REJECTED:
       return "rejected";
-    case EmailEventType.COMPARISON_MR_OVERDUE:
-      return "comparisonOverdue";
-    case EmailEventType.PURCHASE_ORDER_AVAILABLE:
-      return "purchaseOrderAvailable";
-    case EmailEventType.ERR_WORKFLOW_UPDATE:
-      return "errUpdates";
+    case EmailEventType.PROCESS_STEP_OVERDUE:
+      return "processOverdue";
     default:
       return "updates";
   }
 }
 
+const escapeHtml = (value: string) => value
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#039;")
+  .replace(/\n/g, "<br />");
+
 function renderSummary(
   counts: Record<string, number>,
   updates: Array<{ documentNumber: string; title: string; comments: string | null }>,
-  errUpdates: Array<{
-    documentNumber: string;
-    title: string;
-    type: string;
-    status: string;
-    fileName: string;
-    projectName: string | null;
-    projectDirector: string;
-    action: string;
-    comments: string | null;
-  }> = [],
 ) {
   const appUrl = appConfig.appUrl();
   const lines = [
@@ -367,35 +334,12 @@ function renderSummary(
     counts.rejected ? `<p>Rejected documents: ${counts.rejected}</p>` : "",
     counts.pending ? `<p>Pending documents: ${counts.pending}</p>` : "",
     counts.overdue ? `<p>Documents pending for more than 24 hours: ${counts.overdue}</p>` : "",
-    counts.comparisonOverdue ? `<p>Approved Comparisons awaiting MR upload for more than 24 hours: ${counts.comparisonOverdue}</p>` : "",
-    counts.purchaseOrderAvailable ? `<p>New purchase orders are available for your related MRs.</p>` : "",
-    counts.errUpdates ? `<p>ERR updates: ${counts.errUpdates}</p>` : "",
+    counts.processOverdue ? `<p>Process runs waiting for their next document for more than 24 hours: ${counts.processOverdue}</p>` : "",
   ].join("");
-
-  const escapeHtml = (value: string) => value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#039;")
-    .replace(/\n/g, "<br />");
-
-  const errDetails = errUpdates.map((update) => `
-    <article style="margin: 16px 0; padding: 12px; border: 1px solid #d1d5db;">
-      <p><strong>${escapeHtml(update.documentNumber)} - ${escapeHtml(update.title)}</strong></p>
-      <p>Type: ${escapeHtml(update.type)} | Status: ${escapeHtml(update.status)}</p>
-      <p>File: ${escapeHtml(update.fileName)}</p>
-      ${update.projectName ? `<p>Project: ${escapeHtml(update.projectName)}</p>` : ""}
-      <p>Project Director: ${escapeHtml(update.projectDirector)}</p>
-      <p>Action: ${escapeHtml(update.action.replaceAll("_", " "))}</p>
-      ${update.comments ? `<p>Comments: ${escapeHtml(update.comments)}</p>` : ""}
-      <p><a href="${appUrl}/errs">Open ERR</a></p>
-    </article>
-  `).join("");
 
   const updateDetails = updates
     .filter((update) => update.comments)
-    .map((update) => `<p><strong>${update.documentNumber} - ${update.title}</strong><br />Comments: ${update.comments!.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br />")}</p>`)
+    .map((update) => `<p><strong>${escapeHtml(update.documentNumber)} - ${escapeHtml(update.title)}</strong><br />Comments: ${escapeHtml(update.comments!)}</p>`)
     .join("");
 
   return `
@@ -403,7 +347,6 @@ function renderSummary(
       <p>You have workflow updates requiring your attention.</p>
       ${lines}
       ${updateDetails ? `<h3>Comments</h3>${updateDetails}` : ""}
-      ${errDetails ? `<h3>ERR details</h3>${errDetails}` : ""}
       <p>Application URL: <a href="${appUrl}">${appUrl}</a></p>
       <p>Please log in to review them.</p>
     </div>
@@ -425,25 +368,21 @@ export async function flushWorkflowEmailBatches() {
     take: 500,
   });
 
+  // Drop reminders that no longer apply: the document moved on, or this person is no longer expected to act.
   const reminderEvents = pendingEvents.filter(
     (event) => event.type === EmailEventType.APPROVAL_PENDING || event.type === EmailEventType.APPROVAL_OVERDUE,
   );
   const reminderDocuments = await prisma.document.findMany({
-    where: {
-      id: { in: reminderEvents.flatMap((event) => event.documentId ? [event.documentId] : []) },
-    },
-    select: { id: true, status: true, currentApproverId: true },
+    where: { id: { in: reminderEvents.flatMap((event) => (event.documentId ? [event.documentId] : [])) } },
+    select: waitingDocumentSelect,
   });
-  const reminderDocumentById = new Map(reminderDocuments.map((document) => [document.id, document]));
-  const staleReminderIds = reminderEvents
-    .filter((event) => {
-      if (!event.documentId) return false;
+  const expectedByDocument = new Map<string, Set<string>>();
+  for (const document of reminderDocuments) {
+    expectedByDocument.set(document.id, new Set(await getWaitingRecipientIds(document)));
+  }
 
-      const document = reminderDocumentById.get(event.documentId);
-      return !document
-        || !PENDING_STATUSES.includes(document.status)
-        || document.currentApproverId !== event.recipientId;
-    })
+  const staleReminderIds = reminderEvents
+    .filter((event) => !event.documentId || !expectedByDocument.get(event.documentId)?.has(event.recipientId))
     .map((event) => event.id);
 
   if (staleReminderIds.length > 0) {
@@ -463,7 +402,7 @@ export async function flushWorkflowEmailBatches() {
   }
 
   let sentCount = 0;
-  for (const [recipientId, group] of groups) {
+  for (const [, group] of groups) {
     const claimedAt = new Date();
     const claimed = await prisma.emailNotificationEvent.updateMany({
       where: {
@@ -478,15 +417,9 @@ export async function flushWorkflowEmailBatches() {
 
     const counts: Record<string, number> = {};
     for (const event of group) {
-      if (event.type === EmailEventType.ERR_WORKFLOW_UPDATE) continue;
       const key = summaryForType(event.type);
       counts[key] = (counts[key] || 0) + 1;
     }
-    const uniqueErrIds = new Set(group
-      .filter((event) => event.type === EmailEventType.ERR_WORKFLOW_UPDATE)
-      .map((event) => event.documentId)
-      .filter((documentId): documentId is string => Boolean(documentId)));
-    if (uniqueErrIds.size > 0) counts.errUpdates = uniqueErrIds.size;
 
     const recipientEmail = group[0]?.recipient.email;
     if (!recipientEmail) {
@@ -498,75 +431,26 @@ export async function flushWorkflowEmailBatches() {
     }
 
     try {
-      const documentIds = group
-        .filter((event) => event.type !== EmailEventType.ERR_WORKFLOW_UPDATE)
-        .map((event) => event.documentId)
-        .filter((documentId): documentId is string => Boolean(documentId));
-      const documentTypes = await getDocumentTypes(documentIds);
+      const documentIds = [...new Set(group.map((event) => event.documentId).filter((id): id is string => Boolean(id)))];
       const documentsWithComments = documentIds.length > 0
         ? await prisma.document.findMany({
-            where: { id: { in: [...new Set(documentIds)] } },
+            where: { id: { in: documentIds } },
             select: {
               id: true,
               documentNumber: true,
               title: true,
-              approvals: {
-                orderBy: { performedAt: "desc" },
-                take: 1,
-                select: { comments: true },
-              },
-            },
-          })
-        : [];
-      const errIds = group
-        .filter((event) => event.type === EmailEventType.ERR_WORKFLOW_UPDATE)
-        .map((event) => event.documentId)
-        .filter((documentId): documentId is string => Boolean(documentId));
-      const errRecords = errIds.length > 0
-        ? await prisma.err.findMany({
-            where: { id: { in: [...new Set(errIds)] } },
-            select: {
-              id: true,
-              documentNumber: true,
-              title: true,
-              type: true,
-              status: true,
-              files: {
-                where: { kind: "ERR_PDF" },
-                orderBy: [{ versionNumber: "desc" }, { createdAt: "desc" }],
-                take: 1,
-                select: { originalName: true },
-              },
-              projectNameSnapshot: true,
-              projectDirector: { select: { name: true } },
-              approvalHistory: {
-                orderBy: { performedAt: "desc" },
-                take: 1,
-                select: { action: true, comments: true },
-              },
+              approvals: { orderBy: { performedAt: "desc" }, take: 1, select: { comments: true } },
             },
           })
         : [];
 
       await sendEmail({
         to: recipientEmail,
-        subject: counts.errUpdates ? `Workflow updates (${Object.values(counts).reduce((sum, count) => sum + count, 0)})` : "Workflow notification summary",
-        html: renderSummary(counts, documentsWithComments
-          .filter((document) => getEmailBatchCohort(documentTypes.get(document.id)) === "OTHER")
-          .map((document) => ({
+        subject: "Workflow notification summary",
+        html: renderSummary(counts, documentsWithComments.map((document) => ({
           documentNumber: document.documentNumber,
           title: document.title,
           comments: document.approvals[0]?.comments ?? null,
-        })), errRecords.map((err) => ({
-          documentNumber: err.documentNumber,
-          title: err.title,
-          type: err.type,
-          status: err.status,
-          fileName: err.files[0]?.originalName ?? err.title,
-          projectName: err.projectNameSnapshot,
-          projectDirector: err.projectDirector.name,
-          action: err.approvalHistory[0]?.action ?? "UPDATED",
-          comments: err.approvalHistory[0]?.comments ?? null,
         }))),
       });
       await prisma.emailNotificationEvent.updateMany({
@@ -585,4 +469,3 @@ export async function flushWorkflowEmailBatches() {
 
   return sentCount;
 }
-

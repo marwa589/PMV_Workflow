@@ -4,7 +4,7 @@ export type SessionTokenPayload = {
   userId: string;
   email: string;
   name: string;
-  role: "CLERK" | "APPROVER_1" | "APPROVER_2" | "APPROVER_3" | "ADMIN";
+  userType: "clerk" | "eng" | "manager" | "admin";
   sessionVersion: number;
   exp: number;
 };
@@ -102,7 +102,7 @@ export async function getSessionFromToken(token: string | undefined): Promise<{
   userId: string;
   email: string;
   name: string;
-  role: SessionTokenPayload["role"];
+  userType: SessionTokenPayload["userType"];
   sessionVersion: number;
 } | null> {
   if (!token) return null;
@@ -114,7 +114,7 @@ export async function getSessionFromToken(token: string | undefined): Promise<{
     userId: payload.userId,
     email: payload.email,
     name: payload.name,
-    role: payload.role,
+    userType: payload.userType,
     sessionVersion: payload.sessionVersion,
   };
 }

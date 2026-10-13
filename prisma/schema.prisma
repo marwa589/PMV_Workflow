@@ -6,60 +6,108 @@ datasource db {
   provider = "postgresql"
 }
 
+// ============================================================================
+// ORGANISATION
+// ============================================================================
+
+model Location {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  companies Company[]
+  projects  Project[]
+  scopedAssignments UserAssignment[]
+}
+
+model Company {
+  id         String   @id @default(cuid())
+  name       String
+  locationId String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  location          Location?        @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  scopedAssignments UserAssignment[]
+
+  @@index([locationId])
+}
+
+// Replaces ErrProject and the free-text projectName columns.
+model Project {
+  id         String   @id @default(cuid())
+  code       String   @unique
+  name       String
+  locationId String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  location          Location?                    @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  documents         Document[]
+  flowAssignments   DocumentWorkflowAssignment[]
+  scopedAssignments UserAssignment[]
+  counters          DocumentNumberCounter[]
+  processInstances  ProcessInstance[]
+
+  @@index([locationId, isActive])
+}
+
+// The four fixed kinds of user: Clerk, Engineer, Manager, Admin.
+// Replaces the "type" half of the old UserRole enum. Never changes after account creation.
+model UserType {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  users                 User[]
+  workflowStepApprovers DocumentWorkflowStepApprover[]
+  approvalStepApprovers DocumentApprovalStepApprover[]
+}
+
 model User {
-  id                        String                   @id @default(cuid())
-  name                      String
-  email                     String                   @unique
-  passwordHash              String
-  role                      UserRole
-  location                  UserLocation?
-  projectName               String?
-  createdAt                 DateTime                 @default(now())
-  updatedAt                 DateTime                 @updatedAt
-  sessionVersion            Int                      @default(0)
-  signatureFileSize         Int?
-  signatureMimeType         String?
-  signatureOriginalName     String?
-  signaturePath             String?
-  signatureUpdatedAt        DateTime?
-  approvalHistory           ApprovalHistory[]        @relation("ApprovalsPerformedBy")
-  auditLogsPerformed        AuditLog[]               @relation("AuditLogsPerformedBy")
-  deletionRequestsReviewed  DeletionRequest[]        @relation("DeletionRequestsReviewedBy")
-  deletionRequestsApproved  DeletionRequest[]        @relation("DeletionRequestsApprovedBy")
-  deletionRequestsRequested DeletionRequest[]        @relation("DeletionRequestsRequestedBy")
-  createdDocuments          Document[]               @relation("DocumentsCreatedBy")
-  assignedDocuments         Document[]               @relation("CurrentApprover")
-  uploadedVersions          DocumentVersion[]        @relation("VersionsUploadedBy")
-  emailNotificationEvents   EmailNotificationEvent[] @relation("EmailEventsForUser")
-  notifications             Notification[]           @relation("NotificationsForUser")
+  id                    String    @id @default(cuid())
+  name                  String
+  email                 String    @unique
+  passwordHash          String
+  userTypeId            String
+  isActive              Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  sessionVersion        Int       @default(0)
+  signatureFileSize     Int?
+  signatureMimeType     String?
+  signatureOriginalName String?
+  signaturePath         String?
+  signatureUpdatedAt    DateTime?
+
+  userType                  UserType                       @relation(fields: [userTypeId], references: [id], onDelete: Restrict)
+  assignments               UserAssignment[]
+  delegationsGiven          ApprovalDelegation[]           @relation("DelegationsGiven")
+  delegationsReceived       ApprovalDelegation[]           @relation("DelegationsReceived")
+  delegationsCreated        ApprovalDelegation[]           @relation("DelegationsCreatedBy")
+  approvalHistory           ApprovalHistory[]              @relation("ApprovalsPerformedBy")
+  approvalsOnBehalfOf       ApprovalHistory[]              @relation("ApprovalsOnBehalfOf")
+  auditLogsPerformed        AuditLog[]                     @relation("AuditLogsPerformedBy")
+  deletionRequestsReviewed  DeletionRequest[]              @relation("DeletionRequestsReviewedBy")
+  deletionRequestsApproved  DeletionRequest[]              @relation("DeletionRequestsApprovedBy")
+  deletionRequestsRequested DeletionRequest[]              @relation("DeletionRequestsRequestedBy")
+  createdDocuments          Document[]                     @relation("DocumentsCreatedBy")
+  receivedDocuments         Document[]                     @relation("DocumentsReceivedBy")
+  uploadedVersions          DocumentVersion[]              @relation("VersionsUploadedBy")
+  approvalStepsActed        DocumentApprovalStep[]         @relation("ApprovalStepActedBy")
+  workflowStepApprovals     DocumentWorkflowStepApprover[] @relation("WorkflowStepApprover")
+  approvalStepApprovals     DocumentApprovalStepApprover[] @relation("ApprovalStepApprover")
+  emailNotificationEvents   EmailNotificationEvent[]       @relation("EmailEventsForUser")
+  notifications             Notification[]                 @relation("NotificationsForUser")
   otpChallenges             OtpChallenge[]
   trustedDevices            TrustedDevice[]
   passwordResetTokens       PasswordResetToken[]
-  createdErrs               Err[]                    @relation("ErrCreatedBy")
-  projectDirectorErrs       Err[]                    @relation("ErrProjectDirector")
-  assignedErrs              Err[]                    @relation("ErrCurrentApprover")
-  workflowStepApprovals     DocumentWorkflowStep[]   @relation("WorkflowStepApprover")
-  uploadedErrFiles          ErrFile[]                @relation("ErrFilesUploadedBy")
-  errActions                ErrApprovalHistory[]     @relation("ErrActionsPerformedBy")
-  errAccess                 ErrUserAccess[]
-  errNotifications          ErrNotification[]        @relation("ErrNotificationRecipient")
-  directedErrProjects       ErrProject[]             @relation("ErrProjectDirectorAccount")
-  purchaseOrdersCreated     PurchaseOrder[]          @relation("PurchaseOrdersCreatedBy")
-  purchaseOrdersReceived    PurchaseOrder[]          @relation("PurchaseOrdersReceivedBy")
-  purchaseOrderLinksCreated PurchaseOrderMrLink[]     @relation("PurchaseOrderLinksCreatedBy")
-  roleAssignments           UserRoleAssignment[]     @relation("UserRoleAssignmentsForUser")
-}
+  processInstancesStarted   ProcessInstance[]              @relation("ProcessInstancesStartedBy")
+  processStepLinks          ProcessStepDocument[]          @relation("ProcessStepLinkedBy")
 
-model UserRoleAssignment {
-  id        String      @id @default(cuid())
-  userId    String
-  role      UserRole
-  createdAt DateTime    @default(now())
-
-  user User @relation("UserRoleAssignmentsForUser", fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, role])
-  @@index([userId, role])
+  @@index([userTypeId, isActive])
 }
 
 model PasswordResetToken {
@@ -76,191 +124,508 @@ model PasswordResetToken {
   @@index([expiresAt])
 }
 
-model Document {
-  id                        String            @id @default(cuid())
-  documentNumber            String            @unique
-  title                     String
-  description               String?
-  status                    DocumentStatus
-  currentVersion            Int               @default(1)
-  createdAt                 DateTime          @default(now())
-  updatedAt                 DateTime          @updatedAt
-  createdById               String
-  currentApproverId         String?
-  uploaderLocation          UserLocation?
-  projectName               String?
-  workflowTemplateId        String?
-  currentWorkflowStep       Int?
-  documentType              DocumentType      @default(COMPARISON)
-  documentSubtype           String?
-  comparisonType            ComparisonType?
-  mrType                    MrType?
-  currentApproverAssignedAt DateTime?
-  downloadedAt              DateTime?
-  mrNumber                  String?
-  relatedComparisonId       String?
-  lastActiveStage           DocumentStatus?
-  approvals                 ApprovalHistory[]
-  deletionRequests          DeletionRequest[] @relation("DeletionRequests")
-  createdBy                 User              @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
-  currentApprover           User?             @relation("CurrentApprover", fields: [currentApproverId], references: [id])
-  workflowTemplate          DocumentWorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: SetNull)
-  relatedComparison         Document?         @relation("MRToComparison", fields: [relatedComparisonId], references: [id])
-  linkedMRs                 Document[]        @relation("MRToComparison")
-  versions                  DocumentVersion[]
-  purchaseOrderLinks        PurchaseOrderMrLink[]
+// ============================================================================
+// DOCUMENT CONFIGURATION
+// ============================================================================
 
-  @@index([createdById])
-  @@index([currentApproverId])
-  @@index([workflowTemplateId])
-  @@index([relatedComparisonId])
-  @@index([status])
+// Replaces enum DocumentType, enum ErrType, enum ErrFileKind and PurchaseOrder.
+model DocumentType {
+  id               String   @id @default(cuid())
+  code             String   @unique
+  name             String   @unique
+  description      String?
+  namingPattern    String   @default("{TYPE}-{PROJECT}-{YYYY}-{SEQ:4}")
+  supportsLineItems Boolean @default(false)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  subtypes          DocumentSubtype[]
+  fieldDefinitions  FieldDefinition[]
+  counters          DocumentNumberCounter[]
+  documents         Document[]
+  flowAssignments   DocumentWorkflowAssignment[]
+  processSteps      ProcessStep[]
+  scopedAssignments UserAssignment[]
 }
 
-model DocumentWorkflowTemplate {
-  id             String                 @id @default(cuid())
+// Replaces Document.documentSubtype, enum MrType, enum ComparisonType and the ERR type variants.
+model DocumentSubtype {
+  id             String   @id @default(cuid())
+  documentTypeId String
+  code           String
   name           String
-  location       UserLocation?
-  documentType   DocumentType
-  documentSubtype String?
-  projectName    String?
-  isActive       Boolean                @default(true)
-  createdAt      DateTime               @default(now())
-  updatedAt      DateTime               @updatedAt
-  steps          DocumentWorkflowStep[]
-  documents      Document[]
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
 
-  @@index([location, documentType, isActive])
-  @@index([documentType, documentSubtype, isActive])
-  @@index([projectName])
+  documentType      DocumentType                 @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
+  fieldDefinitions  FieldDefinition[]
+  documents         Document[]
+  flowAssignments   DocumentWorkflowAssignment[]
+  processSteps      ProcessStep[]
+  scopedAssignments UserAssignment[]
+
+  @@unique([documentTypeId, code])
+  @@unique([documentTypeId, name])
 }
 
-model DocumentWorkflowStep {
-  id             String                   @id @default(cuid())
-  templateId     String
-  stepNumber     Int
-  role           UserRole
-  approverUserId String?
-  isRequired     Boolean                  @default(true)
-  createdAt      DateTime                 @default(now())
+model FieldDefinition {
+  id                String        @id @default(cuid())
+  documentTypeId    String
+  documentSubtypeId String?
+  fieldGroup        FieldGroup    @default(HEADER)
+  fieldKey          String
+  label             String
+  dataType          FieldDataType
+  isRequired        Boolean       @default(false)
+  options           Json?
+  sortOrder         Int           @default(0)
+  isActive          Boolean       @default(true)
 
-  template DocumentWorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  approver User?                    @relation("WorkflowStepApprover", fields: [approverUserId], references: [id], onDelete: SetNull)
+  documentType    DocumentType        @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
+  documentSubtype DocumentSubtype?    @relation(fields: [documentSubtypeId], references: [id], onDelete: Cascade)
+  values          DocumentFieldValue[]
+
+  @@unique([documentTypeId, documentSubtypeId, fieldGroup, fieldKey])
+  @@index([documentTypeId, documentSubtypeId, isActive])
+}
+
+// Running counter behind document numbers: one per type, project and year.
+// projectId is nullable because a document may exist without a project.
+model DocumentNumberCounter {
+  id             String  @id @default(cuid())
+  documentTypeId String
+  projectId      String?
+  periodYear     Int
+  lastValue      Int     @default(0)
+
+  documentType DocumentType @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([documentTypeId, projectId, periodYear])
+}
+
+// ============================================================================
+// ROLES, PERMISSIONS AND ACCESS
+// ============================================================================
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  permissions RolePermission[]
+  assignments UserAssignment[]
+}
+
+model Permission {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  name        String
+  description String?
+
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+// This user holds this role, limited to the scope columns that are set.
+// An empty scope column means no restriction on that item.
+// Replaces UserRoleAssignment and ErrUserAccess.
+model UserAssignment {
+  id                  String   @id @default(cuid())
+  userId              String
+  roleId              String
+  companyId           String?
+  projectId           String?
+  locationId          String?
+  documentTypeId      String?
+  documentSubtypeId   String?
+  processDefinitionId String?
+  createdAt           DateTime @default(now())
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role              Role               @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  company           Company?           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project           Project?           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  location          Location?          @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  documentType      DocumentType?      @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
+  documentSubtype   DocumentSubtype?   @relation(fields: [documentSubtypeId], references: [id], onDelete: Cascade)
+  processDefinition ProcessDefinition? @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId, companyId, projectId, locationId, documentTypeId, documentSubtypeId, processDefinitionId])
+  @@index([userId])
+  @@index([roleId])
+  @@index([projectId])
+}
+
+// An admin hands one user's approval tasks to another user until the row is deleted.
+model ApprovalDelegation {
+  id              String   @id @default(cuid())
+  delegatorUserId String
+  delegateUserId  String
+  createdById     String
+  reason          String?
+  createdAt       DateTime @default(now())
+
+  delegator User @relation("DelegationsGiven", fields: [delegatorUserId], references: [id], onDelete: Cascade)
+  delegate  User @relation("DelegationsReceived", fields: [delegateUserId], references: [id], onDelete: Cascade)
+  createdBy User @relation("DelegationsCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([delegatorUserId, delegateUserId])
+  @@index([delegateUserId])
+}
+
+// ============================================================================
+// APPROVAL FLOWS
+// ============================================================================
+
+// A named approval chain. Keeps the old model name; targeting moved to DocumentWorkflowAssignment.
+model DocumentWorkflowTemplate {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  steps       DocumentWorkflowStep[]
+  assignments DocumentWorkflowAssignment[]
+  documents   Document[]
+}
+
+// stepNumber 0 = uploader step; 1 to 10 = approval levels.
+model DocumentWorkflowStep {
+  id         String   @id @default(cuid())
+  templateId String
+  stepNumber Int
+  name       String?
+  createdAt  DateTime @default(now())
+
+  template  DocumentWorkflowTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  approvers DocumentWorkflowStepApprover[]
 
   @@unique([templateId, stepNumber])
-  @@index([templateId, stepNumber])
-  @@index([approverUserId])
 }
 
+// Who may act on a level (any one entry is enough): a named user OR every user of a user type.
+model DocumentWorkflowStepApprover {
+  id           String       @id @default(cuid())
+  stepId       String
+  approverType ApproverType
+  userTypeId   String?
+  userId       String?
+
+  step     DocumentWorkflowStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  userType UserType?            @relation(fields: [userTypeId], references: [id], onDelete: Restrict)
+  user     User?                @relation("WorkflowStepApprover", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([stepId])
+  @@index([userId])
+  @@index([userTypeId])
+}
+
+// Decides which flow a document gets. Most specific row wins. Null templateId = auto-approve.
+model DocumentWorkflowAssignment {
+  id                String   @id @default(cuid())
+  documentTypeId    String
+  documentSubtypeId String?
+  projectId         String?
+  templateId        String?
+  createdAt         DateTime @default(now())
+
+  documentType    DocumentType              @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
+  documentSubtype DocumentSubtype?          @relation(fields: [documentSubtypeId], references: [id], onDelete: Cascade)
+  project         Project?                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  template        DocumentWorkflowTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@unique([documentTypeId, documentSubtypeId, projectId])
+  @@index([templateId])
+}
+
+// ============================================================================
+// DOCUMENTS
+// ============================================================================
+
+model Document {
+  id                        String         @id @default(cuid())
+  documentNumber            String         @unique
+  submissionKey             String?        @unique
+  title                     String
+  description               String?
+  status                    DocumentStatus @default(PENDING)
+  currentVersion            Int            @default(1)
+  revisionNumber            Int            @default(1)
+  lockVersion               Int            @default(0)
+  createdAt                 DateTime       @default(now())
+  updatedAt                 DateTime       @updatedAt
+  approvedAt                DateTime?
+  createdById               String
+  documentTypeId            String
+  documentSubtypeId         String?
+  projectId                 String?
+  workflowTemplateId        String?
+  currentWorkflowStep       Int?
+  currentApproverAssignedAt DateTime?
+  downloadedAt              DateTime?
+  lastActiveStage           DocumentStatus?
+  receivedAt                DateTime?
+  receivedById              String?
+
+  createdBy         User                      @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
+  receivedBy        User?                     @relation("DocumentsReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
+  documentType      DocumentType              @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
+  documentSubtype   DocumentSubtype?          @relation(fields: [documentSubtypeId], references: [id], onDelete: Restrict)
+  project           Project?                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  workflowTemplate  DocumentWorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: SetNull)
+  versions          DocumentVersion[]
+  approvals         ApprovalHistory[]
+  approvalSteps     DocumentApprovalStep[]
+  lineItems         DocumentLineItem[]
+  fieldValues       DocumentFieldValue[]
+  deletionRequests  DeletionRequest[]         @relation("DeletionRequests")
+  processLinks      ProcessStepDocument[]
+
+  @@index([createdById])
+  @@index([workflowTemplateId])
+  @@index([documentTypeId, documentSubtypeId])
+  @@index([projectId, status])
+  @@index([status, currentWorkflowStep])
+  @@index([createdAt])
+  @@index([receivedById])
+}
+
+model DocumentLineItem {
+  id         String @id @default(cuid())
+  documentId String
+  lineNo     Int
+
+  document    Document             @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  fieldValues DocumentFieldValue[]
+
+  @@unique([documentId, lineNo])
+}
+
+model DocumentFieldValue {
+  id                String    @id @default(cuid())
+  documentId        String
+  fieldDefinitionId String
+  lineItemId        String?
+  valueText         String?
+  valueNumber       Decimal?
+  valueDate         DateTime? @db.Date
+  valueBoolean      Boolean?
+  valueJson         Json?
+
+  document        Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  fieldDefinition FieldDefinition  @relation(fields: [fieldDefinitionId], references: [id], onDelete: Restrict)
+  lineItem        DocumentLineItem? @relation(fields: [lineItemId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, fieldDefinitionId, lineItemId])
+  @@index([fieldDefinitionId])
+}
+
+// Uploaded file versions. Keeps the old model and column names.
 model DocumentVersion {
-  id             String            @id @default(cuid())
+  id             String   @id @default(cuid())
   documentId     String
   versionNumber  Int
+  revisionNumber Int      @default(1)
   filePath       String
   storageFolder  String?
   originalName   String
   extension      String?
   mimeType       String
   fileSize       Int
-  uploadedAt     DateTime          @default(now())
+  uploadedAt     DateTime @default(now())
   uploadedById   String
-  approvalEvents ApprovalHistory[]
-  document       Document          @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  uploadedBy     User              @relation("VersionsUploadedBy", fields: [uploadedById], references: [id])
+
+  document        Document          @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy      User              @relation("VersionsUploadedBy", fields: [uploadedById], references: [id])
+  approvalEvents  ApprovalHistory[] @relation("ApprovalInputVersion")
+  approvalOutputs ApprovalHistory[] @relation("ApprovalOutputVersion")
 
   @@unique([documentId, versionNumber])
   @@index([documentId])
   @@index([uploadedById])
 }
 
-model PurchaseOrderSequence {
-  id         Int      @id @default(1)
-  nextNumber Int      @default(1)
-  updatedAt  DateTime @updatedAt
+// ============================================================================
+// PROCESSES
+// ============================================================================
+
+model ProcessDefinition {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  steps             ProcessStep[]
+  instances         ProcessInstance[]
+  scopedAssignments UserAssignment[]
 }
 
-model CustodyFileSequence {
-  id         Int      @id @default(1)
-  nextNumber Int      @default(1)
-  updatedAt  DateTime @updatedAt
+model ProcessStep {
+  id                  String  @id @default(cuid())
+  processDefinitionId String
+  stepNumber          Int
+  name                String
+  documentTypeId      String
+  documentSubtypeId   String?
+
+  processDefinition ProcessDefinition   @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
+  documentType      DocumentType        @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
+  documentSubtype   DocumentSubtype?    @relation(fields: [documentSubtypeId], references: [id], onDelete: Restrict)
+  stepDocuments     ProcessStepDocument[]
+
+  @@unique([processDefinitionId, stepNumber])
 }
 
-model PurchaseOrder {
-  id           String   @id @default(cuid())
-  poNumber     String   @unique
-  originalName String
-  description  String?
-  filePath     String   @unique
-  mimeType     String
-  fileSize     Int
-  uploadedAt   DateTime @default(now())
-  uploadedById String
-  receivedAt   DateTime?
-  receivedById String?
+model ProcessInstance {
+  id                  String        @id @default(cuid())
+  processDefinitionId String
+  projectId           String?
+  reference           String?
+  status              ProcessStatus @default(IN_PROGRESS)
+  currentStepNumber   Int           @default(1)
+  startedById         String
+  startedAt           DateTime      @default(now())
+  completedAt         DateTime?
 
-  uploadedBy User                  @relation("PurchaseOrdersCreatedBy", fields: [uploadedById], references: [id])
-  receivedBy User?                 @relation("PurchaseOrdersReceivedBy", fields: [receivedById], references: [id])
-  mrLinks    PurchaseOrderMrLink[]
+  processDefinition ProcessDefinition     @relation(fields: [processDefinitionId], references: [id], onDelete: Restrict)
+  project           Project?              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  startedBy         User                  @relation("ProcessInstancesStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
+  stepDocuments     ProcessStepDocument[]
 
-  @@index([uploadedById])
-  @@index([uploadedAt])
-  @@index([receivedById])
+  @@index([processDefinitionId, status])
+  @@index([projectId])
 }
 
-model PurchaseOrderMrLink {
-  id              String   @id @default(cuid())
-  purchaseOrderId String
-  documentId      String
-  createdAt       DateTime @default(now())
-  createdById     String
+// One current document fills a step of a running process; rejected ones stay as history.
+// "Only one current document per step per run" is enforced by a partial unique index in the migration.
+model ProcessStepDocument {
+  id                String            @id @default(cuid())
+  processInstanceId String
+  processStepId     String
+  documentId        String
+  source            ProcessStepSource
+  linkedById        String
+  isCurrent         Boolean           @default(true)
+  linkedAt          DateTime          @default(now())
 
-  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-  document      Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  createdBy     User          @relation("PurchaseOrderLinksCreatedBy", fields: [createdById], references: [id])
+  processInstance ProcessInstance @relation(fields: [processInstanceId], references: [id], onDelete: Cascade)
+  processStep     ProcessStep     @relation(fields: [processStepId], references: [id], onDelete: Restrict)
+  document        Document        @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  linkedBy        User            @relation("ProcessStepLinkedBy", fields: [linkedById], references: [id], onDelete: Restrict)
 
-  @@unique([purchaseOrderId, documentId])
+  @@unique([processInstanceId, processStepId, documentId])
   @@index([documentId])
-  @@index([createdById])
 }
 
+// ============================================================================
+// APPROVAL EXECUTION
+// ============================================================================
+
+// Copy of the flow's levels, made at upload. Later flow edits never change documents in progress.
+model DocumentApprovalStep {
+  id          String     @id @default(cuid())
+  documentId  String
+  levelNumber Int
+  name        String?
+  status      StepStatus @default(WAITING)
+  actedById   String?
+  actedAt     DateTime?
+  comment     String?
+
+  document  Document                       @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  actedBy   User?                          @relation("ApprovalStepActedBy", fields: [actedById], references: [id], onDelete: SetNull)
+  approvers DocumentApprovalStepApprover[]
+
+  @@unique([documentId, levelNumber])
+}
+
+model DocumentApprovalStepApprover {
+  id           String       @id @default(cuid())
+  stepId       String
+  approverType ApproverType
+  userTypeId   String?
+  userId       String?
+
+  step     DocumentApprovalStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  userType UserType?            @relation(fields: [userTypeId], references: [id], onDelete: Restrict)
+  user     User?                @relation("ApprovalStepApprover", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([stepId])
+  @@index([userId])
+  @@index([userTypeId])
+}
+
+// Permanent history (the PDF's document_activity_log). Replaces ApprovalHistory + ErrApprovalHistory.
 model ApprovalHistory {
-  id            String             @id @default(cuid())
-  documentId    String
-  action        ApprovalActionType
-  comments      String?
-  performedAt   DateTime           @default(now())
-  performedById String
-  versionId     String?
-  document      Document           @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  performedBy   User               @relation("ApprovalsPerformedBy", fields: [performedById], references: [id])
-  version       DocumentVersion?   @relation(fields: [versionId], references: [id])
+  id                  String             @id @default(cuid())
+  documentId          String
+  action              ApprovalActionType
+  comments            String?
+  performedAt         DateTime           @default(now())
+  performedById       String
+  versionId           String?
+  outputVersionId     String?
+  revisionNumber      Int                @default(1)
+  levelNumber         Int?
+  fromStatus          DocumentStatus?
+  toStatus            DocumentStatus?
+  revisionTargetLevel Int?
+  onBehalfOfUserId    String?
+
+  document      Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  performedBy   User             @relation("ApprovalsPerformedBy", fields: [performedById], references: [id])
+  onBehalfOf    User?            @relation("ApprovalsOnBehalfOf", fields: [onBehalfOfUserId], references: [id])
+  version       DocumentVersion? @relation("ApprovalInputVersion", fields: [versionId], references: [id])
+  outputVersion DocumentVersion? @relation("ApprovalOutputVersion", fields: [outputVersionId], references: [id])
 
   @@index([documentId, performedAt])
   @@index([performedById])
   @@index([versionId])
+  @@index([outputVersionId])
 }
 
+// ============================================================================
+// CARRIED OVER FROM THE CURRENT SYSTEM (not in the PDF)
+// ============================================================================
+
+// approver3Id is now approverId: the reviewer is anyone holding the deletion-review permission.
 model DeletionRequest {
   id              String                @id @default(cuid())
   documentId      String
   requestedById   String
-  approver3Id     String?
+  approverId      String?
   status          DeletionRequestStatus @default(PENDING)
   reason          String?
   createdAt       DateTime              @default(now())
   reviewedAt      DateTime?
   adminReviewerId String?
   adminReviewer   User?                 @relation("DeletionRequestsReviewedBy", fields: [adminReviewerId], references: [id])
-  approver3       User?                 @relation("DeletionRequestsApprovedBy", fields: [approver3Id], references: [id])
+  approver        User?                 @relation("DeletionRequestsApprovedBy", fields: [approverId], references: [id])
   document        Document              @relation("DeletionRequests", fields: [documentId], references: [id], onDelete: Cascade)
   requestedBy     User                  @relation("DeletionRequestsRequestedBy", fields: [requestedById], references: [id])
 
   @@unique([documentId, status])
   @@index([requestedById])
-  @@index([approver3Id])
+  @@index([approverId])
   @@index([status])
 }
 
+// Merges Notification and ErrNotification. eventKey (from ErrNotification) de-duplicates per user.
 model Notification {
   id         String           @id @default(cuid())
   userId     String
@@ -268,10 +633,12 @@ model Notification {
   title      String
   message    String
   documentId String?
+  eventKey   String?
   isRead     Boolean          @default(false)
   createdAt  DateTime         @default(now())
   user       User             @relation("NotificationsForUser", fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([eventKey, userId])
   @@index([userId, createdAt])
   @@index([isRead])
 }
@@ -336,36 +703,47 @@ model OtpChallenge {
   @@index([userId, expiresAt])
 }
 
-enum UserRole {
-  CLERK
-  APPROVER_1
-  APPROVER_2
-  APPROVER_3
-  ADMIN
-  ERR_USER
-}
+// ============================================================================
+// ENUMS
+// ============================================================================
 
-enum UserLocation {
-  AVR
-  AVK
-  KUWAIT
-}
-
+// Pending-at-which-level is now currentWorkflowStep, not part of the status.
 enum DocumentStatus {
-  PENDING_APPROVER_1
-  PENDING_APPROVER_2
-  PENDING_APPROVER_3
+  PENDING
+  REVISION_REQUIRED
+  ON_HOLD
+  APPROVED
+  CANCELLED
+  ARCHIVED
+}
+
+enum StepStatus {
+  WAITING
+  PENDING
   APPROVED
   REJECTED
-  REVISION_REQUIRED
-  ARCHIVED
+  REVISION
+  ON_HOLD
+}
+
+enum ApproverType {
+  USER
+  USER_TYPE
 }
 
 enum ApprovalActionType {
   SUBMITTED
   APPROVED
+  AUTO_APPROVED
+  DELEGATED_APPROVED
   REJECTED
   REQUESTED_REVISION
+  PUT_ON_HOLD
+  RESUMED
+  RESUBMITTED
+  COMMENTED
+  CANCELLED
+  ARCHIVED
 }
 
 enum DeletionRequestStatus {
@@ -374,20 +752,30 @@ enum DeletionRequestStatus {
   REJECTED
 }
 
-enum DocumentType {
-  COMPARISON
-  MATERIAL_REQUISITION
-  CUSTODY
+enum FieldGroup {
+  HEADER
+  LINE_ITEM
 }
 
-enum ComparisonType {
-  SPARE_PARTS
-  OTHER
+enum FieldDataType {
+  TEXT
+  LONG_TEXT
+  NUMBER
+  DATE
+  BOOLEAN
+  SELECT
+  MULTI_SELECT
 }
 
-enum MrType {
-  CASH
-  CREDIT
+enum ProcessStatus {
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ProcessStepSource {
+  EXISTING
+  UPLOADED
 }
 
 enum NotificationType {
@@ -396,6 +784,8 @@ enum NotificationType {
   DOCUMENT_REJECTED
   DOCUMENT_REVISED
   DOCUMENT_DELETED
+  DOCUMENT_ON_HOLD
+  DOCUMENT_RESUMED
 }
 
 enum EmailEventType {
@@ -403,244 +793,5 @@ enum EmailEventType {
   WORKFLOW_APPROVED
   WORKFLOW_REJECTED
   APPROVAL_OVERDUE
-  COMPARISON_MR_OVERDUE
-  PURCHASE_ORDER_AVAILABLE
-  ERR_WORKFLOW_UPDATE
-}
-
-enum ErrType {
-  RENTAL_ACTC
-  RENTAL_EXTERNAL
-  RENEWAL
-  PURCHASE
-}
-
-enum ErrStatus {
-  PENDING
-  ON_HOLD
-  REVISION_REQUIRED
-  REJECTED
-  APPROVED
-}
-
-enum ErrStage {
-  PROJECT_DIRECTOR
-  PMV_MANAGER
-  ACTING_CEO
-  CEO
-}
-
-enum ErrApprovalPath {
-  FINALIZE
-  ACTING_CEO
-  ACTING_CEO_THEN_CEO
-}
-
-model Err {
-  id             String    @id @default(cuid())
-  documentNumber String    @unique
-  submissionKey String? @unique
-  title          String
-  description    String?
-  type           ErrType
-  status         ErrStatus @default(PENDING)
-  currentStage   ErrStage  @default(PROJECT_DIRECTOR)
-  nextApprovalPath ErrApprovalPath?
-
-  createdById               String
-  projectDirectorId         String
-  currentApproverId         String?
-  currentApproverAssignedAt DateTime?
-
-  revisionNumber Int @default(1)
-  lockVersion    Int @default(0)
-
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  approvedAt DateTime?
-
-  createdBy       User                 @relation("ErrCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  projectDirector User                 @relation("ErrProjectDirector", fields: [projectDirectorId], references: [id], onDelete: Restrict)
-  currentApprover User?                @relation("ErrCurrentApprover", fields: [currentApproverId], references: [id], onDelete: Restrict)
-  files           ErrFile[]
-  approvalHistory ErrApprovalHistory[]
-  notifications   ErrNotification[]
-
-  projectId           String?
-  projectNameSnapshot String?
-
-  project ErrProject? @relation(fields: [projectId], references: [id], onDelete: Restrict)
-
-  @@index([createdById, status])
-  @@index([projectDirectorId, status])
-  @@index([currentApproverId, status])
-  @@index([status, currentStage])
-  @@index([createdAt])
-  @@index([projectId, status])
-}
-
-model ErrSequence {
-  id          Int      @id @default(1)
-  nextNumber  Int      @default(1)
-  updatedAt   DateTime @updatedAt
-}
-
-enum ErrFileKind {
-  ERR_PDF
-  QUOTATION
-  ATTACHMENT
-  RELEASE_VOUCHER
-  RECEIPT_VOUCHER
-}
-
-model ErrFile {
-  id             String      @id @default(cuid())
-  errId          String
-  kind           ErrFileKind
-  versionNumber  Int
-  revisionNumber Int         @default(1)
-
-  filePath     String @unique
-  storageFolder String?
-  originalName String
-  mimeType     String
-  fileSize     Int
-
-  uploadedById String
-  createdAt    DateTime @default(now())
-
-  err              Err                  @relation(fields: [errId], references: [id], onDelete: Restrict)
-  uploadedBy       User                 @relation("ErrFilesUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
-  inputForActions  ErrApprovalHistory[] @relation("ErrActionInputFile")
-  outputForActions ErrApprovalHistory[] @relation("ErrActionOutputFile")
-
-  @@unique([errId, kind, versionNumber])
-  @@index([uploadedById])
-  @@index([errId, revisionNumber])
-}
-
-enum ErrAction {
-  SUBMITTED
-  APPROVED
-  FINALIZED_APPROVAL
-  ESCALATED_TO_ACTING_CEO
-  ESCALATED_TO_CEO
-  REJECTED
-  REQUESTED_REVISION
-  PUT_ON_HOLD
-  RESUMED
-  RESUBMITTED
-  COMMENTED
-  RELEASE_VOUCHER_ADDED
-  RECEIPT_VOUCHER_ADDED
-}
-
-model ErrApprovalHistory {
-  id             String    @id @default(cuid())
-  errId          String
-  performedById  String
-  action         ErrAction
-  stage          ErrStage?
-  comments       String?
-  revisionNumber Int
-
-  inputFileId  String?
-  outputFileId String?
-  performedAt  DateTime @default(now())
-
-  err         Err  @relation(fields: [errId], references: [id], onDelete: Restrict)
-  performedBy User @relation("ErrActionsPerformedBy", fields: [performedById], references: [id], onDelete: Restrict)
-
-  inputFile  ErrFile? @relation("ErrActionInputFile", fields: [inputFileId], references: [id], onDelete: Restrict)
-  outputFile ErrFile? @relation("ErrActionOutputFile", fields: [outputFileId], references: [id], onDelete: Restrict)
-
-  @@index([errId, performedAt])
-  @@index([performedById])
-  @@index([inputFileId])
-  @@index([outputFileId])
-}
-
-enum ErrAccessRole {
-  UPLOADER
-  PROJECT_DIRECTOR
-  PROJECT_MANAGER
-  ACTING_CEO
-  CEO
-  VIEWER
-}
-
-enum ErrProjectCountry {
-  KSA
-  KUWAIT
-}
-
-model ErrUserAccess {
-  id        String        @id @default(cuid())
-  userId    String
-  role      ErrAccessRole
-  projectId String?
-  isActive  Boolean       @default(true)
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-
-  user    User        @relation(fields: [userId], references: [id], onDelete: Restrict)
-  project ErrProject? @relation(fields: [projectId], references: [id], onDelete: Restrict)
-
-  @@unique([userId, role, projectId])
-  @@index([role, isActive])
-  @@index([projectId, isActive])
-}
-
-enum ErrNotificationType {
-  APPROVAL_PENDING
-  APPROVED
-  REJECTED
-  REVISION_REQUIRED
-  ON_HOLD
-  RESUMED
-}
-
-model ErrNotification {
-  id          String              @id @default(cuid())
-  errId       String
-  recipientId String
-  type        ErrNotificationType
-
-  eventKey String
-  title    String
-  message  String
-
-  createdAt DateTime  @default(now())
-  readAt    DateTime?
-
-  emailEnabled   Boolean   @default(false)
-  emailSentAt    DateTime?
-  emailAttempts  Int       @default(0)
-  nextEmailAt    DateTime  @default(now())
-  emailClaimedAt DateTime?
-  lastEmailError String?
-
-  err       Err  @relation(fields: [errId], references: [id], onDelete: Restrict)
-  recipient User @relation("ErrNotificationRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
-
-  @@unique([eventKey, recipientId])
-  @@index([recipientId, readAt, createdAt])
-  @@index([errId])
-  @@index([emailEnabled, emailSentAt, nextEmailAt])
-}
-
-model ErrProject {
-  id         String               @id @default(cuid())
-  name       String               @unique
-  country    ErrProjectCountry    @default(KUWAIT)
-  directorId String?
-  isActive   Boolean              @default(true)
-  createdAt  DateTime             @default(now())
-  updatedAt  DateTime             @updatedAt
-
-  director   User?           @relation("ErrProjectDirectorAccount", fields: [directorId], references: [id], onDelete: Restrict)
-  errs       Err[]
-  userAccess ErrUserAccess[]
-
-  @@index([directorId, isActive])
+  PROCESS_STEP_OVERDUE
 }

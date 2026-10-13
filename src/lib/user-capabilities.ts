@@ -1,36 +1,24 @@
-import { UserRole, type UserLocation } from "@prisma/client";
-
-export type CapabilityRole = UserRole;
+import { USER_TYPE, type UserTypeCode } from "@/lib/auth/roles";
 
 export type UserCapabilitySession = {
   userId: string;
-  role: UserRole;
-  roles?: UserRole[];
+  userType: UserTypeCode;
   email?: string | null;
   name?: string | null;
-  location?: UserLocation | null;
 };
 
-export function getUserRoles(user: { role: UserRole; roles?: UserRole[] | null }): UserRole[] {
-  return Array.from(new Set([user.role, ...(user.roles ?? [])]));
+export function isAdminUser(user: { userType: UserTypeCode }): boolean {
+  return user.userType === USER_TYPE.ADMIN;
 }
 
-export function hasUserRole(user: { role: UserRole; roles?: UserRole[] | null }, role: UserRole): boolean {
-  return getUserRoles(user).includes(role);
+export function isClerkUser(user: { userType: UserTypeCode }): boolean {
+  return user.userType === USER_TYPE.CLERK;
 }
 
-export function hasAnyUserRole(user: { role: UserRole; roles?: UserRole[] | null }, roles: UserRole[]): boolean {
-  return roles.some((candidate) => hasUserRole(user, candidate));
+export function isApproverUser(user: { userType: UserTypeCode }): boolean {
+  return user.userType === USER_TYPE.ENGINEER || user.userType === USER_TYPE.MANAGER;
 }
 
-export function isClerkRoleUser(user: { role: UserRole; roles?: UserRole[] | null }): boolean {
-  return hasAnyUserRole(user, [UserRole.CLERK, UserRole.ADMIN]);
-}
-
-export function isApproverUser(user: { role: UserRole; roles?: UserRole[] | null }): boolean {
-  return hasAnyUserRole(user, [UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]);
-}
-
-export function hasWorkflowPermission(user: { role: UserRole; roles?: UserRole[] | null }, permissionRole: UserRole): boolean {
-  return hasUserRole(user, permissionRole);
+export function normalizeEmail(email?: string | null): string {
+  return (email || "").trim().toLowerCase();
 }

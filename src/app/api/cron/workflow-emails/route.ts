@@ -1,7 +1,8 @@
+// src/app/api/cron/workflow-emails/route.ts
 import { NextResponse } from "next/server";
 import {
   flushWorkflowEmailBatches,
-  queueComparisonMrReminders,
+  queueProcessStepReminders,
   queuePendingApprovalReminders,
 } from "@/lib/workflow-email-batching";
 
@@ -16,12 +17,12 @@ export async function POST(request: Request) {
   }
 
   const queuedApprovalReminders = await queuePendingApprovalReminders();
-  const queuedComparisonReminders = await queueComparisonMrReminders();
+  const queuedProcessReminders = await queueProcessStepReminders();
   const sentBatches = await flushWorkflowEmailBatches();
 
   return NextResponse.json({
     queuedApprovalReminders,
-    queuedComparisonReminders,
+    queuedProcessReminders,
     sentBatches,
   });
 }

@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
 import { writeAuditLog } from "@/lib/audit";
 import { appConfig } from "@/lib/env";
+import { isUserTypeCode } from "@/lib/auth/roles";
 
 export const OTP_CHALLENGE_COOKIE = "docflow_otp_challenge";
 export const TRUSTED_DEVICE_COOKIE = "docflow_trusted_device";
@@ -106,15 +107,6 @@ export async function createAdminOtpChallenge(user: { id: string; email: string;
 
   const appUrl = appConfig.appUrl();
 
-    //LOCAL TESTING:
-  // console.log(`\n🔑 [DEV BACKDOOR] OTP CODE for ${user.email} is: ${code}\n`);
-
-  // await sendEmail({
-  //   to: user.email,
-  //   subject: "Your PMV Workflow verification code",
-  //   html: `...`,
-  // });
-
   await sendEmail({
     to: user.email,
     subject: "Your PMV Workflow verification code",
@@ -139,10 +131,36 @@ export async function createAdminOtpChallenge(user: { id: string; email: string;
   return challengeToken;
 }
 
+type OtpUserRow = {
+  id: string;
+  email: string;
+  name: string;
+  isActive: boolean;
+  sessionVersion?: number;
+  userType: { code: string };
+};
+
+// Callers get a flat { userType } (the fixed user type code) instead of a nested relation.
+function flattenOtpUser(user: OtpUserRow) {
+  if (!user.isActive) {
+    throw new Error("This account is deactivated.");
+  }
+  if (!isUserTypeCode(user.userType.code)) {
+    throw new Error("This account has an unknown user type.");
+  }
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    sessionVersion: user.sessionVersion ?? 0,
+    userType: user.userType.code,
+  };
+}
+
 export async function verifyAdminOtp(challengeToken: string, code: string) {
   const challenge = await prisma.otpChallenge.findUnique({
     where: { challengeTokenHash: hashToken(challengeToken) },
-    include: { user: { select: { id: true, email: true, name: true, role: true} } },
+    include: { user: { select: { id: true, email: true, name: true, isActive: true, userType: { select: { code: true } } } } },
   });
 
   if (!challenge || challenge.consumedAt || challenge.verifiedAt) {
@@ -187,13 +205,13 @@ export async function verifyAdminOtp(challengeToken: string, code: string) {
     details: JSON.stringify({ method: "email", attempts: challenge.attempts + 1 }),
   });
 
-  return { challengeId: challenge.id, user: challenge.user };
+  return { challengeId: challenge.id, user: flattenOtpUser(challenge.user) };
 }
 
 export async function completeAdminOtpLogin(challengeToken: string, rememberDevice: boolean) {
   const challenge = await prisma.otpChallenge.findUnique({
     where: { challengeTokenHash: hashToken(challengeToken) },
-    include: { user: { select: { id: true, email: true, name: true, role: true, sessionVersion: true, } } },
+    include: { user: { select: { id: true, email: true, name: true, isActive: true, sessionVersion: true, userType: { select: { code: true } } } } },
   });
 
   if (!challenge || challenge.consumedAt || !challenge.verifiedAt || challenge.expiresAt.getTime() <= Date.now()) {
@@ -223,7 +241,7 @@ export async function completeAdminOtpLogin(challengeToken: string, rememberDevi
     });
   }
 
-  return { user: challenge.user, trustedDeviceToken };
+  return { user: flattenOtpUser(challenge.user), trustedDeviceToken };
 }
 
 export async function getValidTrustedDevice(userId: string, token: string | undefined) {

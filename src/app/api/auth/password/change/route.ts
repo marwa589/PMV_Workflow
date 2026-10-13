@@ -1,3 +1,4 @@
+// src/app/api/auth/password/change/route.ts
 import { compare, hash } from "bcryptjs";
 import { NextResponse } from "next/server";
 import { getSession, clearSessionCookie, revokeUserSessions } from "@/lib/auth/session";

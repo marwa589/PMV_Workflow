@@ -9,16 +9,48 @@ import {
   FileSpreadsheet,
   FileText,
   Loader2,
+  Plus,
+  Trash2,
   UploadCloud,
   XCircle,
 } from "lucide-react";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 type FileKind = "pdf" | "docx" | "xlsx" | "image" | "unknown";
-type DocumentTypeOption = "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR";
-type MrTypeOption = "CASH" | "CREDIT";
-type ComparisonTypeOption = "SPARE_PARTS" | "OTHER";
-type ErrTypeOption = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "RENEWAL" | "PURCHASE";
+
+export type UploadField = {
+  id: string;
+  fieldGroup: "HEADER" | "LINE_ITEM";
+  fieldKey: string;
+  label: string;
+  dataType: "TEXT" | "LONG_TEXT" | "NUMBER" | "DATE" | "BOOLEAN" | "SELECT" | "MULTI_SELECT";
+  isRequired: boolean;
+  options: string[];
+  documentSubtypeId: string | null;
+};
+
+// Everything the form offers comes from the database: types, sub types, projects and custom fields.
+export type UploadDocumentType = {
+  id: string;
+  code: string;
+  name: string;
+  supportsLineItems: boolean;
+  subtypes: Array<{ id: string; code: string; name: string }>;
+  fields: UploadField[];
+};
+
+// Set when the upload is for a step of a process run: the type (and sub type, project) are then fixed.
+export type UploadProcessContext = {
+  instanceId: string;
+  label: string;
+  stepName: string;
+  documentTypeId: string;
+  documentSubtypeId: string | null;
+  projectId: string | null;
+};
+
+type FieldValue = string | boolean | string[];
+type FieldValues = Record<string, FieldValue>;
 
 const ACCEPTED_EXTENSIONS = ["pdf", "doc", "docx", "xls", "xlsx", "jpg", "jpeg", "png"];
 const ACCEPTED_MIME_TYPES = [
@@ -75,24 +107,92 @@ function FileTypeIcon({ file }: { file: File | null }) {
   }
 }
 
-type ErrDirector = { projectId: string; directorId?: string; name: string; projectName: string; country?: string; accessRole?: "PROJECT_DIRECTOR" | "PROJECT_MANAGER" };
 
-export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDirectors = [], errOnly = false, marcOnly = false }: { defaultRedirectPath?: string; errDirectors?: ErrDirector[]; errOnly?: boolean; marcOnly?: boolean }) {
+function isBlank(value: FieldValue | undefined): boolean {
+  return value === undefined || value === "" || (Array.isArray(value) && value.length === 0);
+}
+
+// Only filled-in values are sent. Booleans are always sent (an unticked box is "no").
+function cleanValues(fields: UploadField[], values: FieldValues): Record<string, FieldValue> {
+  const out: Record<string, FieldValue> = {};
+  for (const field of fields) {
+    const value = values[field.fieldKey];
+    if (field.dataType === "BOOLEAN") {
+      if (value === true || value === false) out[field.fieldKey] = value;
+      continue;
+    }
+    if (!isBlank(value)) out[field.fieldKey] = value as FieldValue;
+  }
+  return out;
+}
+
+const inputClass = "block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-300 transition focus:ring-2";
+
+function FieldInput({ field, value, onChange, compact = false }: { field: UploadField; value: FieldValue | undefined; onChange: (next: FieldValue) => void; compact?: boolean }) {
+  const id = `field-${field.fieldGroup}-${field.fieldKey}`;
+  switch (field.dataType) {
+    case "LONG_TEXT":
+      return <textarea id={id} rows={3} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} className={inputClass} />;
+    case "NUMBER":
+      return <input id={id} type="number" step="any" value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} className={inputClass} />;
+    case "DATE":
+      return <input id={id} type="date" value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} className={inputClass} />;
+    case "BOOLEAN":
+      return (
+        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+          <input id={id} type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
+          {compact ? null : "Yes"}
+        </label>
+      );
+    case "SELECT":
+      return (
+        <select id={id} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} className={inputClass}>
+          <option value="">Select...</option>
+          {field.options.map((option) => (
+            <option key={option} value={option}>{option}</option>
+          ))}
+        </select>
+      );
+    case "MULTI_SELECT": {
+      const selected = Array.isArray(value) ? value : [];
+      return (
+        <div className="flex flex-wrap gap-3">
+          {field.options.map((option) => (
+            <label key={option} className="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={selected.includes(option)}
+                onChange={(e) => onChange(e.target.checked ? [...selected, option] : selected.filter((item) => item !== option))}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              {option}
+            </label>
+          ))}
+        </div>
+      );
+    }
+    default:
+      return <input id={id} type="text" value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)} className={inputClass} />;
+  }
+}
+
+type Props = {
+  documentTypes: UploadDocumentType[];
+  projects: Array<{ id: string; code: string; name: string }>;
+  defaultRedirectPath?: string;
+  process?: UploadProcessContext | null;
+};
+
+export default function NewDocumentForm({ documentTypes, projects, defaultRedirectPath = "/clerk", process = null }: Props) {
   const router = useRouter();
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [documentType, setDocumentType] = useState<DocumentTypeOption | null>(errOnly ? "ERR" : null);
-  const [comparisonType, setComparisonType] = useState<ComparisonTypeOption | null>(null);
-  const [mrType, setMrType] = useState<MrTypeOption | null>(null);
-  const [errType, setErrType] = useState<ErrTypeOption | null>(null);
-  const [errProjectId, setErrProjectId] = useState("");
-  const [quotations, setQuotations] = useState<File[]>([]);
-  const [mrNumber, setMrNumber] = useState("");
-  const [comparisonLinkChoice, setComparisonLinkChoice] = useState<"YES" | "NO" | null>(null);
-  const [comparisonSearch, setComparisonSearch] = useState("");
-  const [comparisonOptions, setComparisonOptions] = useState<Array<{ id: string; documentNumber: string; title: string; approvedAt: string }>>([]);
-  const [selectedComparisonId, setSelectedComparisonId] = useState<string | null>(null);
+  const [documentTypeId, setDocumentTypeId] = useState(process?.documentTypeId ?? "");
+  const [documentSubtypeId, setDocumentSubtypeId] = useState(process?.documentSubtypeId ?? "");
+  const [projectId, setProjectId] = useState(process?.projectId ?? "");
+  const [headerValues, setHeaderValues] = useState<FieldValues>({});
+  const [lineItems, setLineItems] = useState<FieldValues[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileTitles, setFileTitles] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -100,13 +200,21 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
   const [error, setError] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
 
+  const selectedType = documentTypes.find((type) => type.id === documentTypeId) ?? null;
+  const applicableFields = useMemo(
+    () => (selectedType ? selectedType.fields.filter((field) => !field.documentSubtypeId || field.documentSubtypeId === documentSubtypeId) : []),
+    [selectedType, documentSubtypeId],
+  );
+  const headerFields = applicableFields.filter((field) => field.fieldGroup === "HEADER");
+  const lineFields = applicableFields.filter((field) => field.fieldGroup === "LINE_ITEM");
+  const showLineItems = Boolean(selectedType?.supportsLineItems) && lineFields.length > 0;
+  const typeLocked = Boolean(process);
+  const subtypeLocked = Boolean(process?.documentSubtypeId);
+  const projectLocked = Boolean(process?.projectId);
+
   const fileSummary = useMemo(() => {
     if (selectedFiles.length === 0) return null;
-    return selectedFiles.map((file) => ({
-      name: file.name,
-      size: formatBytes(file.size),
-      type: file.type || "Unknown MIME type",
-    }));
+    return selectedFiles.map((file) => ({ name: file.name, size: formatBytes(file.size), type: file.type || "Unknown MIME type" }));
   }, [selectedFiles]);
 
   function handleFileSelection(files: FileList | File[] | null) {
@@ -121,17 +229,13 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
 
     setError(null);
     const uniqueIncomingFiles = incomingFiles.filter((file) => !selectedFiles.some((existing) => existing.name === file.name && existing.size === file.size));
-    if (documentType === "ERR" && !title.trim() && selectedFiles.length === 0) {
-      setTitle(incomingFiles[0].name.replace(/\.[^.]+$/, ""));
-    }
-    setSelectedFiles((current) => [...current, ...uniqueIncomingFiles]);
-    setFileTitles((current) => [...current, ...uniqueIncomingFiles.map((file) => file.name.replace(/\.[^.]+$/, ""))]);
+    setSelectedFiles((current) => (process ? uniqueIncomingFiles.slice(0, 1) : [...current, ...uniqueIncomingFiles]));
+    setFileTitles((current) => (process ? uniqueIncomingFiles.slice(0, 1).map((file) => file.name.replace(/\.[^.]+$/, "")) : [...current, ...uniqueIncomingFiles.map((file) => file.name.replace(/\.[^.]+$/, ""))]));
   }
 
   function onDrop(e: React.DragEvent<HTMLLabelElement>) {
     e.preventDefault();
     setIsDragging(false);
-
     handleFileSelection(e.dataTransfer.files);
   }
 
@@ -148,17 +252,11 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
   function resetForm() {
     setTitle("");
     setDescription("");
-    setDocumentType(errOnly ? "ERR" : null);
-    setComparisonType(null);
-    setMrType(null);
-    setErrType(null);
-    setErrProjectId("");
-    setQuotations([]);
-    setMrNumber("");
-    setComparisonLinkChoice(null);
-    setComparisonSearch("");
-    setComparisonOptions([]);
-    setSelectedComparisonId(null);
+    if (!typeLocked) setDocumentTypeId("");
+    if (!subtypeLocked) setDocumentSubtypeId("");
+    if (!projectLocked) setProjectId("");
+    setHeaderValues({});
+    setLineItems([]);
     setSelectedFiles([]);
     setFileTitles([]);
     setError(null);
@@ -167,103 +265,53 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    if (!documentType) {
+    if (!selectedType) {
       setError("Please select a document type.");
       return;
     }
-
-    if (documentType === "MATERIAL_REQUISITION" && !mrType) {
-      setError("Please select an MR type.");
+    if (selectedType.subtypes.length > 0 && !documentSubtypeId) {
+      setError("Please select a sub type.");
       return;
     }
-
-    if (documentType === "COMPARISON" && !comparisonType) {
-      setError("Please select a comparison type.");
-      return;
-    }
-
-    if (documentType === "ERR" && (!errType || (!marcOnly && !errProjectId))) {
-      setError(marcOnly ? "Please select an ERR type." : "Please select an ERR type and project.");
-      return;
-    }
-
     if (selectedFiles.length === 0) {
-      setError("Please upload at least one file before creating.");
+      setError("Please choose at least one file.");
       return;
+    }
+    if (!title.trim() && fileTitles.every((value) => !value.trim())) {
+      setError("Please enter a title.");
+      return;
+    }
+    const missing = headerFields.find((field) => field.isRequired && field.dataType !== "BOOLEAN" && isBlank(headerValues[field.fieldKey]));
+    if (missing) {
+      setError(`${missing.label} is required.`);
+      return;
+    }
+
+    const cleanLines = lineItems
+      .map((line) => cleanValues(lineFields, line))
+      .filter((line) => Object.keys(line).length > 0);
+    for (const [index, line] of cleanLines.entries()) {
+      const lineMissing = lineFields.find((field) => field.isRequired && field.dataType !== "BOOLEAN" && isBlank(line[field.fieldKey]));
+      if (lineMissing) {
+        setError(`Line ${index + 1}: ${lineMissing.label} is required.`);
+        return;
+      }
     }
 
     setError(null);
     setIsSubmitting(true);
 
     try {
-      if (documentType === "ERR") {
-        for (const [index, file] of selectedFiles.entries()) {
-          const errFormData = new FormData();
-          errFormData.set("title", file.name.replace(/\.[^.]+$/, ""));
-          errFormData.set("description", description);
-          errFormData.set("type", errType || "");
-          if (marcOnly) errFormData.set("marcOnly", "true");
-
-          if (!marcOnly) {
-            const [projId, dirId] = errProjectId.split("::");
-            errFormData.set("projectId", projId);
-            if (dirId) {
-              errFormData.set("projectDirectorId", dirId);
-            }
-          }
-
-          errFormData.set("submissionKey", crypto.randomUUID());
-          errFormData.append("files", file);
-          if (index === 0) quotations.forEach((file) => errFormData.append("quotations", file));
-
-          const response = await fetch("/api/errs", {
-            method: "POST",
-            headers: { "x-csrf-token": getCsrfTokenFromBrowser() },
-            body: errFormData,
-          });
-          const result = (await response.json()) as { message?: string };
-          if (!response.ok) {
-            setError(result.message || `Failed to create ERR ${index + 1}.`);
-            setIsSubmitting(false);
-            return;
-          }
-        }
-
-        setIsSubmitting(false);
-        setShowToast(true);
-        resetForm();
-        window.setTimeout(() => {
-          setShowToast(false);
-          router.push(defaultRedirectPath);
-          router.refresh();
-        }, 1600);
-        return;
-      }
-
       const formData = new FormData();
       formData.set("title", title);
       formData.set("description", description);
-      formData.set("documentType", documentType);
-      if (documentType === "COMPARISON" && comparisonType) {
-        formData.set("comparisonType", comparisonType);
-      }
-
-      if (documentType === "CUSTODY") {
-        formData.set("documentType", "CUSTODY");
-      }
-      if (documentType === "MATERIAL_REQUISITION") {
-        if (mrType) {
-          formData.set("mrType", mrType);
-        }
-        if (mrNumber.trim()) {
-          formData.set("mrNumber", mrNumber.trim());
-        }
-        if (comparisonLinkChoice === "YES" && selectedComparisonId) {
-          formData.set("relatedComparisonId", selectedComparisonId);
-        } else {
-          formData.set("relatedComparisonId", "");
-        }
-      }
+      formData.set("documentTypeId", selectedType.id);
+      if (documentSubtypeId) formData.set("documentSubtypeId", documentSubtypeId);
+      if (projectId) formData.set("projectId", projectId);
+      if (process) formData.set("processInstanceId", process.instanceId);
+      formData.set("submissionKey", crypto.randomUUID());
+      formData.set("fieldValues", JSON.stringify(cleanValues(headerFields, headerValues)));
+      if (showLineItems) formData.set("lineItems", JSON.stringify(cleanLines));
       selectedFiles.forEach((file, index) => {
         formData.append("files", file);
         formData.append("fileTitles", fileTitles[index] || file.name.replace(/\.[^.]+$/, ""));
@@ -287,7 +335,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
       resetForm();
       window.setTimeout(() => {
         setShowToast(false);
-        router.push(defaultRedirectPath);
+        router.push(process ? `/processes/${process.instanceId}` : defaultRedirectPath);
         router.refresh();
       }, 1600);
     } catch {
@@ -308,263 +356,137 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
       )}
 
       <form onSubmit={onSubmit} className="space-y-6">
+        {process ? (
+          <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
+            Adding the document for step <span className="font-semibold">{process.stepName}</span> of <span className="font-semibold">{process.label}</span>.
+          </div>
+        ) : null}
+
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
           <h2 className="text-base font-semibold text-slate-900">Document Details</h2>
 
           <div className="mt-4 grid grid-cols-1 gap-5">
-            {errOnly ? (
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">
-                  Document Type
-                </label>
-                <div className="rounded-xl border-2 border-cyan-500 bg-cyan-50 px-4 py-3 text-sm font-medium text-cyan-700">
-                  ERR
-                </div>
-              </div>
-            ) : <div>
+            <div>
               <label className="mb-2 block text-sm font-medium text-slate-700">
                 Document Type <span className="text-rose-600">*</span>
               </label>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                {[
-                  { value: "COMPARISON", label: "Comparison Sheet" },
-                  { value: "MATERIAL_REQUISITION", label: "Material Requisition" },
-                  { value: "CUSTODY", label: "Custody File" },
-                  { value: "ERR", label: "ERR" },
-                ].map((option) => (
+                {documentTypes.map((type) => (
                   <button
-                    key={option.value}
+                    key={type.id}
                     type="button"
+                    disabled={typeLocked}
                     onClick={() => {
-                      setDocumentType(option.value as DocumentTypeOption);
-                      if (option.value === "COMPARISON") {
-                        setMrType(null);
-                        setErrType(null);
-                      } else if (option.value === "MATERIAL_REQUISITION") {
-                        setComparisonType(null);
-                        setErrType(null);
-                      } else {
-                        setComparisonType(null);
-                        setMrType(null);
-                      }
+                      setDocumentTypeId(type.id);
+                      setDocumentSubtypeId("");
+                      setHeaderValues({});
+                      setLineItems([]);
                     }}
                     className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${
-                      documentType === option.value
-                        ? "border-cyan-500 bg-cyan-50 text-cyan-700"
-                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                    }`}
+                      documentTypeId === type.id
+                        ? "border-2 border-cyan-500 bg-cyan-50 text-cyan-700"
+                        : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+                    } disabled:cursor-not-allowed disabled:opacity-70`}
                   >
-                    {option.label}
+                    {type.name}
                   </button>
                 ))}
+                {documentTypes.length === 0 ? <p className="text-sm text-slate-500">No document types are set up yet.</p> : null}
               </div>
-            </div>}
+            </div>
 
-            {documentType === "COMPARISON" ? (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <label className="block text-sm font-medium text-slate-700">
-                  Comparison Type <span className="text-rose-600">*</span>
+            {selectedType && selectedType.subtypes.length > 0 ? (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">
+                  Sub Type <span className="text-rose-600">*</span>
                 </label>
-                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {[
-                    { value: "SPARE_PARTS", label: "Spare Parts Comparison" },
-                    { value: "OTHER", label: "Other Comparison" },
-                  ].map((option) => (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {selectedType.subtypes.map((subtype) => (
                     <button
-                      key={option.value}
+                      key={subtype.id}
                       type="button"
-                      onClick={() => setComparisonType(option.value as ComparisonTypeOption)}
+                      disabled={subtypeLocked}
+                      onClick={() => {
+                        setDocumentSubtypeId(subtype.id);
+                        setHeaderValues({});
+                      }}
                       className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${
-                        comparisonType === option.value
-                          ? "border-cyan-500 bg-cyan-50 text-cyan-700"
-                          : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                      }`}
+                        documentSubtypeId === subtype.id
+                          ? "border-2 border-cyan-500 bg-cyan-50 text-cyan-700"
+                          : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+                      } disabled:cursor-not-allowed disabled:opacity-70`}
                     >
-                      {option.label}
+                      {subtype.name}
                     </button>
                   ))}
                 </div>
               </div>
             ) : null}
 
-            {documentType === "MATERIAL_REQUISITION" ? (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <label className="block text-sm font-medium text-slate-700">
-                    MR Details <span className="text-rose-600">*</span>
-                  </label>
-                </div>
+            <div>
+              <label htmlFor="project" className="mb-2 block text-sm font-medium text-slate-700">
+                Project
+              </label>
+              <select id="project" value={projectId} disabled={projectLocked} onChange={(e) => setProjectId(e.target.value)} className={inputClass}>
+                <option value="">No project</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.code} - {project.name}</option>
+                ))}
+              </select>
+            </div>
 
-                <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div>
-                    <label htmlFor="mr-number" className="mb-2 block text-sm font-medium text-slate-700">
-                      MR Number
+            <div>
+              <label htmlFor="title" className="mb-2 block text-sm font-medium text-slate-700">
+                Title{selectedFiles.length > 1 ? " (each file also has its own title below)" : ""}
+              </label>
+              <input id="title" type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Document title" className={inputClass} />
+            </div>
+
+            {headerFields.length > 0 ? (
+              <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                {headerFields.map((field) => (
+                  <div key={field.id}>
+                    <label htmlFor={`field-HEADER-${field.fieldKey}`} className="mb-2 block text-sm font-medium text-slate-700">
+                      {field.label} {field.isRequired ? <span className="text-rose-600">*</span> : <span className="font-normal text-slate-500">(optional)</span>}
                     </label>
-                    <input
-                      id="mr-number"
-                      type="text"
-                      value={mrNumber}
-                      onChange={(e) => setMrNumber(e.target.value)}
-                      placeholder="e.g. 205523"
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none ring-cyan-300 transition focus:ring-2"
-                    />
+                    <FieldInput field={field} value={headerValues[field.fieldKey]} onChange={(next) => setHeaderValues((current) => ({ ...current, [field.fieldKey]: next }))} />
                   </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">
-                      MR Type <span className="text-rose-600">*</span>
-                    </label>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      {[
-                        { value: "CASH", label: "Cash" },
-                        { value: "CREDIT", label: "Credit" },
-                      ].map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() => setMrType(option.value as MrTypeOption)}
-                          className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${
-                            mrType === option.value
-                              ? "border-cyan-500 bg-cyan-50 text-cyan-700"
-                              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-                  <label className="block text-sm font-medium text-slate-700">
-                    Does this MR have a related Comparison?
-                  </label>
-                  <div className="mt-3 flex flex-wrap gap-3">
-                    {(["YES", "NO"] as const).map((option) => (
-                      <button
-                        key={option}
-                        type="button"
-                        onClick={() => {
-                          setComparisonLinkChoice(option);
-                          if (option === "NO") {
-                            setSelectedComparisonId(null);
-                            setComparisonSearch("");
-                            setComparisonOptions([]);
-                          }
-                        }}
-                        className={`rounded-xl border px-4 py-2 text-sm font-medium transition ${
-                          comparisonLinkChoice === option
-                            ? "border-cyan-500 bg-cyan-50 text-cyan-700"
-                            : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                        }`}
-                      >
-                        {option === "YES" ? "Yes" : "No"}
-                      </button>
-                    ))}
-                  </div>
-
-                  {comparisonLinkChoice === "YES" ? (
-                    <div className="mt-4 space-y-3">
-                      <input
-                        value={comparisonSearch}
-                        onChange={async (event) => {
-                          const value = event.target.value;
-                          setComparisonSearch(value);
-                          if (!value.trim()) {
-                            setComparisonOptions([]);
-                            return;
-                          }
-
-                          try {
-                            const response = await fetch(`/api/documents/comparisons?search=${encodeURIComponent(value.trim())}`);
-                            const result = (await response.json()) as { comparisons?: Array<{ id: string; documentNumber: string; title: string; approvedAt: string }> };
-                            setComparisonOptions(result.comparisons || []);
-                          } catch {
-                            setComparisonOptions([]);
-                          }
-                        }}
-                        placeholder="Search approved comparisons"
-                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none ring-cyan-300 transition focus:ring-2"
-                      />
-                      {comparisonOptions.length > 0 ? (
-                        <div className="max-h-48 space-y-2 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
-                          {comparisonOptions.map((comparison) => (
-                            <button
-                              key={comparison.id}
-                              type="button"
-                              onClick={() => setSelectedComparisonId(comparison.id)}
-                              className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
-                                selectedComparisonId === comparison.id
-                                  ? "border-cyan-500 bg-cyan-100 text-cyan-800"
-                                  : "border-transparent bg-white text-slate-700 hover:border-slate-200"
-                              }`}
-                            >
-                              <div className="font-semibold">{comparison.documentNumber}</div>
-                              <div className="text-xs text-slate-600">{comparison.title}</div>
-                              <div className="mt-1 text-[11px] text-slate-500">Approved {comparison.approvedAt}</div>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                      {selectedComparisonId ? (
-                        <p className="text-sm text-slate-600">
-                          Selected comparison: <span className="font-semibold text-slate-900">{comparisonOptions.find((item) => item.id === selectedComparisonId)?.documentNumber || "Selected"}</span>
-                        </p>
-                      ) : (
-                        <p className="text-sm text-slate-500">Search and select one approved comparison.</p>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-
-                <p className="mt-3 text-sm text-slate-600">
-                  Enter the MR number and choose the MR type manually before saving.
-                </p>
+                ))}
               </div>
             ) : null}
 
-            {documentType === "ERR" ? (
-              <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700">ERR Type <span className="text-rose-600">*</span></label>
-                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    {[
-                      { value: "RENTAL_ACTC", label: "Rental ACTC" },
-                      { value: "RENTAL_EXTERNAL", label: "Rental External" },
-                      { value: "RENEWAL", label: "Renewal" },
-                      { value: "PURCHASE", label: "Purchase" },
-                    ].map((option) => (
-                      <button key={option.value} type="button" onClick={() => setErrType(option.value as ErrTypeOption)} className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${errType === option.value ? "border-cyan-500 bg-cyan-50 text-cyan-700" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
+            {showLineItems ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-medium text-slate-700">Items</p>
+                  <button type="button" onClick={() => setLineItems((current) => [...current, {}])} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                    <Plus className="h-3.5 w-3.5" />
+                    Add line
+                  </button>
                 </div>
-                {!marcOnly ? <div>
-                  <label htmlFor="err-project" className="mb-2 block text-sm font-medium text-slate-700">Project Director or Project Manager <span className="text-rose-600">*</span></label>
-                  <select id="err-project" value={errProjectId} onChange={(event) => setErrProjectId(event.target.value)} className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-500">
-                    <option value="">Select a project approver</option>
-                    {errDirectors.map((director) => (
-                      <option key={`${director.projectId}::${director.directorId}`} value={`${director.projectId}::${director.directorId}`}>
-                        {director.name} - {director.accessRole === "PROJECT_MANAGER" ? "Project Manager" : "Project Director"} - {director.projectName}
-                      </option>
-                    ))}
-                  </select>
-                  {errProjectId ? (
-                    <div className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700 border border-blue-200">
-                      <span className="font-medium">Country:</span> {errDirectors.find((director) => `${director.projectId}::${director.directorId}` === errProjectId)?.country || "KUWAIT"}
+                {lineItems.length === 0 ? <p className="text-xs text-slate-500">No lines added.</p> : null}
+                <div className="space-y-3">
+                  {lineItems.map((line, index) => (
+                    <div key={index} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="mb-2 flex items-center justify-between text-xs text-slate-500">
+                        <span>Line {index + 1}</span>
+                        <button type="button" onClick={() => setLineItems((current) => current.filter((_, i) => i !== index))} className="inline-flex items-center gap-1 text-slate-600 hover:text-rose-600">
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Remove
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {lineFields.map((field) => (
+                          <div key={field.id}>
+                            <label className="mb-1 block text-xs font-medium text-slate-600">
+                              {field.label} {field.isRequired ? <span className="text-rose-600">*</span> : null}
+                            </label>
+                            <FieldInput field={field} compact value={line[field.fieldKey]} onChange={(next) => setLineItems((current) => current.map((item, i) => (i === index ? { ...item, [field.fieldKey]: next } : item)))} />
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  ) : null}
-                </div> : null}
-                <div>
-                  <label htmlFor="err-quotation" className="mb-2 block text-sm font-medium text-slate-700">Quotation <span className="font-normal text-slate-500">(optional)</span></label>
-                  <input id="err-quotation" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => setQuotations(Array.from(event.target.files ?? []))} className="block w-full rounded-lg border border-slate-300 bg-white text-sm text-slate-700 file:mr-3 file:cursor-pointer file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-700" />
-                  {quotations.length > 0 ? (
-                    <ul className="mt-2 space-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                      {quotations.map((file) => <li key={`${file.name}-${file.size}-${file.lastModified}`} className="truncate" title={file.name}>{file.name}</li>)}
-                    </ul>
-                  ) : null}
+                  ))}
                 </div>
               </div>
             ) : null}
@@ -603,11 +525,9 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
               <div>
                 <p className="text-sm font-medium text-slate-800">Drag and drop files here, or click to browse</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  {documentType === "MATERIAL_REQUISITION"
-                    ? "Choose the MR type above, then upload the file for this requisition."
-                    : documentType === "ERR"
-                      ? "Upload one primary ERR file. Add a quotation separately if needed."
-                      : "Upload one or more files. Each file will become its own document."}
+                  {process
+                    ? "Upload the document for this process step."
+                    : "Upload one or more files. Each file will become its own document."}
                 </p>
               </div>
             </div>
@@ -617,7 +537,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
               type="file"
               accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
               className="sr-only"
-              multiple
+              multiple={!process}
               onChange={(e) => handleFileSelection(e.target.files)}
             />
           </label>

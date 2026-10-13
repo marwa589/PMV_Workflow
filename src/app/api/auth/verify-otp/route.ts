@@ -1,3 +1,4 @@
+// src/app/api/auth/verify-otp/route.ts
 import { NextResponse } from "next/server";
 import { isOtpAuthenticationEnabled, OTP_CHALLENGE_COOKIE, verifyAdminOtp } from "@/lib/auth/otp";
 

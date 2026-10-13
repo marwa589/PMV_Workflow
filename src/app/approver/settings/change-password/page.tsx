@@ -1,23 +1,16 @@
-import { UserRole } from "@prisma/client";
+// src/app/approver/settings/change-password/page.tsx
 import DashboardShell from "@/components/dashboard-shell";
 import ChangePasswordForm from "@/components/change-password-form";
-import { requireRole } from "@/lib/auth/guards";
+import { requireAuth } from "@/lib/auth/guards";
 
 export const dynamic = "force-dynamic";
 
 export default async function ApproverChangePasswordPage() {
-  const session = await requireRole([
-    UserRole.CLERK,
-    UserRole.APPROVER_1,
-    UserRole.APPROVER_2,
-    UserRole.APPROVER_3,
-    UserRole.ADMIN,
-    UserRole.ERR_USER,
-  ]);
+  const session = await requireAuth();
 
   return (
     <DashboardShell
-      role={session.role}
+      role={session.userType}
       userName={session.name}
       title="Account Settings"
       subtitle="Change your account password"

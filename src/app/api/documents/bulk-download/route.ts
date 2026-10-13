@@ -1,3 +1,4 @@
+// src/app/api/documents/bulk-download/route.ts
 import { mkdir, readFile, rm, writeFile } from 'fs/promises';
 import path from 'path';
 import { execFile } from 'child_process';
@@ -6,9 +7,9 @@ import { NextResponse } from 'next/server';
 import { DocumentStatus } from '@prisma/client';
 import { PDFDocument } from 'pdf-lib';
 import { getSession } from '@/lib/auth/session';
+import { buildDocumentVisibilityWhere } from '@/lib/auth/access';
 import { resolveStoredFilePath } from '@/lib/files';
 import { prisma } from '@/lib/prisma';
-import { canAccessMrModuleForSession } from "@/lib/auth/resource-access";
 
 export const runtime = 'nodejs';
 const execFileAsync = promisify(execFile);
@@ -22,12 +23,6 @@ export async function GET(request: Request) {
   if (!session) {
     return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
   }
-  if (!canAccessMrModuleForSession(session)) {
-    return NextResponse.json(
-      { message: "You do not have access to MR documents." },
-      { status: 403 },
-    );
-  }
 
   const { searchParams } = new URL(request.url);
   const ids = searchParams.getAll('ids');
@@ -36,56 +31,42 @@ export async function GET(request: Request) {
     return NextResponse.json({ message: 'No documents selected.' }, { status: 400 });
   }
 
-  // Only APPROVED documents, with linked comparison data
+  // Only approved documents the person is allowed to download.
+  const visibility = await buildDocumentVisibilityWhere(session, prisma, 'documents.download');
   const documents = await prisma.document.findMany({
-    where: { id: { in: ids }, status: DocumentStatus.APPROVED },
+    where: { AND: [{ id: { in: ids }, status: DocumentStatus.APPROVED }, visibility] },
     select: {
       id: true,
-      documentNumber: true,
-      mrNumber: true,
-      mrType: true,
-      documentType: true,
       currentVersion: true,
-      relatedComparisonId: true,
-      relatedComparison: {
-        select: {
-          id: true,
-          documentNumber: true,
-          status: true,
-          currentVersion: true,
-        },
-      },
+      documentType: { select: { code: true } },
+      documentSubtype: { select: { code: true } },
     },
   });
 
-  const orderedDocuments = documents.flatMap((document) => {
-    const group = document.documentType === 'MATERIAL_REQUISITION'
-      ? document.mrType === 'CREDIT' ? 'credit-mrs' : 'cash-mrs'
-      : 'comparisons';
+  if (documents.length === 0) {
+    return NextResponse.json({ message: 'None of the selected documents can be downloaded.' }, { status: 403 });
+  }
 
-    return [{ document, group }];
-  });
-
+  // One merged PDF per document type (and sub type), named after them, e.g. MR-CREDIT.pdf.
   const versionMap = new Map<string, { filePath: string; originalName: string }>();
-  for (const { document } of orderedDocuments) {
+  const groupedDocuments = new Map<string, typeof documents>();
+  for (const document of documents) {
     const version = await prisma.documentVersion.findUnique({
       where: { documentId_versionNumber: { documentId: document.id, versionNumber: document.currentVersion } },
       select: { filePath: true, originalName: true },
     });
     if (version) versionMap.set(document.id, version);
-  }
 
-  const groupedDocuments = new Map<string, typeof orderedDocuments>();
-  for (const entry of orderedDocuments) {
-    const group = groupedDocuments.get(entry.group) || [];
-    group.push(entry);
-    groupedDocuments.set(entry.group, group);
+    const groupName = [document.documentType.code, document.documentSubtype?.code].filter(Boolean).join('-');
+    const group = groupedDocuments.get(groupName) || [];
+    group.push(document);
+    groupedDocuments.set(groupName, group);
   }
 
   const mergedPdfs: Array<{ name: string; buffer: Buffer }> = [];
   for (const [groupName, group] of groupedDocuments) {
     const mergedPdf = await PDFDocument.create();
-    for (const { document } of group) {
+    for (const document of group) {
       const version = versionMap.get(document.id);
       if (!version) continue;
       if (!version.originalName.toLowerCase().endsWith('.pdf')) {

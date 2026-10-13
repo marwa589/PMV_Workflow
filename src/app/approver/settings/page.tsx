@@ -1,23 +1,16 @@
+// src/app/approver/settings/page.tsx
 import Link from "next/link";
-import { UserRole } from "@prisma/client";
 import { KeyRound, PenLine } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
-import { requireRole } from "@/lib/auth/guards";
+import { requireAuth } from "@/lib/auth/guards";
 
 export const dynamic = "force-dynamic";
 
 export default async function ApproverSettingsPage() {
-  const session = await requireRole([
-    UserRole.CLERK,
-    UserRole.APPROVER_1,
-    UserRole.APPROVER_2,
-    UserRole.APPROVER_3,
-    UserRole.ADMIN,
-    UserRole.ERR_USER,
-  ]);
+  const session = await requireAuth();
 
   return (
-    <DashboardShell role={session.role} userName={session.name} title="Account Settings" subtitle="Manage your approver profile and security settings">
+    <DashboardShell role={session.userType} userName={session.name} title="Account Settings" subtitle="Manage your approver profile and security settings">
       <div className="grid gap-6 lg:grid-cols-2">
         <Link
           href="/approver/settings/change-password"
