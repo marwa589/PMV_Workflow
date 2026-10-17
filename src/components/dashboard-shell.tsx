@@ -32,7 +32,7 @@ type NavItem = {
   href: string;
   icon: LucideIcon;
   // Which sidebar counter to show next to the label.
-  badge?: { kind: "pending" } | { kind: "type"; documentTypeId: string };
+  badge?: { kind: "all" } | { kind: "pending" } | { kind: "type"; documentTypeId: string };
 };
 
 // The prop is still called `role`, but it carries the user's fixed type (clerk, eng, manager, admin).
@@ -47,6 +47,7 @@ type DashboardShellProps = {
 };
 
 type SidebarCounts = {
+  pendingDocuments: number;
   pendingApprovals: number;
   pendingByType: Array<{ documentTypeId: string; code: string; name: string; count: number }>;
   canUpload: boolean;
@@ -57,13 +58,13 @@ type SidebarCounts = {
 };
 
 const emptySidebarCounts: SidebarCounts = {
+  pendingDocuments: 0,
   pendingApprovals: 0,
   pendingByType: [],
   canUpload: false,
   documentTypes: [],
   manage: {},
 };
-let lastSidebarCounts: { key: string; counts: SidebarCounts } | null = null;
 
 type NotificationItem = {
   id: string;
@@ -94,7 +95,12 @@ function getVisibleNavItems(role: AppRole, counts: SidebarCounts): NavItem[] {
 
   if (counts.canUpload) items.push({ label: "New Document", href: "/new-document", icon: FilePlus2 });
 
-  items.push({ label: role === "admin" ? "All Documents" : "My Documents", href: home.list, icon: FileText });
+  items.push({
+    label: role === "admin" ? "All Documents" : "My Documents",
+    href: home.list,
+    icon: FileText,
+    badge: { kind: "all" },
+  });
 
   for (const type of counts.documentTypes) {
     items.push({
@@ -158,6 +164,7 @@ function Sidebar({
 
   const badgeCount = (item: NavItem): number => {
     if (!item.badge) return 0;
+    if (item.badge.kind === "all") return counts.pendingDocuments;
     if (item.badge.kind === "pending") return counts.pendingApprovals;
     const typeId = item.badge.documentTypeId;
     return counts.pendingByType.find((row) => row.documentTypeId === typeId)?.count ?? 0;
@@ -291,10 +298,7 @@ export default function DashboardShell({
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const sidebarCountsKey = `${role}:${userName.trim().toLowerCase()}`;
-  const [sidebarCounts, setSidebarCounts] = useState<SidebarCounts>(
-    lastSidebarCounts?.key === sidebarCountsKey ? lastSidebarCounts.counts : emptySidebarCounts,
-  );
+  const [sidebarCounts, setSidebarCounts] = useState<SidebarCounts>(emptySidebarCounts);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
   const pathname = usePathname();
@@ -384,7 +388,6 @@ export default function DashboardShell({
         .then((response) => response.ok ? response.json() as Promise<SidebarCounts> : null)
         .then((counts) => {
           if (!active || !counts) return;
-          lastSidebarCounts = { key: sidebarCountsKey, counts };
           setSidebarCounts(counts);
         })
         .catch(() => undefined);

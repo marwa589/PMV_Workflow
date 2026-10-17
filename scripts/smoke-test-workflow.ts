@@ -85,7 +85,7 @@ async function main() {
       const type = o.type ?? MR;
       const projectId = o.projectId === undefined ? p1.id : o.projectId;
       const subtypeId = o.subtypeId === undefined ? CASH.id : o.subtypeId;
-      const documentNumber = await generateDocumentNumber(tx, { documentTypeId: type.id, projectId });
+      const documentNumber = await generateDocumentNumber(tx, { documentTypeId: type.id, documentSubtypeId: subtypeId, projectId });
       const doc = await tx.document.create({ data: { documentNumber, title: `Doc ${documentNumber}`, status: DocumentStatus.PENDING, currentVersion: 0, createdById: uploader.id, documentTypeId: type.id, documentSubtypeId: subtypeId, projectId } });
       const version = await tx.documentVersion.create({ data: { documentId: doc.id, versionNumber: 0, filePath: "x.pdf", originalName: "x.pdf", mimeType: "application/pdf", fileSize: 1, uploadedById: uploader.id } });
       const result = await startApproval(tx, { documentId: doc.id, actor: uploader, versionId: version.id });
@@ -114,10 +114,12 @@ async function main() {
   section("Upload: numbering and flow copied onto the document");
   const a = await upload(as(clerk1, "clerk"));
   const b = await upload(as(clerk1, "clerk"));
-  check("first number", a.doc.documentNumber === `MR-P1-${year}-0001`, a.doc.documentNumber);
-  check("second number", b.doc.documentNumber === `MR-P1-${year}-0002`, b.doc.documentNumber);
+  check("first number", a.doc.documentNumber === `MR-CH-${year}-0001`, a.doc.documentNumber);
+  check("second number", b.doc.documentNumber === `MR-CH-${year}-0002`, b.doc.documentNumber);
   const noProject = await upload(as(admin, "admin"), { projectId: null });
-  check("no-project number drops {PROJECT}", noProject.doc.documentNumber === `MR-${year}-0001`, noProject.doc.documentNumber);
+  check("subtype sequence is independent of project", noProject.doc.documentNumber === `MR-CH-${year}-0003`, noProject.doc.documentNumber);
+  const noProjectPlain = await upload(as(admin, "admin"), { projectId: null, subtypeId: null });
+  check("no-project number drops {PROJECT}", noProjectPlain.doc.documentNumber === `MR-${year}-0001`, noProjectPlain.doc.documentNumber);
   // Consequence of rule A: a document with no project is not covered by a project-scoped assignment,
   // so a flow level that names only a user TYPE has nobody eligible for it.
   check("no-project document under a user-type flow has no eligible approver", noProject.result.effects.notifications.length === 0, noProject.result.effects.notifications);

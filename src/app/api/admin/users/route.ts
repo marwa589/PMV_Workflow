@@ -2,7 +2,7 @@
 import { hash } from "bcryptjs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { optionalId, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
+import { deactivationConfirmationResponse, optionalId, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
 
 export const runtime = "nodejs";
 
@@ -110,7 +110,7 @@ export async function PATCH(request: Request) {
     if (problem) return NextResponse.json({ message: problem }, { status: 400 });
   }
 
-  const existing = await prisma.user.findUnique({ where: { id }, select: { userTypeId: true } });
+  const existing = await prisma.user.findUnique({ where: { id }, select: { userTypeId: true, isActive: true } });
   if (!existing) return NextResponse.json({ message: "User not found." }, { status: 404 });
 
   const requestedType = optionalId(body?.userTypeId);
@@ -124,6 +124,36 @@ export async function PATCH(request: Request) {
   }
 
   try {
+    if (isActive === false && existing.isActive) {
+      const usage = await prisma.user.findUnique({
+        where: { id },
+        select: {
+          _count: {
+            select: {
+              assignments: true,
+              createdDocuments: true,
+              approvalHistory: true,
+              approvalsOnBehalfOf: true,
+              workflowStepApprovals: true,
+              approvalStepApprovals: true,
+              delegationsGiven: true,
+              delegationsReceived: true,
+              processInstancesStarted: true,
+            },
+          },
+        },
+      });
+      const confirmation = deactivationConfirmationResponse(body, "This user account", [
+        { label: "role assignment(s)", count: usage?._count.assignments ?? 0 },
+        { label: "document(s) created", count: usage?._count.createdDocuments ?? 0 },
+        { label: "approval record(s)", count: (usage?._count.approvalHistory ?? 0) + (usage?._count.approvalsOnBehalfOf ?? 0) },
+        { label: "flow approver assignment(s)", count: (usage?._count.workflowStepApprovals ?? 0) + (usage?._count.approvalStepApprovals ?? 0) },
+        { label: "delegation(s)", count: (usage?._count.delegationsGiven ?? 0) + (usage?._count.delegationsReceived ?? 0) },
+        { label: "process run(s) started", count: usage?._count.processInstancesStarted ?? 0 },
+      ], "Deactivating blocks sign-in and preserves their records. Reassign any pending approvals they can no longer perform.");
+      if (confirmation) return confirmation;
+    }
+
     const user = await prisma.user.update({
       where: { id },
       data: {

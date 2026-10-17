@@ -10,6 +10,7 @@ type Run = {
   id: string;
   reference: string | null;
   status: "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+  statusLabel: string;
   currentStepNumber: number;
   totalSteps: number;
   processDefinition: { id: string; name: string };
@@ -103,7 +104,7 @@ export default function ProcessesPanel({ projects }: { projects: Array<{ id: str
                     <td className="px-3 py-3 text-slate-700">{run.reference || "—"}</td>
                     <td className="px-3 py-3 text-slate-700">{run.project ? `${run.project.code} - ${run.project.name}` : "—"}</td>
                     <td className="px-3 py-3 text-slate-700">{run.status === "COMPLETED" ? `${run.totalSteps} of ${run.totalSteps}` : `Step ${run.currentStepNumber} of ${run.totalSteps}`}</td>
-                    <td className="px-3 py-3"><Pill tone={statusTone[run.status]}>{run.status.replaceAll("_", " ").toLowerCase()}</Pill></td>
+                    <td className="px-3 py-3"><Pill tone={statusTone[run.status]}>{run.statusLabel}</Pill></td>
                     <td className="px-3 py-3 text-slate-500">{new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(run.startedAt))} by {run.startedBy.name}</td>
                   </tr>
                 ))}

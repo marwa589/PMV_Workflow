@@ -91,6 +91,8 @@ export function toListItem(row: DocumentRow): DocumentListItem {
     documentSubtypeName: row.documentSubtype?.name ?? null,
     projectLabel: row.project ? `${row.project.code} - ${row.project.name}` : null,
     rejectionComments: row.rejection?.comments ?? null,
+    processStatus: row.processStatus,
+    processStatusLabel: row.processStatusLabel ?? "No Process",
     currentVersion: row.currentVersion,
     currentApproverName: row.currentApprover?.name ?? null,
     downloadedAt: row.downloadedAt,

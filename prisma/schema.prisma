@@ -15,8 +15,8 @@ model Location {
   name      String   @unique
   createdAt DateTime @default(now())
 
-  companies Company[]
-  projects  Project[]
+  companies         Company[]
+  projects          Project[]
   scopedAssignments UserAssignment[]
 }
 
@@ -47,6 +47,7 @@ model Project {
   documents         Document[]
   flowAssignments   DocumentWorkflowAssignment[]
   scopedAssignments UserAssignment[]
+  assignmentScopes  UserAssignmentProjectScope[]
   counters          DocumentNumberCounter[]
   processInstances  ProcessInstance[]
 
@@ -130,14 +131,15 @@ model PasswordResetToken {
 
 // Replaces enum DocumentType, enum ErrType, enum ErrFileKind and PurchaseOrder.
 model DocumentType {
-  id               String   @id @default(cuid())
-  code             String   @unique
-  name             String   @unique
-  description      String?
-  namingPattern    String   @default("{TYPE}-{PROJECT}-{YYYY}-{SEQ:4}")
-  supportsLineItems Boolean @default(false)
-  isActive         Boolean  @default(true)
-  createdAt        DateTime @default(now())
+  id                String   @id @default(cuid())
+  code              String   @unique
+  numberingCode     String   @unique @default("")
+  name              String   @unique
+  description       String?
+  namingPattern     String   @default("{TYPE}-{PROJECT}-{YYYY}-{SEQ:4}")
+  supportsLineItems Boolean  @default(false)
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
 
   subtypes          DocumentSubtype[]
   fieldDefinitions  FieldDefinition[]
@@ -146,6 +148,7 @@ model DocumentType {
   flowAssignments   DocumentWorkflowAssignment[]
   processSteps      ProcessStep[]
   scopedAssignments UserAssignment[]
+  assignmentScopes  UserAssignmentDocumentTypeScope[]
 }
 
 // Replaces Document.documentSubtype, enum MrType, enum ComparisonType and the ERR type variants.
@@ -153,18 +156,22 @@ model DocumentSubtype {
   id             String   @id @default(cuid())
   documentTypeId String
   code           String
+  numberingCode  String   @default("")
   name           String
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())
 
-  documentType      DocumentType                 @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
+  documentType      DocumentType                         @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
   fieldDefinitions  FieldDefinition[]
   documents         Document[]
   flowAssignments   DocumentWorkflowAssignment[]
   processSteps      ProcessStep[]
   scopedAssignments UserAssignment[]
+  assignmentScopes  UserAssignmentDocumentSubtypeScope[]
+  counters          DocumentNumberCounter[]
 
   @@unique([documentTypeId, code])
+  @@unique([documentTypeId, numberingCode])
   @@unique([documentTypeId, name])
 }
 
@@ -181,27 +188,29 @@ model FieldDefinition {
   sortOrder         Int           @default(0)
   isActive          Boolean       @default(true)
 
-  documentType    DocumentType        @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
-  documentSubtype DocumentSubtype?    @relation(fields: [documentSubtypeId], references: [id], onDelete: Cascade)
+  documentType    DocumentType         @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
+  documentSubtype DocumentSubtype?     @relation(fields: [documentSubtypeId], references: [id], onDelete: Cascade)
   values          DocumentFieldValue[]
 
   @@unique([documentTypeId, documentSubtypeId, fieldGroup, fieldKey])
   @@index([documentTypeId, documentSubtypeId, isActive])
 }
 
-// Running counter behind document numbers: one per type, project and year.
-// projectId is nullable because a document may exist without a project.
+// Running counter behind document numbers. Subtyped document numbers use type + sub type + year;
+// documents without a subtype retain the type + project + year scope.
 model DocumentNumberCounter {
-  id             String  @id @default(cuid())
-  documentTypeId String
-  projectId      String?
-  periodYear     Int
-  lastValue      Int     @default(0)
+  id                String  @id @default(cuid())
+  documentTypeId    String
+  documentSubtypeId String?
+  projectId         String?
+  periodYear        Int
+  lastValue         Int     @default(0)
 
-  documentType DocumentType @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
-  project      Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  documentType    DocumentType     @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
+  documentSubtype DocumentSubtype? @relation(fields: [documentSubtypeId], references: [id], onDelete: Cascade)
+  project         Project?         @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  @@unique([documentTypeId, projectId, periodYear])
+  @@index([documentTypeId, documentSubtypeId, projectId, periodYear])
 }
 
 // ============================================================================
@@ -237,8 +246,8 @@ model RolePermission {
   @@id([roleId, permissionId])
 }
 
-// This user holds this role, limited to the scope columns that are set.
-// An empty scope column means no restriction on that item.
+// This user holds this role, limited by its optional legacy single scopes and new multi-value scope relations.
+// Empty scope values mean no restriction on that item.
 // Replaces UserRoleAssignment and ErrUserAccess.
 model UserAssignment {
   id                  String   @id @default(cuid())
@@ -252,14 +261,17 @@ model UserAssignment {
   processDefinitionId String?
   createdAt           DateTime @default(now())
 
-  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role              Role               @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  company           Company?           @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  project           Project?           @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  location          Location?          @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  documentType      DocumentType?      @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
-  documentSubtype   DocumentSubtype?   @relation(fields: [documentSubtypeId], references: [id], onDelete: Cascade)
-  processDefinition ProcessDefinition? @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
+  user               User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role               Role                              @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  company            Company?                          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  project            Project?                          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  location           Location?                         @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  documentType       DocumentType?                     @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
+  documentSubtype    DocumentSubtype?                  @relation(fields: [documentSubtypeId], references: [id], onDelete: Cascade)
+  processDefinition  ProcessDefinition?                @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
+  projectScopes      UserAssignmentProjectScope[]
+  documentTypeScopes UserAssignmentDocumentTypeScope[]
+  processScopes      UserAssignmentProcessScope[]
 
   @@unique([userId, roleId, companyId, projectId, locationId, documentTypeId, documentSubtypeId, processDefinitionId])
   @@index([userId])
@@ -267,7 +279,54 @@ model UserAssignment {
   @@index([projectId])
 }
 
-// An admin hands one user's approval tasks to another user until the row is deleted.
+model UserAssignmentProjectScope {
+  userAssignmentId String
+  projectId        String
+
+  assignment UserAssignment @relation(fields: [userAssignmentId], references: [id], onDelete: Cascade)
+  project    Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([userAssignmentId, projectId])
+  @@index([projectId])
+}
+
+model UserAssignmentDocumentTypeScope {
+  userAssignmentId String
+  documentTypeId   String
+  allSubtypes      Boolean @default(true)
+
+  assignment   UserAssignment                       @relation(fields: [userAssignmentId], references: [id], onDelete: Cascade)
+  documentType DocumentType                         @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
+  subtypes     UserAssignmentDocumentSubtypeScope[]
+
+  @@id([userAssignmentId, documentTypeId])
+  @@index([documentTypeId])
+}
+
+model UserAssignmentDocumentSubtypeScope {
+  userAssignmentId  String
+  documentTypeId    String
+  documentSubtypeId String
+
+  documentTypeScope UserAssignmentDocumentTypeScope @relation(fields: [userAssignmentId, documentTypeId], references: [userAssignmentId, documentTypeId], onDelete: Cascade)
+  documentSubtype   DocumentSubtype                 @relation(fields: [documentSubtypeId], references: [id], onDelete: Cascade)
+
+  @@id([userAssignmentId, documentTypeId, documentSubtypeId])
+  @@index([documentSubtypeId])
+}
+
+model UserAssignmentProcessScope {
+  userAssignmentId    String
+  processDefinitionId String
+
+  assignment        UserAssignment    @relation(fields: [userAssignmentId], references: [id], onDelete: Cascade)
+  processDefinition ProcessDefinition @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
+
+  @@id([userAssignmentId, processDefinitionId])
+  @@index([processDefinitionId])
+}
+
+// An admin hands one user's approval tasks to another user, optionally until a fixed expiry time.
 model ApprovalDelegation {
   id              String   @id @default(cuid())
   delegatorUserId String
@@ -275,6 +334,7 @@ model ApprovalDelegation {
   createdById     String
   reason          String?
   createdAt       DateTime @default(now())
+  expiresAt       DateTime?
 
   delegator User @relation("DelegationsGiven", fields: [delegatorUserId], references: [id], onDelete: Cascade)
   delegate  User @relation("DelegationsReceived", fields: [delegateUserId], references: [id], onDelete: Cascade)
@@ -357,17 +417,17 @@ model DocumentWorkflowAssignment {
 // ============================================================================
 
 model Document {
-  id                        String         @id @default(cuid())
-  documentNumber            String         @unique
-  submissionKey             String?        @unique
+  id                        String          @id @default(cuid())
+  documentNumber            String          @unique
+  submissionKey             String?         @unique
   title                     String
   description               String?
-  status                    DocumentStatus @default(PENDING)
-  currentVersion            Int            @default(1)
-  revisionNumber            Int            @default(1)
-  lockVersion               Int            @default(0)
-  createdAt                 DateTime       @default(now())
-  updatedAt                 DateTime       @updatedAt
+  status                    DocumentStatus  @default(PENDING)
+  currentVersion            Int             @default(1)
+  revisionNumber            Int             @default(1)
+  lockVersion               Int             @default(0)
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
   approvedAt                DateTime?
   createdById               String
   documentTypeId            String
@@ -381,19 +441,19 @@ model Document {
   receivedAt                DateTime?
   receivedById              String?
 
-  createdBy         User                      @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
-  receivedBy        User?                     @relation("DocumentsReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
-  documentType      DocumentType              @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
-  documentSubtype   DocumentSubtype?          @relation(fields: [documentSubtypeId], references: [id], onDelete: Restrict)
-  project           Project?                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  workflowTemplate  DocumentWorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: SetNull)
-  versions          DocumentVersion[]
-  approvals         ApprovalHistory[]
-  approvalSteps     DocumentApprovalStep[]
-  lineItems         DocumentLineItem[]
-  fieldValues       DocumentFieldValue[]
-  deletionRequests  DeletionRequest[]         @relation("DeletionRequests")
-  processLinks      ProcessStepDocument[]
+  createdBy        User                      @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
+  receivedBy       User?                     @relation("DocumentsReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
+  documentType     DocumentType              @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
+  documentSubtype  DocumentSubtype?          @relation(fields: [documentSubtypeId], references: [id], onDelete: Restrict)
+  project          Project?                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  workflowTemplate DocumentWorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: SetNull)
+  versions         DocumentVersion[]
+  approvals        ApprovalHistory[]
+  approvalSteps    DocumentApprovalStep[]
+  lineItems        DocumentLineItem[]
+  fieldValues      DocumentFieldValue[]
+  deletionRequests DeletionRequest[]         @relation("DeletionRequests")
+  processLinks     ProcessStepDocument[]
 
   @@index([createdById])
   @@index([workflowTemplateId])
@@ -426,8 +486,8 @@ model DocumentFieldValue {
   valueBoolean      Boolean?
   valueJson         Json?
 
-  document        Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  fieldDefinition FieldDefinition  @relation(fields: [fieldDefinitionId], references: [id], onDelete: Restrict)
+  document        Document          @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  fieldDefinition FieldDefinition   @relation(fields: [fieldDefinitionId], references: [id], onDelete: Restrict)
   lineItem        DocumentLineItem? @relation(fields: [lineItemId], references: [id], onDelete: Cascade)
 
   @@unique([documentId, fieldDefinitionId, lineItemId])
@@ -473,6 +533,7 @@ model ProcessDefinition {
   steps             ProcessStep[]
   instances         ProcessInstance[]
   scopedAssignments UserAssignment[]
+  assignmentScopes  UserAssignmentProcessScope[]
 }
 
 model ProcessStep {
@@ -483,9 +544,9 @@ model ProcessStep {
   documentTypeId      String
   documentSubtypeId   String?
 
-  processDefinition ProcessDefinition   @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
-  documentType      DocumentType        @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
-  documentSubtype   DocumentSubtype?    @relation(fields: [documentSubtypeId], references: [id], onDelete: Restrict)
+  processDefinition ProcessDefinition     @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
+  documentType      DocumentType          @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
+  documentSubtype   DocumentSubtype?      @relation(fields: [documentSubtypeId], references: [id], onDelete: Restrict)
   stepDocuments     ProcessStepDocument[]
 
   @@unique([processDefinitionId, stepNumber])

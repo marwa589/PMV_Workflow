@@ -21,6 +21,7 @@ type Run = {
   id: string;
   reference: string | null;
   status: "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+  statusLabel: string;
   currentStepNumber: number;
   startedAt: string;
   completedAt: string | null;
@@ -97,7 +98,7 @@ export default function ProcessRunView({ runId }: { runId: string }) {
         subtitle={`${run.project ? `${run.project.code} - ${run.project.name} · ` : ""}started by ${run.startedBy.name} on ${new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(run.startedAt))}`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Pill tone={run.status === "COMPLETED" ? "green" : run.status === "CANCELLED" ? "slate" : "amber"}>{run.status.replaceAll("_", " ").toLowerCase()}</Pill>
+            <Pill tone={run.status === "COMPLETED" ? "green" : run.status === "CANCELLED" ? "slate" : "amber"}>{run.statusLabel}</Pill>
             <a href={`/api/processes/${run.id}/package-download`} className={secondaryButton}>Download package (PDF)</a>
             {run.status === "IN_PROGRESS" ? <button type="button" className={dangerButton} onClick={cancel}>Cancel run</button> : null}
           </div>

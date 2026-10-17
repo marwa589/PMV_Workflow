@@ -23,6 +23,13 @@ export type AssignmentScope = {
   documentTypeId: string | null;
   documentSubtypeId: string | null;
   processDefinitionId: string | null;
+  projectScopes?: Array<{ projectId: string }>;
+  documentTypeScopes?: Array<{
+    documentTypeId: string;
+    allSubtypes: boolean;
+    subtypes: Array<{ documentSubtypeId: string }>;
+  }>;
+  processScopes?: Array<{ processDefinitionId: string }>;
 };
 
 export const ASSIGNMENT_SCOPE_SELECT = {
@@ -32,6 +39,15 @@ export const ASSIGNMENT_SCOPE_SELECT = {
   documentTypeId: true,
   documentSubtypeId: true,
   processDefinitionId: true,
+  projectScopes: { select: { projectId: true } },
+  documentTypeScopes: {
+    select: {
+      documentTypeId: true,
+      allSubtypes: true,
+      subtypes: { select: { documentSubtypeId: true } },
+    },
+  },
+  processScopes: { select: { processDefinitionId: true } },
 } as const;
 
 /**
@@ -41,14 +57,34 @@ export const ASSIGNMENT_SCOPE_SELECT = {
  */
 export function assignmentMatchesScope(assignment: AssignmentScope, ctx: ScopeContext): boolean {
   if (assignment.companyId) return false;
-  const pairs: Array<[string | null, string | null | undefined]> = [
-    [assignment.projectId, ctx.projectId],
-    [assignment.locationId, ctx.locationId],
-    [assignment.documentTypeId, ctx.documentTypeId],
-    [assignment.documentSubtypeId, ctx.documentSubtypeId],
-    [assignment.processDefinitionId, ctx.processDefinitionId],
+  if (assignment.locationId && assignment.locationId !== ctx.locationId) return false;
+
+  const projectIds = [
+    ...(assignment.projectId ? [assignment.projectId] : []),
+    ...(assignment.projectScopes ?? []).map((scope) => scope.projectId),
   ];
-  return pairs.every(([wanted, actual]) => !wanted || wanted === actual);
+  if (projectIds.length > 0 && (!ctx.projectId || !projectIds.includes(ctx.projectId))) return false;
+
+  if (assignment.documentTypeId && assignment.documentTypeId !== ctx.documentTypeId) return false;
+  if (assignment.documentSubtypeId && assignment.documentSubtypeId !== ctx.documentSubtypeId) return false;
+
+  const typeScopes = assignment.documentTypeScopes ?? [];
+  if (typeScopes.length > 0) {
+    const matchingType = typeScopes.find((scope) => scope.documentTypeId === ctx.documentTypeId);
+    if (!matchingType) return false;
+    if (
+      !matchingType.allSubtypes &&
+      (!ctx.documentSubtypeId || !matchingType.subtypes.some((subtype) => subtype.documentSubtypeId === ctx.documentSubtypeId))
+    ) {
+      return false;
+    }
+  }
+
+  const processIds = [
+    ...(assignment.processDefinitionId ? [assignment.processDefinitionId] : []),
+    ...(assignment.processScopes ?? []).map((scope) => scope.processDefinitionId),
+  ];
+  return processIds.length === 0 || (!!ctx.processDefinitionId && processIds.includes(ctx.processDefinitionId));
 }
 
 /** Does the user hold `permissionCode` through an assignment that covers `scope`? Admin type bypasses scope. */
@@ -71,10 +107,13 @@ export async function userHasPermission(
   return assignments.some((assignment) => assignmentMatchesScope(assignment, scope));
 }
 
-/** Users whose approval tasks `userId` has been delegated (delegation lasts until deleted). */
+/** Users whose approval tasks are currently delegated to `userId`. */
 export async function getDelegatorIds(db: Db, userId: string): Promise<string[]> {
   const rows = await db.approvalDelegation.findMany({
-    where: { delegateUserId: userId },
+    where: {
+      delegateUserId: userId,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
     select: { delegatorUserId: true },
   });
   return rows.map((row) => row.delegatorUserId);
@@ -82,13 +121,33 @@ export async function getDelegatorIds(db: Db, userId: string): Promise<string[]>
 
 /** Converts an assignment's scope into a Document filter. Null = this assignment cannot grant document access. */
 export function scopeToDocumentWhere(scope: AssignmentScope): Prisma.DocumentWhereInput | null {
-  if (scope.companyId || scope.processDefinitionId) return null;
+  if (scope.companyId || scope.processDefinitionId || (scope.processScopes?.length ?? 0) > 0) return null;
 
   const and: Prisma.DocumentWhereInput[] = [];
-  if (scope.projectId) and.push({ projectId: scope.projectId });
+  const projectIds = [
+    ...(scope.projectId ? [scope.projectId] : []),
+    ...(scope.projectScopes ?? []).map((project) => project.projectId),
+  ];
+  if (projectIds.length === 1) and.push({ projectId: projectIds[0] });
+  else if (projectIds.length > 1) and.push({ projectId: { in: projectIds } });
   if (scope.locationId) and.push({ project: { locationId: scope.locationId } });
-  if (scope.documentTypeId) and.push({ documentTypeId: scope.documentTypeId });
-  if (scope.documentSubtypeId) and.push({ documentSubtypeId: scope.documentSubtypeId });
+
+  if (scope.documentTypeId) {
+    and.push({ documentTypeId: scope.documentTypeId });
+    if (scope.documentSubtypeId) and.push({ documentSubtypeId: scope.documentSubtypeId });
+  }
+  if (scope.documentTypeScopes?.length) {
+    and.push({
+      OR: scope.documentTypeScopes.map((typeScope) =>
+        typeScope.allSubtypes
+          ? { documentTypeId: typeScope.documentTypeId }
+          : {
+              documentTypeId: typeScope.documentTypeId,
+              documentSubtypeId: { in: typeScope.subtypes.map((subtype) => subtype.documentSubtypeId) },
+            },
+      ),
+    });
+  }
 
   return and.length > 0 ? { AND: and } : {};
 }
@@ -229,11 +288,21 @@ export async function buildProcessVisibilityWhere(
 
   for (const assignment of assignments) {
     // Company, document type and sub type scopes cannot be matched against a process run.
-    if (assignment.companyId || assignment.documentTypeId || assignment.documentSubtypeId) continue;
+    if (assignment.companyId || assignment.documentTypeId || assignment.documentSubtypeId || (assignment.documentTypeScopes?.length ?? 0) > 0) continue;
 
     const and: Prisma.ProcessInstanceWhereInput[] = [];
-    if (assignment.processDefinitionId) and.push({ processDefinitionId: assignment.processDefinitionId });
-    if (assignment.projectId) and.push({ projectId: assignment.projectId });
+    const processIds = [
+      ...(assignment.processDefinitionId ? [assignment.processDefinitionId] : []),
+      ...(assignment.processScopes ?? []).map((scope) => scope.processDefinitionId),
+    ];
+    const projectIds = [
+      ...(assignment.projectId ? [assignment.projectId] : []),
+      ...(assignment.projectScopes ?? []).map((scope) => scope.projectId),
+    ];
+    if (processIds.length === 1) and.push({ processDefinitionId: processIds[0] });
+    else if (processIds.length > 1) and.push({ processDefinitionId: { in: processIds } });
+    if (projectIds.length === 1) and.push({ projectId: projectIds[0] });
+    else if (projectIds.length > 1) and.push({ projectId: { in: projectIds } });
     if (assignment.locationId) and.push({ project: { locationId: assignment.locationId } });
     clauses.push(and.length > 0 ? { AND: and } : {});
   }
@@ -262,6 +331,9 @@ export async function getGlobalPermissionCodes(
       documentTypeId: null,
       documentSubtypeId: null,
       processDefinitionId: null,
+      projectScopes: { none: {} },
+      documentTypeScopes: { none: {} },
+      processScopes: { none: {} },
     },
     select: { role: { select: { permissions: { select: { permission: { select: { code: true } } } } } } },
   });

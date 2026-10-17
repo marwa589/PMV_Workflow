@@ -2,7 +2,7 @@
 
 import { PDFDocument, degrees, rgb } from "pdf-lib";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { ArrowLeft, Check, Download, Loader2, PenLine, RotateCw, Trash2, Type } from "lucide-react";
+import { ArrowLeft, Check, Download, Loader2, PenLine, RotateCw, Send, Trash2, Type } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
@@ -32,6 +32,8 @@ type DocumentReviewEditorProps = {
   allowNoSignature?: boolean;
   // The document's status: a document on hold can only be resumed.
   documentStatus?: string;
+  revisionMode?: boolean;
+  revisionComment?: string | null;
   // Earlier steps the document can be sent back to (0 = the uploader), named from the document's own flow.
   revisionTargets?: Array<{ levelNumber: number; label: string }>;
   downloadUrl?: string;
@@ -47,6 +49,8 @@ export default function DocumentReviewEditor({
   hasSignature,
   allowNoSignature = false,
   documentStatus = "PENDING",
+  revisionMode = false,
+  revisionComment = null,
   revisionTargets = [],
   downloadUrl = `/api/documents/${documentId}/download`,
   actionUrl = `/api/documents/${documentId}/actions`,
@@ -59,7 +63,6 @@ export default function DocumentReviewEditor({
   const pdfBytesRef = useRef<Uint8Array | null>(null);
   const pdfJsDocumentRef = useRef<PDFDocumentProxy | null>(null);
   const [pages, setPages] = useState<PageInfo[]>([]);
-  const [signatureUrl, setSignatureUrl] = useState<string | null>(null);
   const [signatureRatio, setSignatureRatio] = useState(3);
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [circles, setCircles] = useState<CirclePlacement[]>([]);
@@ -74,14 +77,15 @@ export default function DocumentReviewEditor({
   const [selectedTextBoxId, setSelectedTextBoxId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [decision, setDecision] = useState<"APPROVE" | "REJECT" | "REQUEST_REVISION" | "HOLD" | "RESUME">(documentStatus === "ON_HOLD" ? "RESUME" : "APPROVE");
-  const [targetLevel, setTargetLevel] = useState<number>(revisionTargets[revisionTargets.length - 1]?.levelNumber ?? 0);
+  const [targetLevel, setTargetLevel] = useState<number | null>(null);
+  const [replacementFile, setReplacementFile] = useState<File | null>(null);
   const [comments, setComments] = useState("");
   const [saving, setSaving] = useState(false);
-  const [signing, setSigning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
   const activePlacement = useMemo(() => placements[placements.length - 1] || null, [placements]);
+  const signatureUrl = hasSignature ? "/api/auth/signature" : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -127,7 +131,6 @@ export default function DocumentReviewEditor({
       }));
     };
     image.src = "/api/auth/signature";
-    setSignatureUrl("/api/auth/signature");
   }, [hasSignature, pages]);
 
   useEffect(() => {
@@ -259,7 +262,7 @@ export default function DocumentReviewEditor({
     const page = pages.find((value) => value.pageNumber === pageNumber);
     const width = 24;
     const height = page ? clamp(((width / 100) * page.width / signatureRatio / page.height) * 100, 4, 18) : 10;
-    setPlacements((current) => [...current, { id: `${Date.now()}-${Math.random()}`, pageNumber, x: 12, y: 78, width, height, rotation: 0 }]);
+    setPlacements((current) => [...current, { id: crypto.randomUUID(), pageNumber, x: 12, y: 78, width, height, rotation: 0 }]);
     setStatus("Signature added. Drag and resize it before approving.");
   }
 
@@ -268,7 +271,7 @@ export default function DocumentReviewEditor({
     const rect = event.currentTarget.getBoundingClientRect();
     const x = ((event.clientX - rect.left) / rect.width) * 100;
     const y = ((event.clientY - rect.top) / rect.height) * 100;
-    const id = `${Date.now()}-${Math.random()}`;
+    const id = crypto.randomUUID();
     setCircles((current) => [...current, { id, pageNumber, x, y, width: 0, height: 0 }]);
     setCircleDrag({ id, pageNumber, startX: event.clientX - rect.left, startY: event.clientY - rect.top, rect });
     event.preventDefault();
@@ -279,7 +282,7 @@ export default function DocumentReviewEditor({
     const rect = event.currentTarget.getBoundingClientRect();
     const x = clamp(((event.clientX - rect.left) / rect.width) * 100, 0, 100);
     const y = clamp(((event.clientY - rect.top) / rect.height) * 100, 0, 100);
-    const id = `${Date.now()}-${Math.random()}`;
+    const id = crypto.randomUUID();
     setTextBoxes((current) => [...current, { id, pageNumber, x, y, width: 0, height: 0, text: "", color: textBoxColor, fontSize: textBoxFontSize }]);
     setSelectedTextBoxId(id);
     setTextBoxDrag({ id, pageNumber, startX: event.clientX - rect.left, startY: event.clientY - rect.top, rect });
@@ -287,12 +290,17 @@ export default function DocumentReviewEditor({
   }
 
   async function submit() {
-    const requiresSignature = decision === "APPROVE" && !(allowNoSignature && placements.length === 0);
-    if (decision === "APPROVE" && placements.length === 0 && !allowNoSignature) {
+    const action = revisionMode && decision !== "REJECT" ? "RESUBMIT" : decision;
+    const requiresSignature = !revisionMode && decision === "APPROVE" && !(allowNoSignature && placements.length === 0);
+    if (revisionMode && replacementFile && !isPdf(replacementFile)) {
+      setError("The replacement document must be a PDF so it can be reviewed in the approval workflow.");
+      return;
+    }
+    if (!revisionMode && decision === "APPROVE" && placements.length === 0 && !allowNoSignature) {
       setError("Click Sign and place at least one signature before approving.");
       return;
     }
-    if (decision === "REQUEST_REVISION" && !comments.trim()) {
+    if (!revisionMode && decision === "REQUEST_REVISION" && !comments.trim()) {
       setError("Write a comment that tells the person what to fix.");
       return;
     }
@@ -301,16 +309,26 @@ export default function DocumentReviewEditor({
     const startedAt = performance.now();
     try {
       const formData = new FormData();
-      formData.set("decision", decision);
+      formData.set("decision", action);
       formData.set("comments", comments);
-      if (decision === "REQUEST_REVISION") formData.set("targetLevel", String(targetLevel));
-      if (decision === "APPROVE") {
+      if (!revisionMode && decision === "REQUEST_REVISION" && targetLevel !== null) formData.set("targetLevel", String(targetLevel));
+      if (revisionMode && decision === "REJECT") {
+        formData.set("decision", "REJECT");
+      } else if (revisionMode && replacementFile) {
+        formData.set("file", replacementFile);
+      } else if (
+        decision === "APPROVE" ||
+        revisionMode ||
+        (decision === "REQUEST_REVISION" &&
+          (circles.some((item) => item.width > 0 && item.height > 0) ||
+            textBoxes.some((item) => item.width > 0 && item.height > 0 && item.text.trim())))
+      ) {
         const pdfBytes = pdfBytesRef.current;
         const coordinatePdf = pdfJsDocumentRef.current;
         if (!pdfBytes || !coordinatePdf) throw new Error("The PDF is still loading. Please try again.");
 
-        if (placements.length && signatureUrl) {
-          const pdf = await PDFDocument.load(pdfBytes.slice());
+        const pdf = await PDFDocument.load(pdfBytes.slice());
+        if (decision === "APPROVE" && placements.length && signatureUrl) {
           const signatureResponse = await fetch(signatureUrl);
           const signatureBlob = await signatureResponse.blob();
           const signatureBytes = await signatureBlob.arrayBuffer();
@@ -339,7 +357,8 @@ export default function DocumentReviewEditor({
               rotate: degrees(totalAngle),
             });
           }
-          for (const item of circles) {
+        }
+        for (const item of circles) {
             const page = pdf.getPage(item.pageNumber - 1);
             const coordinatePage = await coordinatePdf.getPage(item.pageNumber);
             const viewport = coordinatePage.getViewport({ scale: 1 });
@@ -357,8 +376,8 @@ export default function DocumentReviewEditor({
               borderColor: rgb(0.85, 0.1, 0.1),
               borderWidth: 2,
             });
-          }
-          for (const item of textBoxes) {
+        }
+        for (const item of textBoxes) {
             const page = pdf.getPage(item.pageNumber - 1);
             const coordinatePage = await coordinatePdf.getPage(item.pageNumber);
             const viewport = coordinatePage.getViewport({ scale: 1 });
@@ -366,7 +385,6 @@ export default function DocumentReviewEditor({
             const bottomRight = viewport.convertToPdfPoint(((item.x + item.width) / 100) * viewport.width, ((item.y + item.height) / 100) * viewport.height);
             const left = Math.min(topLeft[0], bottomRight[0]);
             const right = Math.max(topLeft[0], bottomRight[0]);
-            const bottom = Math.min(topLeft[1], bottomRight[1]);
             const top = Math.max(topLeft[1], bottomRight[1]);
             const red = Number.parseInt(item.color.slice(1, 3), 16) / 255;
             const green = Number.parseInt(item.color.slice(3, 5), 16) / 255;
@@ -374,21 +392,14 @@ export default function DocumentReviewEditor({
             if (item.text.trim()) {
               page.drawText(item.text, { x: left + 5, y: top - item.fontSize - 4, size: item.fontSize, maxWidth: Math.max(20, right - left - 10), color: rgb(red, green, blue) });
             }
-          }
-          const signedBytes = await pdf.save();
-          const buffer = signedBytes.buffer.slice(signedBytes.byteOffset, signedBytes.byteOffset + signedBytes.byteLength) as ArrayBuffer;
-          formData.set("file", new File([buffer], `${title}-signed.pdf`, { type: "application/pdf" }));
-          formData.set("signatureCount", String(placements.length));
-        } else {
-          const buffer = pdfBytes.slice().buffer.slice(
-            pdfBytes.byteOffset,
-            pdfBytes.byteOffset + pdfBytes.byteLength,
-          ) as ArrayBuffer;
-          formData.set("file", new File([buffer], `${title}.pdf`, { type: "application/pdf" }));
-          formData.set("signatureCount", "0");
         }
+        const editedBytes = await pdf.save();
+        const buffer = editedBytes.buffer.slice(editedBytes.byteOffset, editedBytes.byteOffset + editedBytes.byteLength) as ArrayBuffer;
+        const fileSuffix = revisionMode ? "-revised" : decision === "REQUEST_REVISION" ? "-revision-notes" : "-signed";
+        formData.set("file", new File([buffer], `${title}${fileSuffix}.pdf`, { type: "application/pdf" }));
+        formData.set("signatureCount", String(placements.length));
       }
-      console.info(`[review] Action prepared in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision, requiresSignature });
+      console.info(`[review] Action prepared in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision: action, requiresSignature });
       const response = await fetch(actionUrl, {
   method: "POST",
   headers: {
@@ -398,7 +409,7 @@ export default function DocumentReviewEditor({
 });
       const result = (await response.json()) as { message?: string };
       if (!response.ok) throw new Error(result.message || "Unable to process document action.");
-      console.info(`[review] Action request completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
+      console.info(`[review] Action request completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision: action });
       router.push(returnUrl);
       router.refresh();
     } catch (submitError) {
@@ -412,10 +423,45 @@ export default function DocumentReviewEditor({
     <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-900 sm:px-8">
       <div className="mx-auto max-w-6xl space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Document Review</p><h1 className="mt-2 text-2xl font-semibold">{documentNumber}</h1><p className="mt-1 text-sm text-slate-600">{title}</p></div>
+          <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{revisionMode ? "Revise Document" : "Document Review"}</p><h1 className="mt-2 text-2xl font-semibold">{documentNumber}</h1><p className="mt-1 text-sm text-slate-600">{title}</p></div>
           <div className="flex flex-wrap gap-2"><button type="button" onClick={() => router.back()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><ArrowLeft className="h-4 w-4" />Back</button><a href={downloadUrl} download className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><Download className="h-4 w-4" />Download</a></div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          {revisionMode ? (
+            <div className="space-y-4">
+              {revisionComment ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p className="font-semibold">Revision requested</p><p className="mt-1">{revisionComment}</p></div> : null}
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="min-w-52 flex-1">
+                  <label htmlFor="revision-decision" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Action</label>
+                  <select id="revision-decision" value={decision === "REJECT" ? "REJECT" : "RESUBMIT"} onChange={(event) => setDecision(event.target.value as typeof decision)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                    <option value="RESUBMIT">Resubmit to reviewer</option>
+                    <option value="REJECT">Reject document</option>
+                  </select>
+                </div>
+                {decision === "REJECT" ? (
+                  <div key="revision-rejection" className="min-w-72 flex-[2]">
+                    <label htmlFor="revision-rejection-comment" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Rejection reason (optional)</label>
+                    <input id="revision-rejection-comment" type="text" value={comments ?? ""} onChange={(event) => setComments(event.target.value)} placeholder="Comments (optional)" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  </div>
+                ) : (
+                <div key="revision-replacement" className="min-w-72 flex-[2]">
+                  <label htmlFor="replacement-file" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Replace document (optional)</label>
+                  <input id="replacement-file" type="file" accept=".pdf,application/pdf" onChange={(event) => setReplacementFile(event.target.files?.[0] ?? null)} disabled={saving} className="w-full rounded-md border border-slate-300 text-sm file:mr-3 file:cursor-pointer file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:font-medium file:text-white hover:file:bg-blue-700" />
+                </div>
+                )}
+                {decision !== "REJECT" ? (
+                <div className="min-w-72 flex-[2]">
+                  <label htmlFor="revision-comments" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Comments to reviewer</label>
+                  <input id="revision-comments" value={comments} onChange={(event) => setComments(event.target.value)} placeholder="Comments (optional)" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                </div>
+                ) : null}
+                <button type="button" onClick={submit} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  {decision === "REJECT" ? "Reject Document" : "Resubmit to Reviewer"}
+                </button>
+              </div>
+            </div>
+          ) : (
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-52 flex-1">
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Decision</label>
@@ -435,7 +481,8 @@ export default function DocumentReviewEditor({
             {decision === "REQUEST_REVISION" ? (
               <div className="min-w-60 flex-1">
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Send back to</label>
-                <select value={targetLevel} onChange={(event) => setTargetLevel(Number(event.target.value))} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <select value={targetLevel === null ? "" : String(targetLevel)} onChange={(event) => setTargetLevel(event.target.value === "" ? null : Number(event.target.value))} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                  <option value="">Previous level (default)</option>
                   {revisionTargets.map((target) => (
                     <option key={target.levelNumber} value={target.levelNumber}>{target.label}</option>
                   ))}
@@ -448,9 +495,10 @@ export default function DocumentReviewEditor({
             </div>
             <button type="button" onClick={submit} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              Submit Action
+              {decision === "APPROVE" ? "Approve" : decision === "REJECT" ? "Reject Document" : "Submit Action"}
             </button>
           </div>
+          )}
         </div>
         <div className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => { setCircleMode(false); setTextBoxMode(false); addSignature(activePlacement?.pageNumber || 1); }} disabled={!hasSignature} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><PenLine className="h-4 w-4" />Sign</button><button type="button" onClick={() => { setTextBoxMode(false); setCircleMode((value) => !value); }} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${circleMode ? "border-rose-600 bg-rose-600 text-white" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`} aria-pressed={circleMode} title="Circle markup tool"><span className="h-4 w-4 rounded-full border-2 border-current" />Circle</button><button type="button" onClick={() => { setCircleMode(false); setTextBoxMode((value) => !value); }} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${textBoxMode ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`} aria-pressed={textBoxMode} title="Insert text box"><Type className="h-4 w-4" />Text Box</button>{textBoxMode || selectedTextBoxId ? <><div className="flex items-center gap-1">{["#0f172a", "#dc2626", "#2563eb", "#16a34a"].map((color) => <button key={color} type="button" aria-label={`Text color ${color}`} onClick={() => { setTextBoxColor(color); if (selectedTextBoxId) setTextBoxes((current) => current.map((item) => item.id === selectedTextBoxId ? { ...item, color } : item)); }} className={`h-7 w-7 rounded-full border-2 ${textBoxColor === color ? "border-slate-900" : "border-white shadow-sm"}`} style={{ backgroundColor: color }} />)}</div><select aria-label="Text box font size" value={selectedTextBoxId ? textBoxes.find((item) => item.id === selectedTextBoxId)?.fontSize || textBoxFontSize : textBoxFontSize} onChange={(event) => { const fontSize = Number(event.target.value); setTextBoxFontSize(fontSize); if (selectedTextBoxId) setTextBoxes((current) => current.map((item) => item.id === selectedTextBoxId ? { ...item, fontSize } : item)); }} className="rounded-lg border border-slate-300 px-2 py-2 text-sm"><option value="10">10 px</option><option value="12">12 px</option><option value="14">14 px</option><option value="16">16 px</option><option value="18">18 px</option><option value="24">24 px</option></select></> : null}<span className="text-sm text-slate-500">{textBoxMode ? "Drag a box around the text." : circleMode ? "Drag around content to highlight it." : hasSignature ? `${placements.length} signature placement${placements.length === 1 ? "" : "s"}` : "Save a signature in Account Settings first."}</span></div><div className="flex items-center gap-2"><button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.1))} className="rounded-lg border px-3 py-2 text-sm">−</button><span className="min-w-16 text-center text-sm">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-2 text-sm">+</button></div></div>
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</div> : null}{status ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{status}</div> : null}

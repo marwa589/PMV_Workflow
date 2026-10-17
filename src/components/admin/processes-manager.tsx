@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { callApi } from "@/lib/admin-client";
+import { callApi, callApiWithDeactivationConfirmation } from "@/lib/admin-client";
 import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton, secondaryButton } from "@/components/admin/admin-ui";
 
 type TypeOption = { id: string; code: string; name: string; subtypes: Array<{ id: string; code: string; name: string }> };
@@ -65,7 +65,10 @@ export default function ProcessesManager() {
   async function toggle(process: ProcessRow) {
     setError(null);
     setNotice(null);
-    const result = await callApi("/api/admin/processes", "PATCH", { id: process.id, name: process.name, description: process.description ?? "", isActive: !process.isActive });
+    const result = process.isActive
+      ? await callApiWithDeactivationConfirmation("/api/admin/processes", { id: process.id, name: process.name, description: process.description ?? "", isActive: false })
+      : await callApi("/api/admin/processes", "PATCH", { id: process.id, name: process.name, description: process.description ?? "", isActive: true });
+    if ("cancelled" in result && result.cancelled) return;
     if (!result.ok) return setError(result.message);
     await load();
   }

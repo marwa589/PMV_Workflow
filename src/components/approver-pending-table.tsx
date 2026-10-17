@@ -8,8 +8,6 @@ export type PendingDocument = {
   id: string;
   documentNumber: string;
   title: string;
-  documentTypeName?: string | null;
-  documentSubtypeName?: string | null;
   projectLabel?: string | null;
   // Where it is waiting, e.g. "Pending PMV Engineer" (the level's name comes from the flow).
   statusLabel?: string | null;
@@ -33,11 +31,6 @@ export default function ApproverPendingTable({ documents, allowReview = true, em
     return <div className="px-5 py-6 text-sm text-slate-500">{emptyMessage}</div>;
   }
 
-  function getDocumentTypeLabel(document: PendingDocument): string {
-    if (!document.documentTypeName) return "Document";
-    return document.documentSubtypeName ? `${document.documentTypeName} - ${document.documentSubtypeName}` : document.documentTypeName;
-  }
-
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full text-left text-sm">
@@ -45,7 +38,6 @@ export default function ApproverPendingTable({ documents, allowReview = true, em
           <tr>
             <th className="px-5 py-3 font-semibold">Document Number</th>
             <th className="px-5 py-3 font-semibold">Title</th>
-            <th className="px-5 py-3 font-semibold">Type</th>
             <th className="px-5 py-3 font-semibold">Project</th>
             <th className="px-5 py-3 font-semibold">Waiting At</th>
             <th className="px-5 py-3 font-semibold">Current Version</th>
@@ -69,11 +61,6 @@ export default function ApproverPendingTable({ documents, allowReview = true, em
                     {document.title}
                   </Link>
                   {document.latestComment ? <div className="mt-1 text-xs text-slate-500">{document.latestComment}</div> : null}
-                </td>
-                <td className="px-5 py-4">
-                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                    {getDocumentTypeLabel(document)}
-                  </span>
                 </td>
                 <td className="px-5 py-4 text-slate-700">{document.projectLabel || "—"}</td>
                 <td className="px-5 py-4 text-slate-700">{document.statusLabel || "Pending"}</td>

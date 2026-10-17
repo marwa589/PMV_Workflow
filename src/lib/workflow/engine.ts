@@ -41,7 +41,7 @@ export type WorkflowResult = {
 export type WorkflowActionInput =
   | { action: "APPROVE"; comment?: string | null; versionId?: string | null; outputVersionId?: string | null }
   | { action: "REJECT"; comment?: string | null; versionId?: string | null }
-  | { action: "REQUEST_REVISION"; comment: string; targetLevel: number; versionId?: string | null }
+  | { action: "REQUEST_REVISION"; comment: string; targetLevel?: number | null; versionId?: string | null }
   | { action: "HOLD"; comment?: string | null }
   | { action: "RESUME"; comment?: string | null }
   | { action: "RESUBMIT"; comment?: string | null; versionId?: string | null };
@@ -251,33 +251,50 @@ export async function performWorkflowAction(
   const effects = emptyEffects();
   const scope = await loadDocScope(tx, document);
 
-  // ---- Resubmit: the document is back with the uploader (level 0) ----
+  // ---- Resubmit: the document is with the earlier step selected for revision ----
   if (input.action === "RESUBMIT") {
     if (document.status !== DocumentStatus.REVISION_REQUIRED) {
-      throw new WorkflowError("Only a document sent back to the uploader can be resubmitted.", 409);
+      throw new WorkflowError("Only a document sent back for revision can be resubmitted.", 409);
     }
-    const uploaderStep = document.approvalSteps.find((step) => step.levelNumber === 0);
+    const revisionRequest = await tx.approvalHistory.findFirst({
+      where: { documentId: document.id, action: ApprovalActionType.REQUESTED_REVISION },
+      orderBy: { performedAt: "desc" },
+      select: { levelNumber: true, revisionTargetLevel: true, performedById: true },
+    });
+    if (!revisionRequest) throw new WorkflowError("The revision request could not be found.", 409);
+    const targetLevel = revisionRequest?.revisionTargetLevel;
+    const requesterLevel = revisionRequest?.levelNumber;
+    if (
+      targetLevel === null || targetLevel === undefined ||
+      requesterLevel === null || requesterLevel === undefined ||
+      document.currentWorkflowStep !== targetLevel ||
+      requesterLevel <= targetLevel
+    ) {
+      throw new WorkflowError("The revision request is missing a valid return step.", 409);
+    }
+    const revisionStep = document.approvalSteps.find((step) => step.levelNumber === targetLevel);
+    const requesterStep = document.approvalSteps.find((step) => step.levelNumber === requesterLevel);
+    if (!revisionStep || !requesterStep) {
+      throw new WorkflowError("The revision request refers to a missing workflow step.", 409);
+    }
     const isAllowed =
       actor.userType === USER_TYPE.ADMIN ||
-      actor.id === document.createdById ||
-      (uploaderStep ? (await resolveActorEligibility(tx, actor.id, uploaderStep.approvers, scope, false)).allowed : false);
+      (targetLevel === 0 && actor.id === document.createdById) ||
+      (await resolveActorEligibility(tx, actor.id, revisionStep.approvers, scope, false)).allowed;
     if (!isAllowed) throw new WorkflowError("You cannot resubmit this document.", 403);
 
-    const nextLevel = document.approvalSteps.find((step) => step.levelNumber > 0)?.levelNumber ?? null;
-    if (nextLevel === null) throw new WorkflowError("This document has no approval levels.", 409);
-
     const now = new Date();
-    await tx.documentApprovalStep.updateMany({
-      where: { documentId: document.id, levelNumber: 0 },
+    await tx.documentApprovalStep.update({
+      where: { id: revisionStep.id },
       data: { status: StepStatus.APPROVED, actedById: actor.id, actedAt: now, comment: input.comment?.trim() || null },
     });
-    await tx.documentApprovalStep.updateMany({
-      where: { documentId: document.id, levelNumber: nextLevel },
+    await tx.documentApprovalStep.update({
+      where: { id: requesterStep.id },
       data: { status: StepStatus.PENDING },
     });
     await saveDocument(tx, document, {
       status: DocumentStatus.PENDING,
-      currentWorkflowStep: nextLevel,
+      currentWorkflowStep: requesterLevel,
       currentApproverAssignedAt: now,
     });
     await addHistory(tx, {
@@ -285,20 +302,47 @@ export async function performWorkflowAction(
       action: ApprovalActionType.RESUBMITTED,
       actorId: actor.id,
       comments: input.comment,
-      levelNumber: 0,
+      levelNumber: targetLevel,
       fromStatus: DocumentStatus.REVISION_REQUIRED,
       toStatus: DocumentStatus.PENDING,
       versionId: input.versionId,
       revisionNumber: document.revisionNumber,
     });
 
-    await notifyLevel(tx, await loadDocument(tx, document.id), nextLevel, effects);
-    return { documentId: document.id, status: DocumentStatus.PENDING, currentWorkflowStep: nextLevel, effects };
+    effects.notifications.push({
+      userId: revisionRequest.performedById,
+      type: "PENDING_APPROVAL",
+      title: "Revised document ready for review",
+      message: label(document),
+      documentId: document.id,
+    });
+    effects.emailEvents.push({
+      recipientId: revisionRequest.performedById,
+      type: EmailEventType.APPROVAL_PENDING,
+      documentId: document.id,
+    });
+    return { documentId: document.id, status: DocumentStatus.PENDING, currentWorkflowStep: requesterLevel, effects };
   }
 
   // ---- Every other action happens at the current level ----
   const step = requireCurrentStep(document);
   const level = step.levelNumber;
+
+  const latestHistory = await tx.approvalHistory.findFirst({
+    where: { documentId: document.id },
+    orderBy: { performedAt: "desc" },
+    select: { action: true },
+  });
+  if (latestHistory?.action === ApprovalActionType.RESUBMITTED && actor.userType !== USER_TYPE.ADMIN) {
+    const revisionRequest = await tx.approvalHistory.findFirst({
+      where: { documentId: document.id, action: ApprovalActionType.REQUESTED_REVISION },
+      orderBy: { performedAt: "desc" },
+      select: { performedById: true },
+    });
+    if (revisionRequest?.performedById !== actor.id) {
+      throw new WorkflowError("This revised document must be reviewed by the approver who requested the revision.", 403);
+    }
+  }
 
   const eligibility = await resolveActorEligibility(tx, actor.id, step.approvers, scope);
   if (!eligibility.allowed) throw new WorkflowError("You are not an approver for the current level of this document.", 403);
@@ -318,7 +362,10 @@ export async function performWorkflowAction(
     return { documentId: document.id, status: DocumentStatus.PENDING, currentWorkflowStep: level, effects };
   }
 
-  if (document.status !== DocumentStatus.PENDING) {
+  if (
+    document.status !== DocumentStatus.PENDING &&
+    !(document.status === DocumentStatus.REVISION_REQUIRED && input.action === "REJECT")
+  ) {
     throw new WorkflowError("This document is not waiting for approval.", 409);
   }
 
@@ -343,7 +390,7 @@ export async function performWorkflowAction(
     await saveDocument(tx, document, { status: DocumentStatus.CANCELLED, lastActiveStage: DocumentStatus.PENDING });
     await addHistory(tx, {
       documentId: document.id, action: ApprovalActionType.REJECTED, actorId: actor.id, onBehalfOfUserId,
-      comments: input.comment, levelNumber: level, fromStatus: DocumentStatus.PENDING, toStatus: DocumentStatus.CANCELLED,
+      comments: input.comment, levelNumber: level, fromStatus: document.status, toStatus: DocumentStatus.CANCELLED,
       versionId: input.versionId, revisionNumber: document.revisionNumber,
     });
     notifyCreator(document, effects, "DOCUMENT_REJECTED", "Document rejected");
@@ -354,45 +401,42 @@ export async function performWorkflowAction(
   if (input.action === "REQUEST_REVISION") {
     const comment = input.comment?.trim();
     if (!comment) throw new WorkflowError("A comment is required when requesting a revision.", 400);
-    const target = input.targetLevel;
+    const target = input.targetLevel ?? [...document.approvalSteps]
+      .filter((candidate) => candidate.levelNumber < level)
+      .sort((left, right) => right.levelNumber - left.levelNumber)[0]?.levelNumber;
     const targetStep = document.approvalSteps.find((candidate) => candidate.levelNumber === target);
-    if (!targetStep || target >= level) {
+    if (target === undefined || !targetStep || target >= level) {
       throw new WorkflowError("Choose an earlier step to send the document back to.", 400);
     }
 
-    // The target step and every step after it run again.
-    await tx.documentApprovalStep.updateMany({
-      where: { documentId: document.id, levelNumber: { gte: target } },
-      data: { status: StepStatus.WAITING, actedById: null, actedAt: null, comment: null },
+    await tx.documentApprovalStep.update({
+      where: { id: targetStep.id },
+      data: { status: StepStatus.REVISION, actedById: null, actedAt: null, comment: null },
+    });
+    await tx.documentApprovalStep.update({
+      where: { id: step.id },
+      data: { status: StepStatus.WAITING },
     });
 
-    const toUploader = target === 0;
-    await tx.documentApprovalStep.updateMany({
-      where: { documentId: document.id, levelNumber: target },
-      data: { status: toUploader ? StepStatus.REVISION : StepStatus.PENDING },
-    });
-
-    const newStatus = toUploader ? DocumentStatus.REVISION_REQUIRED : DocumentStatus.PENDING;
     await saveDocument(tx, document, {
-      status: newStatus,
+      status: DocumentStatus.REVISION_REQUIRED,
       currentWorkflowStep: target,
       currentApproverAssignedAt: now,
       revisionNumber: { increment: 1 },
     });
     await addHistory(tx, {
       documentId: document.id, action: ApprovalActionType.REQUESTED_REVISION, actorId: actor.id, onBehalfOfUserId,
-      comments: comment, levelNumber: level, fromStatus: DocumentStatus.PENDING, toStatus: newStatus,
+      comments: comment, levelNumber: level, fromStatus: DocumentStatus.PENDING, toStatus: DocumentStatus.REVISION_REQUIRED,
       revisionTargetLevel: target, versionId: input.versionId, revisionNumber: document.revisionNumber,
     });
 
-    notifyCreator(document, effects, "DOCUMENT_REVISED", "Revision requested");
-    if (toUploader) {
+    if (target === 0) {
+      notifyCreator(document, effects, "DOCUMENT_REVISED", "Revision required");
       effects.emailEvents.push({ recipientId: document.createdById, type: EmailEventType.APPROVAL_PENDING, documentId: document.id });
+    } else {
+      await notifyLevel(tx, await loadDocument(tx, document.id), target, effects, { type: "DOCUMENT_REVISED", title: "Revision required" });
     }
-    if (!toUploader) {
-      await notifyLevel(tx, await loadDocument(tx, document.id), target, effects);
-    }
-    return { documentId: document.id, status: newStatus, currentWorkflowStep: target, effects };
+    return { documentId: document.id, status: DocumentStatus.REVISION_REQUIRED, currentWorkflowStep: target, effects };
   }
 
   // ---- APPROVE ----
@@ -456,4 +500,3 @@ export async function setDocumentArchived(
   });
   return { documentId: document.id, status: restored, currentWorkflowStep: document.currentWorkflowStep, effects: emptyEffects() };
 }
-

@@ -58,11 +58,11 @@ const ROLES = [
 
 // Proposed list (editable later in the admin UI). Custody is not in the PDF, so it is not seeded.
 const DOCUMENT_TYPES = [
-  { code: "COMP", name: "Comp Sheet", subtypes: [["SPARE_PARTS", "Spare Parts"], ["OTHER", "Other"]] },
-  { code: "MR", name: "Material Req", subtypes: [["CASH", "Cash"], ["CREDIT", "Credit"], ["PETTY_CASH", "Petty Cash"], ["ADVANCE_PAYMENT", "Advance Payment"]] },
-  { code: "ERR", name: "Eq Rental Req", subtypes: [["RENTAL_ACTC", "Rental ACTC"], ["RENTAL_EXTERNAL", "Rental External"], ["RENEWAL", "Renewal"], ["PURCHASE", "Purchase"]] },
+  { code: "COMP", numberingCode: "COM", name: "Comp Sheet", subtypes: [["SPARE_PARTS", "Spare Parts", "SP"], ["OTHER", "Other", "OT"]] },
+  { code: "MR", numberingCode: "MR", name: "Material Req", subtypes: [["CASH", "Cash", "CH"], ["CREDIT", "Credit", "CR"], ["PETTY_CASH", "Petty Cash", "PC"], ["ADVANCE_PAYMENT", "Advance Payment", "AP"]] },
+  { code: "ERR", numberingCode: "ERR", name: "Eq Rental Req", subtypes: [["RENTAL_ACTC", "Rental ACTC", "ACTC"], ["RENTAL_EXTERNAL", "Rental External", "EXT"], ["RENEWAL", "Renewal", "REN"], ["PURCHASE", "Purchase", "PUR"]] },
   { code: "PR", name: "Payment Req", subtypes: [] },
-  { code: "RV", name: "Receiving Voucher", subtypes: [["RELEASE", "Release"], ["RECEIPT", "Receipt"]] },
+  { code: "RV", numberingCode: "RV", name: "Receiving Voucher", subtypes: [["RELEASE", "Release", "REL"], ["RECEIPT", "Receipt", "REC"]] },
   { code: "QT", name: "Quotation", subtypes: [] },
   { code: "INV", name: "Invoice", subtypes: [] },
   { code: "DN", name: "Delivery Note", subtypes: [] },
@@ -93,16 +93,18 @@ async function main() {
   }
 
   for (const type of DOCUMENT_TYPES) {
+    const numberingCode = type.numberingCode ?? type.code;
     const saved = await prisma.documentType.upsert({
       where: { code: type.code },
-      update: { name: type.name },
-      create: { code: type.code, name: type.name },
+      update: { name: type.name, numberingCode },
+      create: { code: type.code, numberingCode, name: type.name },
     });
-    for (const [code, name] of type.subtypes) {
+    for (const [code, name, subtypeNumberingCode] of type.subtypes) {
+      const numberingCode = subtypeNumberingCode ?? code;
       await prisma.documentSubtype.upsert({
         where: { documentTypeId_code: { documentTypeId: saved.id, code } },
-        update: { name },
-        create: { documentTypeId: saved.id, code, name },
+        update: { name, numberingCode },
+        create: { documentTypeId: saved.id, code, numberingCode, name },
       });
     }
   }

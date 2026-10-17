@@ -45,25 +45,48 @@ export async function POST(request: Request) {
       throw new WorkflowError("At least one document title is required.", 400);
     }
 
+    const processRun = processInstanceId
+      ? await prisma.processInstance.findUnique({
+          where: { id: processInstanceId },
+          select: {
+            id: true,
+            status: true,
+            currentStepNumber: true,
+            projectId: true,
+            processDefinition: { select: { steps: { select: { stepNumber: true, documentTypeId: true, documentSubtypeId: true } } } },
+          },
+        })
+      : null;
+    const processStep = processRun?.processDefinition.steps.find((step) => step.stepNumber === processRun.currentStepNumber);
+    const continuingExistingProcess = Boolean(
+      processRun?.status === ProcessStatus.IN_PROGRESS &&
+      processStep?.documentTypeId === documentTypeId &&
+      (!processStep?.documentSubtypeId || processStep.documentSubtypeId === documentSubtypeId) &&
+      processRun.projectId === projectId,
+    );
+
     // ---- Type, sub type and project come from the database, not from code ----
     const documentType = await prisma.documentType.findFirst({
-      where: { id: documentTypeId, isActive: true },
+      where: { id: documentTypeId, ...(continuingExistingProcess ? {} : { isActive: true }) },
       select: {
         id: true,
         code: true,
         supportsLineItems: true,
-        subtypes: { where: { isActive: true }, select: { id: true, code: true } },
+        subtypes: { select: { id: true, code: true, isActive: true } },
       },
     });
     if (!documentType) throw new WorkflowError("This document type is not available.", 400);
 
     const subtype = documentSubtypeId ? documentType.subtypes.find((candidate) => candidate.id === documentSubtypeId) : null;
     if (documentSubtypeId && !subtype) throw new WorkflowError("This sub type does not belong to the selected document type.", 400);
+    if (documentSubtypeId && subtype && !subtype.isActive && !continuingExistingProcess) {
+      throw new WorkflowError("This sub type is not available.", 400);
+    }
     if (!documentSubtypeId && documentType.subtypes.length > 0) throw new WorkflowError("Sub type is required for this document type.", 400);
 
     const project = projectId
       ? await prisma.project.findFirst({
-          where: { id: projectId, isActive: true },
+          where: { id: projectId, ...(continuingExistingProcess ? {} : { isActive: true }) },
           select: { id: true, code: true, location: { select: { name: true } } },
         })
       : null;
@@ -79,9 +102,8 @@ export async function POST(request: Request) {
     // ---- A process step holds one document ----
     if (processInstanceId) {
       if (files.length !== 1) throw new WorkflowError("Upload one document at a time when adding to a process step.", 400);
-      const run = await prisma.processInstance.findUnique({ where: { id: processInstanceId }, select: { status: true } });
-      if (!run) throw new WorkflowError("Process run not found.", 404);
-      if (run.status !== ProcessStatus.IN_PROGRESS) throw new WorkflowError("This process run is not in progress.", 409);
+      if (!processRun) throw new WorkflowError("Process run not found.", 404);
+      if (processRun.status !== ProcessStatus.IN_PROGRESS) throw new WorkflowError("This process run is not in progress.", 409);
     }
 
     // ---- Custom fields ----
@@ -115,7 +137,7 @@ export async function POST(request: Request) {
         const results: Array<{ id: string; documentNumber: string; title: string; status: DocumentStatus }> = [];
 
         for (const [index, file] of files.entries()) {
-          const documentNumber = await generateDocumentNumber(tx, { documentTypeId, projectId });
+          const documentNumber = await generateDocumentNumber(tx, { documentTypeId, documentSubtypeId, projectId });
           const perFileTitle = fileTitles[index]?.trim() || file.name.replace(/\.[^.]+$/, "") || title || "Untitled Document";
 
           const document = await tx.document.create({

@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { callApi } from "@/lib/admin-client";
+import { callApi, callApiWithDeactivationConfirmation } from "@/lib/admin-client";
 import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton, secondaryButton } from "@/components/admin/admin-ui";
 
-type Subtype = { id: string; code: string; name: string; isActive: boolean };
+type Subtype = { id: string; code: string; numberingCode: string; name: string; isActive: boolean };
 type DocType = {
   id: string;
   code: string;
+  numberingCode: string;
   name: string;
   description: string | null;
   namingPattern: string;
@@ -41,7 +42,7 @@ const DATA_TYPES = [
 ] as const;
 
 const DEFAULT_PATTERN = "{TYPE}-{PROJECT}-{YYYY}-{SEQ:4}";
-const blankType = { code: "", name: "", description: "", namingPattern: DEFAULT_PATTERN, supportsLineItems: false };
+const blankType = { code: "", numberingCode: "", name: "", description: "", namingPattern: DEFAULT_PATTERN, supportsLineItems: false };
 const blankField = { documentSubtypeId: "", fieldGroup: "HEADER", fieldKey: "", label: "", dataType: "TEXT", isRequired: false, options: "", sortOrder: 0 };
 
 function optionsText(options: unknown): string {
@@ -57,7 +58,7 @@ export default function DocumentTypesManager() {
   const [typeForm, setTypeForm] = useState(blankType);
   const [typeEditId, setTypeEditId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [subtypeForm, setSubtypeForm] = useState({ code: "", name: "" });
+  const [subtypeForm, setSubtypeForm] = useState({ code: "", numberingCode: "", name: "" });
   const [subtypeEditId, setSubtypeEditId] = useState<string | null>(null);
   const [fieldForm, setFieldForm] = useState(blankField);
   const [fieldEditId, setFieldEditId] = useState<string | null>(null);
@@ -80,6 +81,7 @@ export default function DocumentTypesManager() {
     setError(null);
     setNotice(null);
     const result = await action;
+    if ("cancelled" in result && result.cancelled) return;
     if (!result.ok) return setError(result.message ?? "Something went wrong.");
     setNotice(done);
     after?.();
@@ -101,6 +103,7 @@ export default function DocumentTypesManager() {
       <Card title={typeEditId ? "Edit document type" : "New document type"} subtitle="The naming pattern must contain {TYPE}, {PROJECT}, {YYYY} and {SEQ:4}, for example MR-P1-2026-0007.">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Field label="Short code"><input value={typeForm.code} onChange={(e) => setTypeForm({ ...typeForm, code: e.target.value })} className={inputClass} placeholder="MR" /></Field>
+          <Field label="Numbering code" hint="Used in generated numbers; defaults to the short code."><input value={typeForm.numberingCode} onChange={(e) => setTypeForm({ ...typeForm, numberingCode: e.target.value })} className={inputClass} placeholder="MR" /></Field>
           <Field label="Name"><input value={typeForm.name} onChange={(e) => setTypeForm({ ...typeForm, name: e.target.value })} className={inputClass} placeholder="Material Req" /></Field>
           <Field label="Naming pattern"><input value={typeForm.namingPattern} onChange={(e) => setTypeForm({ ...typeForm, namingPattern: e.target.value })} className={inputClass} /></Field>
           <Field label="Description"><input value={typeForm.description} onChange={(e) => setTypeForm({ ...typeForm, description: e.target.value })} className={inputClass} /></Field>
@@ -135,26 +138,30 @@ export default function DocumentTypesManager() {
               <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                 <div className="flex flex-wrap items-center gap-3 text-sm">
                   <Pill>{type.code}</Pill>
+                  <span className="text-xs text-slate-500">Number: {type.numberingCode}</span>
                   <span className="font-semibold text-slate-900">{type.name}</span>
                   <span className="text-xs text-slate-500">{type.subtypes.length} sub type(s) · {type._count.fieldDefinitions} field(s) · {type._count.documents} document(s)</span>
                   <Pill tone={type.isActive ? "green" : "amber"}>{type.isActive ? "Active" : "Inactive"}</Pill>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" className={secondaryButton} onClick={() => setOpenId(openId === type.id ? null : type.id)}>{openId === type.id ? "Close" : "Sub types & fields"}</button>
-                  <button type="button" className={secondaryButton} onClick={() => { setTypeEditId(type.id); setTypeForm({ code: type.code, name: type.name, description: type.description ?? "", namingPattern: type.namingPattern, supportsLineItems: type.supportsLineItems }); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Edit</button>
-                  <button type="button" className={secondaryButton} onClick={() => run(callApi("/api/admin/document-types", "PATCH", { id: type.id, code: type.code, name: type.name, description: type.description ?? "", isActive: !type.isActive }), "Document type updated.")}>{type.isActive ? "Deactivate" : "Activate"}</button>
+                  <button type="button" className={secondaryButton} onClick={() => { setTypeEditId(type.id); setTypeForm({ code: type.code, numberingCode: type.numberingCode, name: type.name, description: type.description ?? "", namingPattern: type.namingPattern, supportsLineItems: type.supportsLineItems }); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Edit</button>
+                  <button type="button" className={secondaryButton} onClick={() => run(type.isActive
+                    ? callApiWithDeactivationConfirmation("/api/admin/document-types", { id: type.id, code: type.code, name: type.name, description: type.description ?? "", isActive: false })
+                    : callApi("/api/admin/document-types", "PATCH", { id: type.id, code: type.code, name: type.name, description: type.description ?? "", isActive: true }), "Document type updated.")}>{type.isActive ? "Deactivate" : "Activate"}</button>
                   <button type="button" className={dangerButton} onClick={() => window.confirm(`Delete ${type.name}?`) && run(callApi("/api/admin/document-types", "DELETE", { id: type.id }), "Document type deleted.")}>Delete</button>
                 </div>
               </div>
 
               {open && open.id === type.id ? (
                 <div className="space-y-6 border-t border-slate-200 bg-slate-50 px-4 py-4">
-                  <p className="text-xs text-slate-500">Pattern: <code>{type.namingPattern}</code></p>
+                  <p className="text-xs text-slate-500">Naming pattern for documents without a sub type: <code>{type.namingPattern}</code></p>
 
                   <div>
                     <h4 className="text-sm font-semibold text-slate-900">Sub types</h4>
                     <div className="mt-2 flex flex-wrap items-end gap-3">
                       <Field label="Code"><input value={subtypeForm.code} onChange={(e) => setSubtypeForm({ ...subtypeForm, code: e.target.value })} className={inputClass} placeholder="CASH" /></Field>
+                      <Field label="Numbering code"><input value={subtypeForm.numberingCode} onChange={(e) => setSubtypeForm({ ...subtypeForm, numberingCode: e.target.value })} className={inputClass} placeholder="CH" /></Field>
                       <Field label="Name"><input value={subtypeForm.name} onChange={(e) => setSubtypeForm({ ...subtypeForm, name: e.target.value })} className={inputClass} placeholder="Cash" /></Field>
                       <button
                         type="button"
@@ -163,22 +170,24 @@ export default function DocumentTypesManager() {
                           run(
                             subtypeEditId ? callApi("/api/admin/document-subtypes", "PATCH", { id: subtypeEditId, ...subtypeForm }) : callApi("/api/admin/document-subtypes", "POST", { documentTypeId: type.id, ...subtypeForm }),
                             subtypeEditId ? "Sub type updated." : "Sub type added.",
-                            () => { setSubtypeForm({ code: "", name: "" }); setSubtypeEditId(null); },
+                            () => { setSubtypeForm({ code: "", numberingCode: "", name: "" }); setSubtypeEditId(null); },
                           )
                         }
                       >
                         {subtypeEditId ? "Save" : "Add sub type"}
                       </button>
-                      {subtypeEditId ? <button type="button" className={secondaryButton} onClick={() => { setSubtypeEditId(null); setSubtypeForm({ code: "", name: "" }); }}>Cancel</button> : null}
+                      {subtypeEditId ? <button type="button" className={secondaryButton} onClick={() => { setSubtypeEditId(null); setSubtypeForm({ code: "", numberingCode: "", name: "" }); }}>Cancel</button> : null}
                     </div>
                     <div className="mt-3 space-y-2">
                       {type.subtypes.length === 0 ? <p className="text-xs text-slate-500">No sub types. Documents of this type are uploaded without one.</p> : null}
                       {type.subtypes.map((subtype) => (
                         <div key={subtype.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
-                          <span><Pill>{subtype.code}</Pill> <span className="ml-2 font-medium text-slate-900">{subtype.name}</span> {subtype.isActive ? null : <Pill tone="amber">Inactive</Pill>}</span>
+                          <span><Pill>{subtype.code}</Pill> <span className="ml-2 font-medium text-slate-900">{subtype.name}</span> <span className="ml-2 text-xs text-slate-500">Number: {subtype.numberingCode}</span> {subtype.isActive ? null : <Pill tone="amber">Inactive</Pill>}</span>
                           <div className="flex gap-2">
-                            <button type="button" className={secondaryButton} onClick={() => { setSubtypeEditId(subtype.id); setSubtypeForm({ code: subtype.code, name: subtype.name }); }}>Edit</button>
-                            <button type="button" className={secondaryButton} onClick={() => run(callApi("/api/admin/document-subtypes", "PATCH", { id: subtype.id, code: subtype.code, name: subtype.name, isActive: !subtype.isActive }), "Sub type updated.")}>{subtype.isActive ? "Deactivate" : "Activate"}</button>
+                            <button type="button" className={secondaryButton} onClick={() => { setSubtypeEditId(subtype.id); setSubtypeForm({ code: subtype.code, numberingCode: subtype.numberingCode, name: subtype.name }); }}>Edit</button>
+                            <button type="button" className={secondaryButton} onClick={() => run(subtype.isActive
+                              ? callApiWithDeactivationConfirmation("/api/admin/document-subtypes", { id: subtype.id, code: subtype.code, numberingCode: subtype.numberingCode, name: subtype.name, isActive: false })
+                              : callApi("/api/admin/document-subtypes", "PATCH", { id: subtype.id, code: subtype.code, numberingCode: subtype.numberingCode, name: subtype.name, isActive: true }), "Sub type updated.")}>{subtype.isActive ? "Deactivate" : "Activate"}</button>
                             <button type="button" className={dangerButton} onClick={() => window.confirm(`Delete ${subtype.name}?`) && run(callApi("/api/admin/document-subtypes", "DELETE", { id: subtype.id }), "Sub type deleted.")}>Delete</button>
                           </div>
                         </div>
@@ -250,7 +259,9 @@ export default function DocumentTypesManager() {
                           </div>
                           <div className="flex gap-2">
                             <button type="button" className={secondaryButton} onClick={() => { setFieldEditId(field.id); setFieldForm({ documentSubtypeId: field.documentSubtypeId ?? "", fieldGroup: field.fieldGroup, fieldKey: field.fieldKey, label: field.label, dataType: field.dataType, isRequired: field.isRequired, options: optionsText(field.options), sortOrder: field.sortOrder }); }}>Edit</button>
-                            <button type="button" className={secondaryButton} onClick={() => run(callApi("/api/admin/field-definitions", "PATCH", { id: field.id, isActive: !field.isActive }), "Field updated.")}>{field.isActive ? "Deactivate" : "Activate"}</button>
+                            <button type="button" className={secondaryButton} onClick={() => run(field.isActive
+                              ? callApiWithDeactivationConfirmation("/api/admin/field-definitions", { id: field.id, isActive: false })
+                              : callApi("/api/admin/field-definitions", "PATCH", { id: field.id, isActive: true }), "Field updated.")}>{field.isActive ? "Deactivate" : "Activate"}</button>
                             <button type="button" className={dangerButton} onClick={() => window.confirm(`Delete ${field.label}?`) && run(callApi("/api/admin/field-definitions", "DELETE", { id: field.id }), "Field deleted.")}>Delete</button>
                           </div>
                         </div>

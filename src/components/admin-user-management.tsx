@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { callApi } from "@/lib/admin-client";
+import { callApi, callApiWithDeactivationConfirmation } from "@/lib/admin-client";
 import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton, secondaryButton } from "@/components/admin/admin-ui";
 
 type UserType = { id: string; code: string; name: string };
@@ -76,7 +76,10 @@ export default function AdminUserManagement() {
   async function toggleActive(user: UserRow) {
     setError(null);
     setNotice(null);
-    const result = await callApi("/api/admin/users", "PATCH", { id: user.id, name: user.name, email: user.email, isActive: !user.isActive });
+    const result = user.isActive
+      ? await callApiWithDeactivationConfirmation("/api/admin/users", { id: user.id, name: user.name, email: user.email, isActive: false })
+      : await callApi("/api/admin/users", "PATCH", { id: user.id, name: user.name, email: user.email, isActive: true });
+    if ("cancelled" in result && result.cancelled) return;
     if (!result.ok) return setError(result.message);
     await load();
   }

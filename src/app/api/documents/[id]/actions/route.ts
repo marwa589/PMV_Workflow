@@ -27,8 +27,8 @@ const AUDIT_ACTION: Record<Decision, string> = {
  * One endpoint for every step of a document's life.
  * multipart form fields: decision, comments, file, signatureCount, targetLevel
  *  - APPROVE            needs the signed/annotated file (becomes the new version)
- *  - REQUEST_REVISION   needs targetLevel (any earlier step, 0 = the uploader) and a comment; file optional
- *  - RESUBMIT           the uploader sends the revised file back into the flow; file required
+ *  - REQUEST_REVISION   needs a comment; targetLevel is optional (defaults to the previous step); file optional
+ *  - RESUBMIT           the selected earlier step sends the revised file back to the requesting reviewer; file required
  *  - REJECT, HOLD, RESUME  no file
  * Who is allowed to act is decided by the engine from the flow copied onto the document.
  */
@@ -48,7 +48,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const fileValue = formData.get("file");
     const file = fileValue instanceof File && fileValue.size > 0 ? fileValue : null;
     const signatureCount = Number(formData.get("signatureCount") || 0);
-    const targetLevel = Number(formData.get("targetLevel"));
+    const targetLevelValue = formData.get("targetLevel");
+    const targetLevel = targetLevelValue === null || String(targetLevelValue).trim() === "" ? null : Number(targetLevelValue);
 
     if (!DECISIONS.includes(decision)) {
       throw new WorkflowError(`Decision must be one of: ${DECISIONS.join(", ")}.`, 400);
@@ -56,8 +57,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if ((decision === "APPROVE" || decision === "RESUBMIT") && !file) {
       throw new WorkflowError(decision === "APPROVE" ? "Approved action requires an uploaded file." : "Resubmitting requires the revised file.", 400);
     }
-    if (decision === "REQUEST_REVISION" && (!Number.isInteger(targetLevel) || targetLevel < 0)) {
-      throw new WorkflowError("Choose the step the document should go back to.", 400);
+    if (decision === "REQUEST_REVISION" && targetLevel !== null && (!Number.isInteger(targetLevel) || targetLevel < 0)) {
+      throw new WorkflowError("Choose a valid earlier workflow step.", 400);
     }
 
     const actor = { id: session.userId, userType: session.userType };
@@ -80,7 +81,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         // A new file becomes the next version, stored next to the earlier ones.
         let nextVersionNumber = document.currentVersion;
         let newVersionId: string | null = null;
-        let newFilePath: string | null = null;
 
         if (file && (decision === "APPROVE" || decision === "RESUBMIT" || decision === "REQUEST_REVISION")) {
           nextVersionNumber = document.currentVersion + 1;
@@ -92,7 +92,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             storageFolder: currentVersionRecord.storageFolder,
           });
           savedPaths.push(saved.relativePath);
-          newFilePath = saved.relativePath;
 
           const newVersion = await tx.documentVersion.create({
             data: {
@@ -134,22 +133,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         // Checks who may act, then moves the document and records the history.
         const result = await performWorkflowAction(tx, { documentId: document.id, actor, input });
 
-        let previousFilePaths: string[] = [];
         if (newVersionId) {
           await tx.document.update({ where: { id: document.id }, data: { currentVersion: nextVersionNumber } });
-
-          // Approving or resubmitting keeps only the newest file (earlier ones are removed, as before).
-          if (decision === "APPROVE" || decision === "RESUBMIT") {
-            const older = await tx.documentVersion.findMany({
-              where: { documentId: document.id, versionNumber: { lt: nextVersionNumber } },
-              select: { filePath: true },
-            });
-            previousFilePaths = older.map((version) => version.filePath);
-            await tx.documentVersion.deleteMany({ where: { documentId: document.id, versionNumber: { lt: nextVersionNumber } } });
-          }
         }
 
-        return { result, previousStatus: document.status, currentVersion: nextVersionNumber, previousFilePaths, newFilePath };
+        return { result, previousStatus: document.status, currentVersion: nextVersionNumber };
       },
       { maxWait: 10_000, timeout: 30_000 },
     );
@@ -163,12 +151,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         data: { emailSent: true, claimedAt: null },
       });
     }
-
-    await Promise.all(
-      outcome.previousFilePaths
-        .filter((filePath) => filePath !== outcome.newFilePath)
-        .map((filePath) => deleteDocumentFiles({ filePaths: [filePath] }).catch(() => undefined)),
-    );
 
     await dispatchWorkflowEffects(outcome.result.effects);
 

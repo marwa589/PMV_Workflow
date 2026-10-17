@@ -5,7 +5,7 @@ import { getSession } from "@/lib/auth/session";
 import { USER_TYPE } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
 import { getActionableDocuments } from "@/lib/document-queries";
-import { getGlobalPermissionCodes } from "@/lib/auth/access";
+import { buildDocumentVisibilityWhere, getGlobalPermissionCodes } from "@/lib/auth/access";
 import { canUserUploadAnything } from "@/lib/workflow/eligibility";
 
 export const runtime = "nodejs";
@@ -14,72 +14,92 @@ export const dynamic = "force-dynamic";
 type TypeCount = { documentTypeId: string; code: string; name: string; count: number };
 
 /**
- * Counts for the sidebar badges:
- *  - Admin: every document that is pending
- *  - Clerk: their own pending documents
- *  - Anyone else: documents waiting for them to act
+ * Document counts follow the same visibility rules as the document lists.
+ * Pending approvals remain limited to documents the user can act on.
  * `pendingByType` replaces the old hard-coded materialRequisitions / comparisons / errs counters.
  * `canUpload` says whether to show the "New document" entry.
- * `documentTypes` is the list the sidebar shows (one entry per active type); `manage` says which
- * administration screens the person may open.
+ * `documentTypes` contains active types represented in visible documents or directly assigned to the user;
+ * `manage` says which administration screens the person may open.
  */
 export async function GET() {
   const session = await getSession();
   if (!session) {
     return NextResponse.json(
-      { pendingApprovals: 0, pendingByType: [], canUpload: false, documentTypes: [], manage: {} },
+      { pendingDocuments: 0, pendingApprovals: 0, pendingByType: [], canUpload: false, documentTypes: [], manage: {} },
       { status: 401 },
     );
   }
 
-  let pendingByType: TypeCount[] = [];
-
-  if (session.userType === USER_TYPE.ADMIN || session.userType === USER_TYPE.CLERK) {
-    const grouped = await prisma.document.groupBy({
+  const visibility = await buildDocumentVisibilityWhere(session);
+  const [grouped, documentTypes] = await Promise.all([
+    prisma.document.groupBy({
       by: ["documentTypeId"],
-      where: {
-        status: DocumentStatus.PENDING,
-        ...(session.userType === USER_TYPE.CLERK ? { createdById: session.userId } : {}),
-      },
+      where: { AND: [visibility, { status: DocumentStatus.PENDING }] },
       _count: { _all: true },
-    });
-    const types = await prisma.documentType.findMany({
-      where: { id: { in: grouped.map((row) => row.documentTypeId) } },
+    }),
+    prisma.documentType.findMany({
+      where: {
+        isActive: true,
+        ...(session.userType === USER_TYPE.ADMIN
+          ? {}
+          : {
+              OR: [
+                { documents: { some: visibility } },
+                {
+                  scopedAssignments: {
+                    some: {
+                      userId: session.userId,
+                      companyId: null,
+                      processDefinitionId: null,
+                      documentTypeId: { not: null },
+                      role: { permissions: { some: { permission: { code: "documents.view" } } } },
+                    },
+                  },
+                },
+                {
+                  assignmentScopes: {
+                    some: {
+                      assignment: {
+                        userId: session.userId,
+                        companyId: null,
+                        processDefinitionId: null,
+                        processScopes: { none: {} },
+                        role: { permissions: { some: { permission: { code: "documents.view" } } } },
+                      },
+                    },
+                  },
+                },
+              ],
+            }),
+      },
       select: { id: true, code: true, name: true },
-    });
-    const typeById = new Map(types.map((type) => [type.id, type]));
-    pendingByType = grouped.map((row) => ({
-      documentTypeId: row.documentTypeId,
-      code: typeById.get(row.documentTypeId)?.code ?? "",
-      name: typeById.get(row.documentTypeId)?.name ?? "",
-      count: row._count._all,
-    }));
-  } else {
-    const documents = await getActionableDocuments(session, [DocumentStatus.PENDING]);
-    const counts = new Map<string, TypeCount>();
-    for (const document of documents) {
-      const entry = counts.get(document.documentType.id) ?? {
-        documentTypeId: document.documentType.id,
-        code: document.documentType.code,
-        name: document.documentType.name,
-        count: 0,
-      };
-      entry.count += 1;
-      counts.set(document.documentType.id, entry);
-    }
-    pendingByType = [...counts.values()];
-  }
+      orderBy: { name: "asc" },
+    }),
+  ]);
+  const typeById = new Map(documentTypes.map((type) => [type.id, type]));
+  const pendingByType: TypeCount[] = grouped.flatMap((row) => {
+    const type = typeById.get(row.documentTypeId);
+    return type
+      ? [{ documentTypeId: type.id, code: type.code, name: type.name, count: row._count._all }]
+      : [];
+  });
+  const pendingDocuments = grouped.reduce((sum, row) => sum + row._count._all, 0);
+
+  const pendingApprovals =
+    session.userType === USER_TYPE.ADMIN
+      ? pendingDocuments
+      : session.userType === USER_TYPE.CLERK
+        ? 0
+        : (await getActionableDocuments(session, [DocumentStatus.PENDING])).length;
 
   const canUpload = await canUserUploadAnything(prisma, { id: session.userId, userType: session.userType });
 
-  const [documentTypes, permissionCodes] = await Promise.all([
-    prisma.documentType.findMany({ where: { isActive: true }, select: { id: true, code: true, name: true }, orderBy: { name: "asc" } }),
-    getGlobalPermissionCodes(session),
-  ]);
+  const permissionCodes = await getGlobalPermissionCodes(session);
   const has = (code: string) => permissionCodes.includes(code);
 
   return NextResponse.json({
-    pendingApprovals: pendingByType.reduce((sum, row) => sum + row.count, 0),
+    pendingDocuments,
+    pendingApprovals,
     pendingByType,
     canUpload,
     documentTypes,

@@ -1,7 +1,7 @@
 // src/app/api/admin/projects/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { optionalId, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
+import { deactivationConfirmationResponse, optionalId, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
 
 export const runtime = "nodejs";
 
@@ -76,6 +76,27 @@ export async function PATCH(request: Request) {
   }
 
   try {
+    if (body?.isActive === false) {
+      const usage = await prisma.project.findUnique({
+        where: { id },
+        select: {
+          isActive: true,
+          _count: {
+            select: { documents: true, processInstances: true, flowAssignments: true, scopedAssignments: true, assignmentScopes: true },
+          },
+        },
+      });
+      if (usage?.isActive) {
+        const confirmation = deactivationConfirmationResponse(body, "This project", [
+          { label: "document(s)", count: usage._count.documents },
+          { label: "process run(s)", count: usage._count.processInstances },
+          { label: "flow assignment(s)", count: usage._count.flowAssignments },
+          { label: "role assignment(s)", count: usage._count.scopedAssignments + usage._count.assignmentScopes },
+        ]);
+        if (confirmation) return confirmation;
+      }
+    }
+
     const project = await prisma.project.update({
       where: { id },
       data: { code, name, locationId, ...(typeof body?.isActive === "boolean" ? { isActive: body.isActive } : {}) },

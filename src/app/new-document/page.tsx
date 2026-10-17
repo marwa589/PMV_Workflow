@@ -23,36 +23,7 @@ export default async function NewDocumentPage({ searchParams }: { searchParams?:
   const params = (await searchParams) ?? {};
   const processInstanceId = typeof params.processInstanceId === "string" ? params.processInstanceId : "";
 
-  const [types, projects] = await Promise.all([
-    prisma.documentType.findMany({
-      where: { isActive: true },
-      orderBy: { name: "asc" },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        supportsLineItems: true,
-        subtypes: { where: { isActive: true }, select: { id: true, code: true, name: true }, orderBy: { name: "asc" } },
-        fieldDefinitions: {
-          where: { isActive: true },
-          orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
-          select: { id: true, fieldGroup: true, fieldKey: true, label: true, dataType: true, isRequired: true, options: true, documentSubtypeId: true },
-        },
-      },
-    }),
-    prisma.project.findMany({ where: { isActive: true }, orderBy: { code: "asc" }, select: { id: true, code: true, name: true } }),
-  ]);
-
-  const documentTypes: UploadDocumentType[] = types.map((type) => ({
-    id: type.id,
-    code: type.code,
-    name: type.name,
-    supportsLineItems: type.supportsLineItems,
-    subtypes: type.subtypes,
-    fields: type.fieldDefinitions.map((field) => ({ ...field, options: optionValues(field.options) })),
-  }));
-
-  // Opened from a process run: the current step decides the document type (and sub type), and the run's project.
+  // A running process retains its configured step even if its type, subtype, or project is later deactivated.
   let process: UploadProcessContext | null = null;
   if (processInstanceId) {
     const visibility = await buildProcessVisibilityWhere(session);
@@ -78,6 +49,43 @@ export default async function NewDocumentPage({ searchParams }: { searchParams?:
       };
     }
   }
+
+  const [types, projects] = await Promise.all([
+    prisma.documentType.findMany({
+      where: process ? { OR: [{ isActive: true }, { id: process.documentTypeId }] } : { isActive: true },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        supportsLineItems: true,
+        subtypes: {
+          where: process ? {} : { isActive: true },
+          select: { id: true, code: true, name: true },
+          orderBy: { name: "asc" },
+        },
+        fieldDefinitions: {
+          where: { isActive: true },
+          orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+          select: { id: true, fieldGroup: true, fieldKey: true, label: true, dataType: true, isRequired: true, options: true, documentSubtypeId: true },
+        },
+      },
+    }),
+    prisma.project.findMany({
+      where: process?.projectId ? { OR: [{ isActive: true }, { id: process.projectId }] } : { isActive: true },
+      orderBy: { code: "asc" },
+      select: { id: true, code: true, name: true },
+    }),
+  ]);
+
+  const documentTypes: UploadDocumentType[] = types.map((type) => ({
+    id: type.id,
+    code: type.code,
+    name: type.name,
+    supportsLineItems: type.supportsLineItems,
+    subtypes: type.subtypes,
+    fields: type.fieldDefinitions.map((field) => ({ ...field, options: optionValues(field.options) })),
+  }));
 
   return (
     <DashboardShell role={session.userType} userName={session.name} title="New Document" subtitle="Upload and submit a document to start workflow">

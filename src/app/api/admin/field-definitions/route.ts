@@ -2,7 +2,7 @@
 import { FieldDataType, FieldGroup } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { optionalId, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
+import { deactivationConfirmationResponse, optionalId, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
 
 export const runtime = "nodejs";
 
@@ -127,6 +127,20 @@ export async function PATCH(request: Request) {
   }
 
   try {
+    if (body?.isActive === false && existing.isActive) {
+      const affectedDocuments = await prisma.document.count({
+        where: {
+          documentTypeId: existing.documentTypeId,
+          ...(existing.documentSubtypeId ? { documentSubtypeId: existing.documentSubtypeId } : {}),
+        },
+      });
+      const confirmation = deactivationConfirmationResponse(body, "This custom field", [
+        { label: "saved field value(s)", count: existing._count.values },
+        { label: "document(s) covered by this field", count: affectedDocuments },
+      ]);
+      if (confirmation) return confirmation;
+    }
+
     const field = await prisma.fieldDefinition.update({
       where: { id },
       data: {

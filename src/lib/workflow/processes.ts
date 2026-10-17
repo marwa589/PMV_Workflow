@@ -15,11 +15,23 @@ export async function startProcess(
 ) {
   const definition = await tx.processDefinition.findUnique({
     where: { id: input.processDefinitionId },
-    select: { isActive: true, steps: { orderBy: { stepNumber: "asc" }, select: { stepNumber: true } } },
+    select: {
+      isActive: true,
+      steps: { orderBy: { stepNumber: "asc" }, select: { stepNumber: true, documentTypeId: true, documentSubtypeId: true } },
+    },
   });
 
   if (!definition || !definition.isActive) throw new WorkflowError("This process is not available.", 404);
   if (definition.steps.length === 0) throw new WorkflowError("This process has no steps.", 400);
+  const typeIds = [...new Set(definition.steps.map((step) => step.documentTypeId))];
+  const activeTypeCount = await tx.documentType.count({ where: { id: { in: typeIds }, isActive: true } });
+  const subtypeIds = [...new Set(definition.steps.flatMap((step) => (step.documentSubtypeId ? [step.documentSubtypeId] : [])))];
+  const activeSubtypeCount = subtypeIds.length
+    ? await tx.documentSubtype.count({ where: { id: { in: subtypeIds }, isActive: true } })
+    : 0;
+  if (activeTypeCount !== typeIds.length || activeSubtypeCount !== subtypeIds.length) {
+    throw new WorkflowError("This process uses a deactivated document type or sub type and cannot be started for new work.", 409);
+  }
 
   return tx.processInstance.create({
     data: {

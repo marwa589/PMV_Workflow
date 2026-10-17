@@ -1,4 +1,4 @@
-import { DocumentStatus, EmailEventType, ProcessStatus } from "@prisma/client";
+import { ApprovalActionType, DocumentStatus, EmailEventType, ProcessStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@/lib/mail";
 import { appConfig } from "@/lib/env";
@@ -184,6 +184,11 @@ const waitingDocumentSelect = {
   documentSubtypeId: true,
   currentWorkflowStep: true,
   currentApproverAssignedAt: true,
+  approvals: {
+    orderBy: { performedAt: "desc" },
+    take: 2,
+    select: { action: true, performedById: true },
+  },
   approvalSteps: { select: { levelNumber: true, approvers: true } },
 } as const;
 
@@ -195,13 +200,20 @@ type WaitingDocument = {
   documentTypeId: string;
   documentSubtypeId: string | null;
   currentWorkflowStep: number | null;
+  approvals: Array<{ action: ApprovalActionType; performedById: string }>;
   approvalSteps: Array<{ levelNumber: number; approvers: Array<{ approverType: "USER" | "USER_TYPE"; userId: string | null; userTypeId: string | null }> }>;
 };
 
-/** Who is expected to act now: the uploader when it is back with them, otherwise everyone eligible at the current level. */
+/** Who is expected to act now: the uploader at level 0, otherwise the assigned approvers at the current level. */
 async function getWaitingRecipientIds(document: WaitingDocument): Promise<string[]> {
-  if (document.status === DocumentStatus.REVISION_REQUIRED) return [document.createdById];
-  if (document.status !== DocumentStatus.PENDING || document.currentWorkflowStep === null) return [];
+  if (document.status !== DocumentStatus.PENDING && document.status !== DocumentStatus.REVISION_REQUIRED) return [];
+  if (document.currentWorkflowStep === null) return [];
+  if (document.status === DocumentStatus.REVISION_REQUIRED && document.currentWorkflowStep === 0) return [document.createdById];
+
+  if (document.status === DocumentStatus.PENDING && document.approvals[0]?.action === ApprovalActionType.RESUBMITTED) {
+    const requester = document.approvals.find((entry) => entry.action === ApprovalActionType.REQUESTED_REVISION);
+    return requester ? [requester.performedById] : [];
+  }
 
   const step = document.approvalSteps.find((candidate) => candidate.levelNumber === document.currentWorkflowStep);
   if (!step) return [];

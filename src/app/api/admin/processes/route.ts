@@ -1,7 +1,7 @@
 // src/app/api/admin/processes/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
+import { deactivationConfirmationResponse, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
 
 export const runtime = "nodejs";
 
@@ -116,6 +116,24 @@ export async function PATCH(request: Request) {
   }
 
   try {
+    if (body?.isActive === false) {
+      const [inProgressRuns, assignmentCounts] = await Promise.all([
+        prisma.processInstance.count({ where: { processDefinitionId: id, status: "IN_PROGRESS" } }),
+        prisma.processDefinition.findUnique({
+          where: { id },
+          select: { isActive: true, _count: { select: { scopedAssignments: true, assignmentScopes: true } } },
+        }),
+      ]);
+      if (assignmentCounts?.isActive) {
+        const confirmation = deactivationConfirmationResponse(body, "This process", [
+          { label: "existing run(s)", count: runs },
+          { label: "currently running process(es)", count: inProgressRuns },
+          { label: "role assignment(s)", count: assignmentCounts._count.scopedAssignments + assignmentCounts._count.assignmentScopes },
+        ]);
+        if (confirmation) return confirmation;
+      }
+    }
+
     const process = await prisma.$transaction(async (tx) => {
       if (steps) await tx.processStep.deleteMany({ where: { processDefinitionId: id } });
       return tx.processDefinition.update({

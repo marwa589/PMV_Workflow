@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { callApi } from "@/lib/admin-client";
+import { callApi, callApiWithDeactivationConfirmation } from "@/lib/admin-client";
 import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton, secondaryButton } from "@/components/admin/admin-ui";
 
 type UserOption = { id: string; name: string; email: string; userType: { code: string; name: string } };
@@ -15,6 +15,7 @@ type Flow = {
   description: string | null;
   isActive: boolean;
   assignmentCount: number;
+  documentCount: number;
   steps: Array<{ id: string; stepNumber: number; name: string | null; approvers: Array<Entry & { id: string }> }>;
 };
 
@@ -137,6 +138,18 @@ export default function FlowsManager() {
     await load();
   }
 
+  async function toggleActive(flow: Flow) {
+    setError(null);
+    setNotice(null);
+    const result = flow.isActive
+      ? await callApiWithDeactivationConfirmation("/api/admin/flows", { id: flow.id, isActive: false })
+      : await callApi("/api/admin/flows", "PATCH", { id: flow.id, isActive: true });
+    if ("cancelled" in result && result.cancelled) return;
+    if (!result.ok) return setError(result.message);
+    setNotice(`Flow ${flow.isActive ? "deactivated" : "activated"}. Documents already in progress keep their existing approval steps.`);
+    await load();
+  }
+
   const lastLevel = draft.steps[draft.steps.length - 1]?.stepNumber ?? 0;
 
   return (
@@ -224,10 +237,12 @@ export default function FlowsManager() {
                   <Pill>{flow.code}</Pill>
                   <span className="font-semibold text-slate-900">{flow.name}</span>
                   <span className="text-xs text-slate-500">used by {flow.assignmentCount} assignment(s)</span>
+                  <span className="text-xs text-slate-500">{flow.documentCount} document(s)</span>
                   <Pill tone={flow.isActive ? "green" : "amber"}>{flow.isActive ? "Active" : "Inactive"}</Pill>
                 </div>
                 <div className="flex gap-2">
                   <button type="button" className={secondaryButton} onClick={() => edit(flow)}>Edit</button>
+                  <button type="button" className={secondaryButton} onClick={() => toggleActive(flow)}>{flow.isActive ? "Deactivate" : "Activate"}</button>
                   <button type="button" className={dangerButton} onClick={() => remove(flow)}>Delete</button>
                 </div>
               </div>

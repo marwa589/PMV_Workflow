@@ -133,7 +133,6 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
   const canConfirmReceipt = document.status === DocumentStatus.APPROVED && !document.receivedAt && (await userHasPermissionForDocument(session, "documents.confirm_receipt", permissionScope));
   const canArchive = await userHasPermissionForDocument(session, "documents.archive", permissionScope);
 
-  const typeLabel = document.documentSubtype ? `${document.documentType.name} - ${document.documentSubtype.name}` : document.documentType.name;
   const waitingFor = currentStep
     ? currentStep.approvers.map((entry) => (entry.user?.name ?? entry.userType?.name ?? "")).filter(Boolean).join(", ")
     : "";
@@ -190,7 +189,6 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
             <div className="space-y-3 text-sm text-slate-700">
-              <Row label="Document type" value={typeLabel} />
               <Row label="Project" value={document.project ? `${document.project.code} - ${document.project.name}` : "—"} />
               {document.project?.location ? <Row label="Location" value={document.project.location.name} /> : null}
               {headerFields.map((value, index) => (
@@ -366,7 +364,6 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
                   <p className="font-medium text-slate-900">
                     Step {item.processStep.stepNumber}: {item.processStep.name}
                   </p>
-                  <p className="text-slate-600">{item.document.documentType.name}</p>
                 </div>
                 <div className="flex items-center gap-3">
                   <StatusBadge status={item.document.status} label={getDocumentStatusDisplay(item.document.status, { levelNumber: item.document.currentWorkflowStep })} />

@@ -10,7 +10,7 @@ Built with [Next.js](https://nextjs.org), Prisma and PostgreSQL.
 
 | Concept | What it is |
 |---|---|
-| **Document type / sub type** | Comp Sheet, Material Req (Cash, Credit...), Eq Rental Req, Purchase Order... and anything you add. A type has a naming pattern such as `{TYPE}-{PROJECT}-{YYYY}-{SEQ:4}` giving `MR-P1-2026-0007`. |
+| **Document type / sub type** | Comp Sheet, Material Req (Cash, Credit...), Eq Rental Req, Purchase Order... and anything you add. Each type and sub type has an internal code and a separate configurable numbering code. Subtyped documents use `TYPE-SUBTYPE-YEAR-SEQUENCE` (for example, `MR-CH-2026-0001`); types without subtypes keep their naming pattern such as `{TYPE}-{PROJECT}-{YYYY}-{SEQ:4}`. |
 | **Custom fields** | Extra fields a type (or one sub type) collects, per document or per line item. |
 | **Location / project** | Locations are generally countries. A project belongs to a location and has a short code used in document numbers. |
 | **User type** | Clerk, Engineer, Manager or Admin. Set once when the account is created; never changes. |
@@ -30,9 +30,11 @@ where a flow names them.
 ### How a document moves
 
 Upload (by someone the uploader step allows) → level 1 → ... → approved. At each level any one listed approver can:
-**approve** (next level), **reject** (document becomes cancelled; upload a new one), **request a revision** (send it back
-to any earlier step, including the uploader, with a comment; that step and every step after it run again), or
-**hold** / **resume**. Each document keeps its own copy of the flow, so editing a flow never changes documents in progress.
+**approve** (next level), **reject** (document becomes cancelled; upload a new one), **request a revision** (send it to
+an earlier step, defaulting to the immediately previous step, with a comment), or **hold** / **resume**. The selected
+reviser can edit the latest PDF with the review text and circle tools or upload a replacement. Resubmission creates a
+new file version, preserves earlier versions, and returns the document to the approver who requested the revision.
+Each document keeps its own copy of the flow, so editing a flow never changes documents in progress.
 
 ## First-time setup
 
@@ -81,6 +83,23 @@ Until you create flow assignments, every uploaded document is approved automatic
 
 The **Approver** role has no permissions on purpose: it only sees documents where a flow names the user or their type,
 plus their own approval history.
+
+In **Document Types**, configure the numbering code separately from the internal code. When an uploader selects a type
+and sub type, the app uses those configured codes automatically. Subtype numbering has its own sequence per subtype
+and year and does not depend on project. Changing a numbering code renumbers existing subtype documents in date order
+and continues from the resulting sequence; document types without subtypes keep their configured naming pattern.
+
+In **Roles & Access**, an assignment can be scoped to multiple projects, document types, and processes. Each selected
+document type can independently cover all its subtypes or only the selected subtypes. Leaving a scope empty means no
+restriction for that scope.
+
+Deactivating an item that is referenced by documents, assignments, flows, or process runs asks for confirmation and
+shows what is using it. Deactivation prevents new work from using that item; existing documents and in-progress process
+runs remain intact. A process that depends on a deactivated document type or subtype cannot be started for new work.
+Deactivating a user blocks sign-in; reassign any pending approvals they can no longer perform.
+
+Sidebar pending counts follow the signed-in user's document visibility: each document type shows its visible pending
+documents, and **All Documents** (or **My Documents**) shows the total across all document types the user can see.
 
 ## Route gate (middleware)
 

@@ -129,7 +129,10 @@ export async function getEligibleRecipients(
 
   const delegations = baseIds.length
     ? await db.approvalDelegation.findMany({
-        where: { delegatorUserId: { in: baseIds } },
+        where: {
+          delegatorUserId: { in: baseIds },
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
         select: { delegateUserId: true },
       })
     : [];

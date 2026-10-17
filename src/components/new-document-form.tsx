@@ -186,7 +186,6 @@ type Props = {
 export default function NewDocumentForm({ documentTypes, projects, defaultRedirectPath = "/clerk", process = null }: Props) {
   const router = useRouter();
 
-  const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [documentTypeId, setDocumentTypeId] = useState(process?.documentTypeId ?? "");
   const [documentSubtypeId, setDocumentSubtypeId] = useState(process?.documentSubtypeId ?? "");
@@ -250,7 +249,6 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
   }
 
   function resetForm() {
-    setTitle("");
     setDescription("");
     if (!typeLocked) setDocumentTypeId("");
     if (!subtypeLocked) setDocumentSubtypeId("");
@@ -277,10 +275,6 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
       setError("Please choose at least one file.");
       return;
     }
-    if (!title.trim() && fileTitles.every((value) => !value.trim())) {
-      setError("Please enter a title.");
-      return;
-    }
     const missing = headerFields.find((field) => field.isRequired && field.dataType !== "BOOLEAN" && isBlank(headerValues[field.fieldKey]));
     if (missing) {
       setError(`${missing.label} is required.`);
@@ -303,7 +297,6 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
 
     try {
       const formData = new FormData();
-      formData.set("title", title);
       formData.set("description", description);
       formData.set("documentTypeId", selectedType.id);
       if (documentSubtypeId) formData.set("documentSubtypeId", documentSubtypeId);
@@ -433,13 +426,6 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
                   <option key={project.id} value={project.id}>{project.code} - {project.name}</option>
                 ))}
               </select>
-            </div>
-
-            <div>
-              <label htmlFor="title" className="mb-2 block text-sm font-medium text-slate-700">
-                Title{selectedFiles.length > 1 ? " (each file also has its own title below)" : ""}
-              </label>
-              <input id="title" type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Document title" className={inputClass} />
             </div>
 
             {headerFields.length > 0 ? (

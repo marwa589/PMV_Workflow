@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { getDocumentStatusDisplay } from "@/lib/document-status";
 import { cancelProcess } from "@/lib/workflow/processes";
 import { WorkflowError } from "@/lib/workflow/errors";
+import { getProcessStatusLabel } from "@/lib/process-status";
 
 export const runtime = "nodejs";
 
@@ -59,6 +60,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       id: run.id,
       reference: run.reference,
       status: run.status,
+      statusLabel: getProcessStatusLabel(run.status, run.currentStepNumber, run.processDefinition.steps),
       currentStepNumber: run.currentStepNumber,
       startedAt: run.startedAt.toISOString(),
       completedAt: run.completedAt?.toISOString() ?? null,

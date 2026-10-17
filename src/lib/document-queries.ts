@@ -6,6 +6,7 @@ import { buildDocumentVisibilityWhere } from "@/lib/auth/access";
 import { USER_TYPE, type UserTypeCode } from "@/lib/auth/roles";
 import { createEligibilityChecker } from "@/lib/workflow/eligibility";
 import { getDocumentStatusDisplay } from "@/lib/document-status";
+import { getProcessStatusLabel } from "@/lib/process-status";
 
 // One row shape for every list screen. Document type, sub type and project are data now,
 // and "who it is waiting for" is read from the approval levels copied onto the document.
@@ -50,7 +51,30 @@ const documentListSelect = {
   approvals: {
     orderBy: { performedAt: "desc" },
     take: 30,
-    select: { action: true, comments: true, levelNumber: true, performedBy: { select: { name: true } } },
+    select: { action: true, comments: true, levelNumber: true, performedById: true, performedBy: { select: { name: true } } },
+  },
+  processLinks: {
+    orderBy: { linkedAt: "desc" },
+    take: 1,
+    select: {
+      processInstance: {
+        select: {
+          status: true,
+          currentStepNumber: true,
+          processDefinition: {
+            select: {
+              steps: {
+                select: {
+                  stepNumber: true,
+                  documentType: { select: { code: true } },
+                  documentSubtype: { select: { code: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   },
 } satisfies Prisma.DocumentSelect;
 
@@ -81,6 +105,8 @@ export type DocumentRow = {
   currentApprover: { name: string } | null;
   // The latest rejection, if any (the rejected level stays recorded on the document).
   rejection: { comments: string | null; levelNumber: number | null; performedByName: string } | null;
+  processStatus: string | null;
+  processStatusLabel: string | null;
 };
 
 export type ActionDocumentRow = DocumentRow;
@@ -97,6 +123,7 @@ export function toDocumentRow(document: RawDocument): DocumentRow {
 
   const rejection = document.approvals.find((entry) => entry.action === ApprovalActionType.REJECTED);
   const latestComment = document.approvals.find((entry) => entry.comments)?.comments ?? null;
+  const processInstance = document.processLinks[0]?.processInstance ?? null;
 
   return {
     id: document.id,
@@ -129,6 +156,10 @@ export function toDocumentRow(document: RawDocument): DocumentRow {
     rejection: rejection
       ? { comments: rejection.comments, levelNumber: rejection.levelNumber, performedByName: rejection.performedBy.name }
       : null,
+    processStatus: processInstance?.status ?? null,
+    processStatusLabel: processInstance
+      ? getProcessStatusLabel(processInstance.status, processInstance.currentStepNumber, processInstance.processDefinition.steps)
+      : null,
   };
 }
 
@@ -151,7 +182,7 @@ export async function getDocumentRows(where: Prisma.DocumentWhereInput, take?: n
  * Documents that are waiting for this user to act (they may be named by the flow, belong to a named
  * user type with a matching assignment, or hold someone's delegated tasks):
  *  - pending or on hold: the user is eligible at the current level
- *  - sent back to the uploader: the user created it or is eligible at the uploader level
+ *  - sent back for revision: the user created it (level 0) or is eligible at the selected earlier level
  */
 export async function getActionableDocuments(
   user: { userId: string; userType: UserTypeCode },
@@ -169,9 +200,14 @@ export async function getActionableDocuments(
 
   return candidates
     .filter((document) => {
-      const level = document.status === DocumentStatus.REVISION_REQUIRED ? 0 : document.currentWorkflowStep;
+      const level = document.currentWorkflowStep;
       if (level === null) return false;
-      if (document.status === DocumentStatus.REVISION_REQUIRED && document.createdById === user.userId) return true;
+      if (
+        document.status === DocumentStatus.PENDING &&
+        document.approvals[0]?.action === ApprovalActionType.RESUBMITTED &&
+        document.approvals.find((entry) => entry.action === ApprovalActionType.REQUESTED_REVISION)?.performedById !== user.userId
+      ) return false;
+      if (document.status === DocumentStatus.REVISION_REQUIRED && level === 0 && document.createdById === user.userId) return true;
 
       const step = document.approvalSteps.find((candidate) => candidate.levelNumber === level);
       if (!step) return false;
@@ -207,7 +243,8 @@ export async function getDocumentsForApprover(userId: string, userType: UserType
   const [
     pendingDocuments,
     onHoldDocuments,
-    revisionRequiredDocuments,
+    assignedRevisionDocuments,
+    requestedRevisionDocuments,
     approvedDocuments,
     rejectedDocuments,
     myDocuments,
@@ -215,7 +252,7 @@ export async function getDocumentsForApprover(userId: string, userType: UserType
   ] = await Promise.all([
     getActionableDocuments(user, [DocumentStatus.PENDING]),
     getActionableDocuments(user, [DocumentStatus.ON_HOLD]),
-    // Documents this person sent back and that are still with the uploader.
+    getActionableDocuments(user, [DocumentStatus.REVISION_REQUIRED]),
     listDocuments({
       status: DocumentStatus.REVISION_REQUIRED,
       approvals: { some: { performedById: userId, action: ApprovalActionType.REQUESTED_REVISION } },
@@ -234,7 +271,9 @@ export async function getDocumentsForApprover(userId: string, userType: UserType
   return {
     pendingDocuments,
     onHoldDocuments,
-    revisionRequiredDocuments,
+    revisionRequiredDocuments: Array.from(
+      new Map([...assignedRevisionDocuments, ...requestedRevisionDocuments].map((document) => [document.id, document])).values(),
+    ),
     approvedDocuments,
     rejectedDocuments,
     myDocuments,

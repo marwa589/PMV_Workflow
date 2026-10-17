@@ -47,8 +47,6 @@ export default async function ApproverDashboardPage() {
               id: row.id,
               documentNumber: row.documentNumber,
               title: row.title,
-              documentTypeName: row.documentType.name,
-              documentSubtypeName: row.documentSubtype?.name ?? null,
               projectLabel: row.project ? `${row.project.code} - ${row.project.name}` : null,
               statusLabel: row.statusLabel,
               currentVersion: row.currentVersion,

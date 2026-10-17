@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { callApi } from "@/lib/admin-client";
+import { callApi, callApiWithDeactivationConfirmation } from "@/lib/admin-client";
 import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton, secondaryButton } from "@/components/admin/admin-ui";
 
 type Location = { id: string; name: string; _count: { projects: number; companies: number } };
@@ -44,6 +44,7 @@ export default function ProjectsManager() {
     setError(null);
     setNotice(null);
     const result = await action;
+    if ("cancelled" in result && result.cancelled) return;
     if (!result.ok) return setError(result.message ?? "Something went wrong.");
     setNotice(done);
     after?.();
@@ -137,7 +138,9 @@ export default function ProjectsManager() {
               </div>
               <div className="flex gap-2">
                 <button type="button" className={secondaryButton} onClick={() => { setProjectEditId(item.id); setProject({ code: item.code, name: item.name, locationId: item.locationId ?? "" }); }}>Edit</button>
-                <button type="button" className={secondaryButton} onClick={() => run(callApi("/api/admin/projects", "PATCH", { id: item.id, code: item.code, name: item.name, locationId: item.locationId ?? "", isActive: !item.isActive }), "Project updated.")}>{item.isActive ? "Deactivate" : "Activate"}</button>
+                <button type="button" className={secondaryButton} onClick={() => run(item.isActive
+                  ? callApiWithDeactivationConfirmation("/api/admin/projects", { id: item.id, code: item.code, name: item.name, locationId: item.locationId ?? "", isActive: false })
+                  : callApi("/api/admin/projects", "PATCH", { id: item.id, code: item.code, name: item.name, locationId: item.locationId ?? "", isActive: true }), "Project updated.")}>{item.isActive ? "Deactivate" : "Activate"}</button>
                 <button type="button" className={dangerButton} onClick={() => window.confirm(`Delete ${item.name}?`) && run(callApi("/api/admin/projects", "DELETE", { id: item.id }), "Project deleted.")}>Delete</button>
               </div>
             </div>
@@ -177,6 +180,9 @@ export default function ProjectsManager() {
               </div>
               <div className="flex gap-2">
                 <button type="button" className={secondaryButton} onClick={() => { setCompanyEditId(item.id); setCompany({ name: item.name, locationId: item.locationId ?? "" }); }}>Edit</button>
+                <button type="button" className={secondaryButton} onClick={() => run(item.isActive
+                  ? callApiWithDeactivationConfirmation("/api/admin/companies", { id: item.id, name: item.name, locationId: item.locationId ?? "", isActive: false })
+                  : callApi("/api/admin/companies", "PATCH", { id: item.id, name: item.name, locationId: item.locationId ?? "", isActive: true }), "Company updated.")}>{item.isActive ? "Deactivate" : "Activate"}</button>
                 <button type="button" className={dangerButton} onClick={() => window.confirm(`Delete ${item.name}?`) && run(callApi("/api/admin/companies", "DELETE", { id: item.id }), "Company deleted.")}>Delete</button>
               </div>
             </div>

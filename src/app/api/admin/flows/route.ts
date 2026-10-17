@@ -2,7 +2,7 @@
 import { ApproverType, type Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
+import { deactivationConfirmationResponse, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
 
 export const runtime = "nodejs";
 
@@ -20,7 +20,7 @@ const flowInclude = {
       },
     },
   },
-  _count: { select: { assignments: true } },
+  _count: { select: { assignments: true, documents: true } },
 } satisfies Prisma.DocumentWorkflowTemplateInclude;
 
 type FlowRow = Prisma.DocumentWorkflowTemplateGetPayload<{ include: typeof flowInclude }>;
@@ -34,6 +34,7 @@ function serializeFlow(flow: FlowRow) {
     isActive: flow.isActive,
     createdAt: flow.createdAt.toISOString(),
     assignmentCount: flow._count.assignments,
+    documentCount: flow._count.documents,
     steps: flow.steps.map((step) => ({
       id: step.id,
       stepNumber: step.stepNumber,
@@ -182,6 +183,33 @@ export async function PATCH(request: Request) {
 
   const body = await readJsonBody(request);
   const id = str(body?.id);
+  if (id && body?.isActive === false) {
+    try {
+      const usage = await prisma.documentWorkflowTemplate.findUnique({
+        where: { id },
+        select: { isActive: true, _count: { select: { assignments: true, documents: true } } },
+      });
+      if (usage?.isActive) {
+        const confirmation = deactivationConfirmationResponse(body, "This approval flow", [
+          { label: "flow assignment(s)", count: usage._count.assignments },
+          { label: "document(s)", count: usage._count.documents },
+        ]);
+        if (confirmation) return confirmation;
+      }
+    } catch (error) {
+      return prismaErrorResponse(error) ?? NextResponse.json({ message: "Unable to check approval flow usage." }, { status: 500 });
+    }
+  }
+
+  if (id && typeof body?.isActive === "boolean" && body.code === undefined && body.name === undefined) {
+    try {
+      const flow = await prisma.documentWorkflowTemplate.update({ where: { id }, data: { isActive: body.isActive }, include: flowInclude });
+      return NextResponse.json({ flow: serializeFlow(flow) });
+    } catch (error) {
+      return prismaErrorResponse(error) ?? NextResponse.json({ message: "Unable to update the flow." }, { status: 500 });
+    }
+  }
+
   const code = str(body?.code);
   const name = str(body?.name);
   if (!id || !code || !name) return NextResponse.json({ message: "Flow id, code and name are required." }, { status: 400 });

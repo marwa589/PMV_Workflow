@@ -12,9 +12,10 @@ CREATE UNIQUE INDEX "UserAssignment_scope_key"
     COALESCE("locationId", ''), COALESCE("documentTypeId", ''), COALESCE("documentSubtypeId", ''),
     COALESCE("processDefinitionId", ''));
 
--- One counter per type + project + year (project may be empty).
+-- One counter per type + subtype + project + year. Subtyped document numbers leave project empty.
 CREATE UNIQUE INDEX "DocumentNumberCounter_scope_key"
-  ON "DocumentNumberCounter" ("documentTypeId", COALESCE("projectId", ''), "periodYear");
+  ON "DocumentNumberCounter" ("documentTypeId", COALESCE("documentSubtypeId", ''),
+    COALESCE("projectId", ''), "periodYear");
 
 -- One value per document + field + line (line empty for header fields).
 CREATE UNIQUE INDEX "DocumentFieldValue_scope_key"

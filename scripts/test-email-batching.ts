@@ -161,7 +161,7 @@ async function main() {
 
   const upload = (type = MR, subtypeId: string | null = CASH.id) =>
     prisma.$transaction(async (tx) => {
-      const documentNumber = await generateDocumentNumber(tx, { documentTypeId: type.id, projectId: p1.id });
+      const documentNumber = await generateDocumentNumber(tx, { documentTypeId: type.id, documentSubtypeId: subtypeId, projectId: p1.id });
       const doc = await tx.document.create({ data: { documentNumber, title: `Doc ${documentNumber}`, status: DocumentStatus.PENDING, currentVersion: 0, createdById: clerk.id, documentTypeId: type.id, documentSubtypeId: subtypeId, projectId: p1.id } });
       const version = await tx.documentVersion.create({ data: { documentId: doc.id, versionNumber: 0, filePath: "x.pdf", originalName: "x.pdf", mimeType: "application/pdf", fileSize: 1, uploadedById: clerk.id } });
       const result = await startApproval(tx, { documentId: doc.id, actor: as(clerk, "clerk"), versionId: version.id });

@@ -5,13 +5,13 @@ import { callApi } from "@/lib/admin-client";
 import { Banner, Card, Empty, Field, dangerButton, inputClass, primaryButton } from "@/components/admin/admin-ui";
 
 type Person = { id: string; name: string; email: string };
-type Delegation = { id: string; reason: string | null; createdAt: string; delegator: Person; delegate: Person; createdBy: { id: string; name: string } };
+type Delegation = { id: string; reason: string | null; createdAt: string; expiresAt: string | null; delegator: Person; delegate: Person; createdBy: { id: string; name: string } };
 
-/** Hand one user's approval tasks to another user. It stays in place until you delete it. */
+/** Hand one user's approval tasks to another user, with an optional end time. */
 export default function DelegationsManager() {
   const [delegations, setDelegations] = useState<Delegation[]>([]);
   const [users, setUsers] = useState<Person[]>([]);
-  const [form, setForm] = useState({ delegatorUserId: "", delegateUserId: "", reason: "" });
+  const [form, setForm] = useState({ delegatorUserId: "", delegateUserId: "", reason: "", expiresAt: "" });
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -29,10 +29,13 @@ export default function DelegationsManager() {
   async function create() {
     setError(null);
     setNotice(null);
-    const result = await callApi("/api/admin/delegations", "POST", form);
+    const result = await callApi("/api/admin/delegations", "POST", {
+      ...form,
+      expiresAt: form.expiresAt ? new Date(form.expiresAt).toISOString() : null,
+    });
     if (!result.ok) return setError(result.message);
     setNotice("Delegation created.");
-    setForm({ delegatorUserId: "", delegateUserId: "", reason: "" });
+    setForm({ delegatorUserId: "", delegateUserId: "", reason: "", expiresAt: "" });
     await load();
   }
 
@@ -50,8 +53,8 @@ export default function DelegationsManager() {
       {error ? <Banner kind="error">{error}</Banner> : null}
       {notice ? <Banner kind="success">{notice}</Banner> : null}
 
-      <Card title="New delegation" subtitle="The person taking over can act on every approval level the person who is away could act on. The history records who acted for whom.">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <Card title="New delegation" subtitle="The person taking over can act on every approval level the person who is away could act on. The history records who acted for whom. Leave the end time blank for an ongoing delegation.">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Field label="Person who is away">
             <select value={form.delegatorUserId} onChange={(e) => setForm({ ...form, delegatorUserId: e.target.value })} className={inputClass}>
               <option value="">Select a user</option>
@@ -65,13 +68,16 @@ export default function DelegationsManager() {
             </select>
           </Field>
           <Field label="Reason (optional)"><input value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} className={inputClass} /></Field>
+          <Field label="Ends at (optional)" hint="After this time, unfinished approval tasks return to the person who is away.">
+            <input type="datetime-local" value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} className={inputClass} />
+          </Field>
         </div>
         <div className="mt-4">
           <button type="button" className={primaryButton} disabled={!form.delegatorUserId || !form.delegateUserId} onClick={create}>Create delegation</button>
         </div>
       </Card>
 
-      <Card title="Active delegations">
+      <Card title="Delegations">
         {delegations.length === 0 ? <Empty>No delegations.</Empty> : null}
         <div className="space-y-2">
           {delegations.map((item) => (
@@ -80,6 +86,9 @@ export default function DelegationsManager() {
                 <span className="font-medium text-slate-900">{item.delegator.name}</span> → <span className="font-medium text-slate-900">{item.delegate.name}</span>
                 <span className="ml-3 text-xs text-slate-500">
                   set by {item.createdBy.name} on {new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(item.createdAt))}
+                  {item.expiresAt
+                    ? ` · ${new Date(item.expiresAt) <= new Date() ? "Expired" : `ends ${new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.expiresAt))}`}`
+                    : " · No end time"}
                   {item.reason ? ` · ${item.reason}` : ""}
                 </span>
               </div>

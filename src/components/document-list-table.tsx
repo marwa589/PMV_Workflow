@@ -23,6 +23,8 @@ export type DocumentListItem = {
   projectLabel?: string | null;
   currentVersion: number;
   currentApproverName?: string | null;
+  processStatus?: string | null;
+  processStatusLabel?: string | null;
   canReview?: boolean;
   rejectionComments?: string | null;
   dateLabel: string;
@@ -54,7 +56,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
   const pagedDocuments = visibleDocuments.slice(0, visibleCount);
   const approvedDocuments = useMemo(() => visibleDocuments.filter((doc) => doc.status === "APPROVED"), [visibleDocuments]);
   const selectedDocuments = useMemo(() => visibleDocuments.filter((doc) => selectedIds.includes(doc.id)), [selectedIds, visibleDocuments]);
-  const columnCount = (showBulkActions ? 1 : 0) + (showDownloadTracking ? 11 : 8);
+  const columnCount = (showBulkActions ? 1 : 0) + (showDownloadTracking ? 12 : 9);
 
   function toggleSelection(id: string) {
     setSelectedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
@@ -138,12 +140,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
     }
   }
 
-  function getDocumentTypeLabel(doc: DocumentListItem): string {
-    if (!doc.documentTypeName) return "Document";
-    return doc.documentSubtypeName ? `${doc.documentTypeName} - ${doc.documentSubtypeName}` : doc.documentTypeName;
-  }
-
-  function getCurrentApproverDisplay(doc: DocumentListItem): string {
+    function getCurrentApproverDisplay(doc: DocumentListItem): string {
     if (doc.status === "APPROVED") {
       return "Approved";
     }
@@ -192,7 +189,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
             <th className="px-5 py-3 font-semibold">Document Number</th>
             <th className="px-5 py-3 font-semibold">Title</th>
             <th className="px-5 py-3 font-semibold">Status</th>
-            <th className="px-5 py-3 font-semibold">Type</th>
+            <th className="px-5 py-3 font-semibold">Process Status</th>
             <th className="px-5 py-3 font-semibold">Project</th>
             {showDownloadTracking ? <><th className="px-5 py-3 font-semibold">Download Status</th><th className="px-5 py-3 font-semibold">Download Timestamp</th><th className="px-5 py-3 font-semibold">Approval Date/Time</th></> : null}
             <th className="px-5 py-3 font-semibold">Version</th>
@@ -247,9 +244,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                     <StatusBadge status={doc.status} label={doc.statusLabel} />
                   </td>
                   <td className="px-5 py-4">
-                    <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                      {getDocumentTypeLabel(doc)}
-                    </span>
+                    <StatusBadge status={doc.processStatus || "NONE"} label={doc.processStatusLabel || "No Process"} />
                   </td>
                   <td className="px-5 py-4 text-slate-700">{doc.projectLabel || "—"}</td>
                   {showDownloadTracking ? (

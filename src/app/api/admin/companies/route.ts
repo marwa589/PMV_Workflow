@@ -1,7 +1,7 @@
 // src/app/api/admin/companies/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { optionalId, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
+import { deactivationConfirmationResponse, optionalId, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
 
 export const runtime = "nodejs";
 
@@ -49,6 +49,19 @@ export async function PATCH(request: Request) {
   if (!(await locationExists(locationId))) return NextResponse.json({ message: "Selected location does not exist." }, { status: 400 });
 
   try {
+    if (body?.isActive === false) {
+      const usage = await prisma.company.findUnique({
+        where: { id },
+        select: { isActive: true, _count: { select: { scopedAssignments: true } } },
+      });
+      if (usage?.isActive) {
+        const confirmation = deactivationConfirmationResponse(body, "This company", [
+          { label: "role assignment(s)", count: usage._count.scopedAssignments },
+        ]);
+        if (confirmation) return confirmation;
+      }
+    }
+
     const company = await prisma.company.update({
       where: { id },
       data: { name, locationId, ...(typeof body?.isActive === "boolean" ? { isActive: body.isActive } : {}) },

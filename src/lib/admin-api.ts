@@ -40,6 +40,22 @@ export function optionalId(value: unknown): string | null {
   return text.length > 0 ? text : null;
 }
 
+export function deactivationConfirmationResponse(
+  body: Record<string, unknown> | null,
+  entity: string,
+  usage: Array<{ label: string; count: number }>,
+  continuation = "Deactivating stops new use but preserves existing documents and running work.",
+): NextResponse | null {
+  const activeUsage = usage.filter((item) => item.count > 0);
+  if (activeUsage.length === 0 || body?.confirmDeactivate === true) return null;
+
+  const details = activeUsage.map(({ label, count }) => `${count} ${label}`).join(", ");
+  return NextResponse.json({
+    confirmationRequired: true,
+    message: `${entity} is currently in use (${details}). ${continuation} Are you sure you want to continue?`,
+  }, { status: 409 });
+}
+
 /** Maps common Prisma errors to a readable response; returns null when the error is not a known one. */
 export function prismaErrorResponse(error: unknown, messages: { duplicate?: string; reference?: string } = {}): NextResponse | null {
   if (error && typeof error === "object" && "code" in error) {
