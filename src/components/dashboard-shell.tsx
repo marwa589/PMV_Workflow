@@ -189,16 +189,22 @@ function getVisibleNavItems(role: AppRole, userName: string, userLocation: Sideb
   if (visibility === "ERR_ONLY") {
     const canUpload = isUploader ?? isErrUploaderAccount(userName, role);
     const items: NavItem[] = [
-      ...(userEmail?.trim().toLowerCase() === "ramzi@ahmadiah.com" ? [{ label: "MR / Comparison Approvals", href: "/approver/my-documents", icon: ClipboardCheck }] : []),
-      ...(userEmail?.trim().toLowerCase() === "ramzi@ahmadiah.com" ? [{ label: "MRs - AVK", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION&location=AVK", icon: FileText }] : []),
       { label: "Dashboard", href: "/errs?view=all&section=dashboard", icon: LayoutDashboard },
-      { label: "My Documents", href: "/errs?view=all&section=my-documents", icon: FileText },
+      { label: "My Documents", href: userEmail?.trim().toLowerCase() === "ramzi@ahmadiah.com"
+        ? "/approver/my-documents"
+        : "/errs?view=all&section=my-documents", icon: FileText },
+      ...(userEmail?.trim().toLowerCase() === "ramzi@ahmadiah.com" ? [
+        { label: "MRs - AVK", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION&location=AVK", icon: FileText },
+        { label: "Comparison Sheets", href: "/approver/my-documents?documentType=COMPARISON", icon: FileText },
+      ] : []),
       ...(canViewReadyMixMrs ? [{ label: "MRs - Ready Mix Khobar", href: "/ready-mix-khobar-mrs", icon: FileText }] : []),
       ...(canUpload ? [{ label: "New Document", href: "/new-document", icon: FilePlus2 }] : []),
       ...(canUpload ? [{ label: "ERR - Marc Only", href: "/errs/new?marcOnly=1", icon: FilePlus2 }] : []),
       { label: "ERRs", href: "/errs", icon: FileText },
       ...(canUpload ? [{ label: "Attach Vouchers", href: "/errs/vouchers", icon: FilePlus2 }] : []),
-      { label: "Pending Approvals", href: "/errs?view=pending", icon: ClipboardCheck },
+      { label: "Pending Approvals", href: userEmail?.trim().toLowerCase() === "ramzi@ahmadiah.com"
+        ? "/approver/pending-approvals?documentType=MATERIAL_REQUISITION&location=AVK"
+        : "/errs?view=pending", icon: ClipboardCheck },
       { label: "Revision Required", href: "/errs?view=revision-required", icon: RotateCcw },
       { label: "On Hold", href: "/errs?view=on-hold", icon: PauseCircle },
       { label: "Approved Documents", href: "/errs?view=approved", icon: CheckCircle2 },
@@ -457,6 +463,7 @@ function Sidebar({
 export default function DashboardShell({
   role,
   userName,
+  userEmail,
   title,
   subtitle,
   isUploader,
@@ -604,13 +611,13 @@ export default function DashboardShell({
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-0 h-80 bg-gradient-to-br from-slate-200 via-slate-100 to-cyan-100" />
       <div className="relative z-10 flex min-h-screen">
         <div className="hidden lg:block">
-              <Sidebar role={role} userName={userName} counts={sidebarCounts} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader || sidebarCounts.isErrUploader} />
+              <Sidebar role={role} userName={userName} userEmail={userEmail} counts={sidebarCounts} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader || sidebarCounts.isErrUploader} />
         </div>
 
         {menuOpen && (
           <div className="fixed inset-0 z-40 flex lg:hidden">
             <div className="h-full shadow-2xl">
-              <Sidebar role={role} userName={userName} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader || sidebarCounts.isErrUploader} />
+              <Sidebar role={role} userName={userName} userEmail={userEmail} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader || sidebarCounts.isErrUploader} />
             </div>
             <button
               type="button"

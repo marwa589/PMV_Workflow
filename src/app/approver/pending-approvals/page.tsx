@@ -1,3 +1,4 @@
+
 import { UserRole } from "@prisma/client";
 import Link from "next/link";
 import DashboardShell from "@/components/dashboard-shell";
@@ -5,26 +6,39 @@ import ApproverPendingTable from "@/components/approver-pending-table";
 import DocumentStatusFilter from "@/components/document-status-filter";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
-import { parseDocumentStatusFilter, parseDocumentTypeFilter } from "@/lib/document-status";
+import { parseDocumentStatusFilter, parseDocumentTypeFilter, parseMrLocationFilter } from "@/lib/document-status";
 import { getDocumentsForApprover } from "@/lib/document-queries";
 import { roleLabel } from "@/lib/auth/roles";
 import { getModuleVisibility } from "@/lib/auth/module-visibility";
 import { getReviewAllCounts } from "@/lib/review-all";
+import { getSession } from "@/lib/auth/session";
+import { isRamziDocumentApprover } from "@/lib/mohamed-document-workflow";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-export default async function ApproverPendingApprovalsPage({ searchParams }: { searchParams: Promise<{ status?: string; documentType?: string }> }) {
-  const session = await requireRole([UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]);
+export default async function ApproverPendingApprovalsPage({ searchParams }: { searchParams: Promise<{ status?: string; documentType?: string; location?: string }> }) {
+  const currentSession = await getSession();
+  const isRamziWorkflowApprover = currentSession?.role === UserRole.ERR_USER
+    && isRamziDocumentApprover(currentSession.email);
+  if (currentSession?.role === UserRole.ERR_USER && !isRamziWorkflowApprover) {
+    redirect("/errs?view=all&section=my-documents");
+  }
+  const session = isRamziWorkflowApprover && currentSession
+    ? currentSession
+    : await requireRole([UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]);
   const resolvedSearchParams = await Promise.resolve(searchParams);
   const statusFilter = parseDocumentStatusFilter(resolvedSearchParams?.status);
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
-  const data = await getDocumentsForApprover(session.userId, session.role, session.name);
+  const locationFilter = parseMrLocationFilter(resolvedSearchParams?.location);
+  const data = await getDocumentsForApprover(session.userId, session.role, session.name, session.email);
   const reviewAllCounts = await getReviewAllCounts(session.userId, session.email);
 
   const pendingDocuments = [
     ...data.pendingDocuments
       .filter((doc) => !statusFilter || doc.status === statusFilter)
       .filter((doc) => !documentTypeFilter || doc.documentType === documentTypeFilter)
+      .filter((doc) => !locationFilter || (doc.documentType === "MATERIAL_REQUISITION" && (doc.uploaderLocation ?? doc.createdBy.location) === locationFilter))
       .map((doc) => ({
         id: doc.id,
         documentNumber: doc.documentNumber,
@@ -61,6 +75,7 @@ export default async function ApproverPendingApprovalsPage({ searchParams }: { s
     <DashboardShell
       role={session.role}
       userName={session.name}
+      userEmail={session.email}
       title="Pending Approvals"
       subtitle={`${roleLabel(session.role)} documents awaiting your action`}
     >
@@ -75,7 +90,7 @@ export default async function ApproverPendingApprovalsPage({ searchParams }: { s
           </div>
         </div>
         <div className="border-b border-slate-200 px-5 py-4">
-          <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} showDocumentTypeFilter={true} showErrDocumentType={getModuleVisibility(session.name, session.role) === "ALL"} showStatusFilter={false} />
+          <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} location={locationFilter} showDocumentTypeFilter={true} showErrDocumentType={getModuleVisibility(session.name, session.role) === "ALL"} showStatusFilter={false} />
         </div>
         <div className="px-1 py-4">
           <ApproverPendingTable documents={pendingDocuments} showQuotation={session.role === UserRole.APPROVER_3} />

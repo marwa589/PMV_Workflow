@@ -12,6 +12,7 @@ import { canViewInvoices } from "@/lib/invoice-access";
 import { isKsaViewer, KSA_USER_LOCATIONS } from "@/lib/ksa-viewer";
 import { READY_MIX_KHOBAR_PROJECT_NAME } from "@/lib/ready-mix-mr-access";
 import { isAvkMrViewer } from "@/lib/avk-access";
+import { isRamziDocumentApprover } from "@/lib/mohamed-document-workflow";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,6 +52,7 @@ export async function GET() {
   const isAvkDataViewer = isAvkMrViewer({ email: session.email, location: user?.location, role: session.role });
 
   const visibility = getModuleVisibility(session.name, session.role);
+  const isRamziWorkflowApprover = isRamziDocumentApprover(session.email);
   if (isKsaViewer(session)) {
     const [materialRequisitionsByLocation, comparisons, errAccess] = await Promise.all([
       countMaterialRequisitionsByLocation({ createdBy: { location: { in: [...KSA_USER_LOCATIONS] } } }),
@@ -73,7 +75,8 @@ export async function GET() {
       canViewInvoices: false,
     });
   }
-  const canQueryDocuments = canAccessMrModule(session.role) && visibility !== "ERR_ONLY";
+  const canQueryDocuments = (canAccessMrModule(session.role) && visibility !== "ERR_ONLY")
+    || isRamziWorkflowApprover;
   const errAccess = await getErrAccess();
   const canQueryErrs = Boolean(errAccess?.canAccessErrModule);
 
