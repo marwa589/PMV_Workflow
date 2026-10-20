@@ -1,0 +1,1 @@
+ALTER TYPE "ErrApprovalPath" ADD VALUE IF NOT EXISTS 'CEO';

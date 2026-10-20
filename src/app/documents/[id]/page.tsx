@@ -7,8 +7,11 @@ import StatusBadge from "@/components/status-badge";
 import WorkflowJourneyChart from "@/components/workflow-journey-chart";
 import PurchaseOrderUpload from "@/components/purchase-order-upload";
 import { requireAuth } from "@/lib/auth/guards";
+import { getDefaultRouteForRole } from "@/lib/auth/roles";
 import { canAccessDocument } from "@/lib/auth/resource-access";
 import { isOmar } from "@/lib/po-access";
+import { isKsaViewer, KSA_USER_LOCATIONS } from "@/lib/ksa-viewer";
+import { canViewInvoicesForMr } from "@/lib/invoice-access";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -44,10 +47,11 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
   const document = await prisma.document.findUnique({
     where: { id },
     include: {
-      createdBy: { select: { name: true, email: true } },
+      createdBy: { select: { name: true, email: true, location: true } },
       currentApprover: { select: { name: true, email: true } },
-      relatedComparison: { select: { id: true, documentNumber: true, title: true } },
-      linkedMRs: { select: { id: true, documentNumber: true, title: true }, orderBy: { createdAt: "asc" } },
+      relatedComparison: { select: { id: true, documentNumber: true, title: true, createdBy: { select: { location: true } } } },
+      downloadRecords: { where: { userId: session.userId }, select: { downloadedAt: true }, take: 1 },
+      linkedMRs: { select: { id: true, documentNumber: true, title: true, createdBy: { select: { location: true } } }, orderBy: { createdAt: "asc" } },
       versions: {
         orderBy: { versionNumber: "asc" },
         select: {
@@ -73,6 +77,10 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
           },
         },
       },
+      invoices: {
+        orderBy: { uploadedAt: "desc" },
+        include: { uploadedBy: { select: { name: true } } },
+      },
     },
   });
 
@@ -81,10 +89,20 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
   }
 
   const hasPurchaseOrder = document.purchaseOrderLinks.length > 0;
+  const visibleLinkedMrs = isKsaViewer(session)
+    ? document.linkedMRs.filter((mr) => KSA_USER_LOCATIONS.includes(mr.createdBy.location as typeof KSA_USER_LOCATIONS[number]))
+    : document.linkedMRs;
+  const visibleRelatedComparison = document.relatedComparison && (!isKsaViewer(session)
+    || KSA_USER_LOCATIONS.includes(document.relatedComparison.createdBy.location as typeof KSA_USER_LOCATIONS[number]))
+    ? document.relatedComparison
+    : null;
   const canReview =
+    !isKsaViewer(session) &&
     document.currentApproverId === session.userId &&
     document.status !== DocumentStatus.APPROVED &&
     document.status !== DocumentStatus.REJECTED;
+  const canViewDirectMrInvoices = document.documentType === "MATERIAL_REQUISITION"
+    && await canViewInvoicesForMr(session, document.id);
   return (
     <DashboardShell
       role={session.role}
@@ -94,7 +112,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
     >
       <div className="flex flex-wrap items-center gap-3">
         <Link
-          href={session.role === UserRole.ADMIN ? "/admin" : session.role === UserRole.CLERK ? "/clerk" : "/approver"}
+          href={getDefaultRouteForRole(session.role)}
           className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -123,7 +141,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
             Review
           </Link>
         ) : null}
-        {document.documentType === "MATERIAL_REQUISITION" && document.status === DocumentStatus.APPROVED && isOmar(session) ? (
+        {session.role !== UserRole.KSA_VIEWER && document.documentType === "MATERIAL_REQUISITION" && document.status === DocumentStatus.APPROVED && isOmar(session) ? (
           <PurchaseOrderUpload
             approvedMrs={[{ id: document.id, documentNumber: document.documentNumber, title: document.title, mrNumber: document.mrNumber, fileName: document.versions[0]?.originalName }]}
             initialMrId={document.id}
@@ -139,7 +157,10 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
             <h2 className="mt-2 text-2xl font-semibold text-slate-900">{document.documentNumber}</h2>
             <p className="mt-2 text-sm text-slate-600">{document.title}</p>
           </div>
-          <StatusBadge status={document.status} />
+          <StatusBadge
+            status={document.status}
+            label={(document.documentType === "MATERIAL_REQUISITION" || document.documentType === "COMPARISON") && document.projectName === "Ready Mix Khobar" && document.status === DocumentStatus.PENDING_APPROVER_1 ? "Pending Project Director" : undefined}
+          />
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -157,14 +178,14 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-medium text-slate-500">Related comparison</span>
-                    {document.relatedComparison ? (
+                    {visibleRelatedComparison ? (
                       <Link
-                        href={`/documents/${document.relatedComparison.id}`}
+                        href={`/documents/${visibleRelatedComparison.id}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="font-semibold text-cyan-700 hover:text-cyan-900 hover:underline"
                       >
-                        {document.relatedComparison.documentNumber}
+                        {visibleRelatedComparison.documentNumber}
                       </Link>
                     ) : (
                       <span className="font-semibold text-slate-900">None</span>
@@ -172,8 +193,8 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-medium text-slate-500">PO status</span>
-                    <span className={`font-semibold ${document.mrType === "CREDIT" ? hasPurchaseOrder ? "text-emerald-700" : "text-amber-700" : "text-slate-600"}`}>
-                      {document.mrType === "CREDIT" ? hasPurchaseOrder ? "PO Uploaded" : "PO Pending" : "Not Applicable"}
+                    <span className={`font-semibold ${document.status === "REJECTED" ? "text-rose-700" : document.mrType === "CREDIT" ? hasPurchaseOrder ? "text-emerald-700" : "text-amber-700" : "text-slate-600"}`}>
+                      {document.status === "REJECTED" ? "Document Rejected" : document.mrType === "CREDIT" ? hasPurchaseOrder ? "PO Uploaded" : "PO Pending" : "Not Applicable"}
                     </span>
                   </div>
                 </>
@@ -181,7 +202,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
               {document.documentType === "COMPARISON" ? (
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-medium text-slate-500">Linked MR</span>
-                  <span className="font-semibold text-slate-900">{document.linkedMRs[0]?.documentNumber || "None"}</span>
+                  <span className="font-semibold text-slate-900">{visibleLinkedMrs[0]?.documentNumber || "None"}</span>
                 </div>
               ) : null}
               <div className="flex items-center justify-between gap-3">
@@ -215,7 +236,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <WorkflowJourneyChart status={document.status} lastActiveStage={document.lastActiveStage} />
+        <WorkflowJourneyChart status={document.status} lastActiveStage={document.lastActiveStage} downloadedAt={document.downloadRecords[0]?.downloadedAt ?? null} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr,0.8fr]">
@@ -274,33 +295,33 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
         </section>
       </div>
 
-      {document.documentType === "MATERIAL_REQUISITION" && document.relatedComparison ? (
+      {document.documentType === "MATERIAL_REQUISITION" && visibleRelatedComparison ? (
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-slate-900">Related comparison</p>
-              <p className="mt-1 text-sm text-slate-600">{document.relatedComparison.title}</p>
+              <p className="mt-1 text-sm text-slate-600">{visibleRelatedComparison.title}</p>
             </div>
-            <Link href={`/documents/${document.relatedComparison.id}`} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            <Link href={`/documents/${visibleRelatedComparison.id}`} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
               Open comparison
             </Link>
           </div>
         </div>
       ) : null}
 
-      {document.documentType === "COMPARISON" && document.linkedMRs.length > 0 ? (
+      {document.documentType === "COMPARISON" && visibleLinkedMrs.length > 0 ? (
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-slate-900">Linked MRs</p>
               <div className="mt-1 space-y-1 text-sm text-slate-600">
-                {document.linkedMRs.map((linkedMr) => (
+                {visibleLinkedMrs.map((linkedMr) => (
                   <p key={linkedMr.id}>{linkedMr.documentNumber}: {linkedMr.title}</p>
                 ))}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              {document.linkedMRs.map((linkedMr) => (
+              {visibleLinkedMrs.map((linkedMr) => (
                 <Link key={linkedMr.id} href={`/documents/${linkedMr.id}`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                   Open {linkedMr.documentNumber}
                 </Link>
@@ -333,6 +354,27 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
                     </tr>
                   ))}
                 </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {canViewDirectMrInvoices && document.mrType === "CASH" ? (
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4"><h3 className="text-base font-semibold text-slate-900">Cash MR Invoices</h3></div>
+          {document.invoices.length === 0 ? <p className="px-5 py-6 text-sm text-slate-500">No invoices uploaded for this Cash MR.</p> : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3 font-semibold">Invoice</th><th className="px-5 py-3 font-semibold">Uploaded</th><th className="px-5 py-3 font-semibold">Uploaded By</th><th className="px-5 py-3 font-semibold">Action</th></tr></thead>
+                <tbody>{document.invoices.map((invoice) => (
+                  <tr key={invoice.id} className="border-t border-slate-100">
+                    <td className="px-5 py-4 font-medium text-slate-900">{invoice.originalName}</td>
+                    <td className="px-5 py-4 text-slate-600">{formatDate(invoice.uploadedAt)}</td>
+                    <td className="px-5 py-4 text-slate-600">{invoice.uploadedBy.name}</td>
+                    <td className="px-5 py-4"><a href={`/api/invoices/${invoice.id}/download`} className="font-medium text-cyan-700 hover:underline">Download</a></td>
+                  </tr>
+                ))}</tbody>
               </table>
             </div>
           )}

@@ -3,7 +3,7 @@
 import { PDFDocument, degrees, rgb } from "pdf-lib";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { ArrowLeft, Check, Download, Loader2, PenLine, RotateCw, Trash2, Type } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
@@ -32,10 +32,18 @@ type DocumentReviewEditorProps = {
   hasSignature: boolean;
   allowNoSignature?: boolean;
   allowQuotationUpload?: boolean;
+  allowApprovalRouteSelection?: boolean;
   downloadUrl?: string;
   actionUrl?: string;
   returnUrl?: string;
   allowHold?: boolean;
+  batchMode?: boolean;
+  batchActive?: boolean;
+  batchSubmitting?: boolean;
+  batchDecision?: "APPROVE" | "REJECT" | "COMMENT";
+  onBatchDecisionChange?: (decision: "APPROVE" | "REJECT" | "COMMENT") => void;
+  onBatchSubmit?: () => void;
+  onBatchAction?: (documentId: string, action: { validate: (decision: "APPROVE" | "REJECT" | "COMMENT") => string | null; submit: (decision: "APPROVE" | "REJECT" | "COMMENT") => Promise<boolean> } | null) => void;
 };
 
 export default function DocumentReviewEditor({
@@ -46,10 +54,18 @@ export default function DocumentReviewEditor({
   hasSignature,
   allowNoSignature = false,
   allowQuotationUpload = false,
+  allowApprovalRouteSelection = false,
   downloadUrl = `/api/documents/${documentId}/download`,
   actionUrl = `/api/documents/${documentId}/actions`,
   returnUrl = "/approver/pending-approvals",
   allowHold = false,
+  batchMode = false,
+  batchActive = false,
+  batchSubmitting = false,
+  batchDecision = "APPROVE",
+  onBatchDecisionChange,
+  onBatchSubmit,
+  onBatchAction,
 }: DocumentReviewEditorProps) {
   const router = useRouter();
   const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -59,6 +75,7 @@ export default function DocumentReviewEditor({
   const [pages, setPages] = useState<PageInfo[]>([]);
   const [signatureUrl, setSignatureUrl] = useState<string | null>(null);
   const [signatureRatio, setSignatureRatio] = useState(3);
+  const [preferredSignatureWidth, setPreferredSignatureWidth] = useState(24);
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [circles, setCircles] = useState<CirclePlacement[]>([]);
   const [textBoxes, setTextBoxes] = useState<TextBoxPlacement[]>([]);
@@ -72,7 +89,7 @@ export default function DocumentReviewEditor({
   const [selectedTextBoxId, setSelectedTextBoxId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [decision, setDecision] = useState<"APPROVE" | "REJECT" | "COMMENT" | "HOLD">("APPROVE");
-  const [approvalRoute, setApprovalRoute] = useState<"FINALIZE" | "ACTING_CEO" | "ACTING_CEO_THEN_CEO">("FINALIZE");
+  const [approvalRoute, setApprovalRoute] = useState<"FINALIZE" | "ACTING_CEO" | "ACTING_CEO_THEN_CEO" | "CEO" | "MANAGING_DIRECTOR">("FINALIZE");
   const [comments, setComments] = useState("");
   const [quotationFile, setQuotationFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
@@ -81,6 +98,22 @@ export default function DocumentReviewEditor({
   const [status, setStatus] = useState<string | null>(null);
 
   const activePlacement = useMemo(() => placements[placements.length - 1] || null, [placements]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/auth/signature-preference", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json() as Promise<{ preferredSignatureWidth?: number }>;
+      })
+      .then((result) => {
+        if (!cancelled && typeof result?.preferredSignatureWidth === "number") {
+          setPreferredSignatureWidth(result.preferredSignatureWidth);
+        }
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,7 +126,10 @@ export default function DocumentReviewEditor({
 });
         if (!response.ok) throw new Error("Unable to load the current PDF version.");
         const pdfBytes = new Uint8Array(await response.arrayBuffer());
-        const pdf = await pdfjs.getDocument({ data: pdfBytes.slice() }).promise;
+        const pdf = await pdfjs.getDocument({
+          data: pdfBytes.slice(),
+          wasmUrl: new URL("/pdfjs/wasm/", window.location.href).toString(),
+        }).promise;
         pdfBytesRef.current = pdfBytes;
         pdfJsDocumentRef.current = pdf;
         const nextPages: PageInfo[] = [];
@@ -186,7 +222,29 @@ export default function DocumentReviewEditor({
         setPlacements((current) => current.map((item) => item.id === origin.id ? { ...item, width, height } : item));
       }
     }
-    const end = () => setDragState(null);
+    const end = (event: PointerEvent) => {
+      if (activeDrag.mode === "resize") {
+        const pageRect = pageRefs.current[activeDrag.origin.pageNumber]?.getBoundingClientRect();
+        if (pageRect?.width && pageRect.height) {
+          const dx = ((event.clientX - activeDrag.startX) / pageRect.width) * 100;
+          const width = clamp(activeDrag.origin.width + dx, 8, 100 - activeDrag.origin.x);
+          const height = clamp(((width / 100) * pageRect.width / signatureRatio / pageRect.height) * 100, 4, 100 - activeDrag.origin.y);
+          setPlacements((current) => current.map((item) => item.id === activeDrag.id ? { ...item, width, height } : item));
+          setPreferredSignatureWidth(width);
+          void fetch("/api/auth/signature-preference", {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              "x-csrf-token": getCsrfTokenFromBrowser(),
+            },
+            body: JSON.stringify({ preferredSignatureWidth: width }),
+          }).then((response) => {
+            if (!response.ok) console.warn("Unable to save preferred signature size.");
+          }).catch(() => console.warn("Unable to save preferred signature size."));
+        }
+      }
+      setDragState(null);
+    };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); };
@@ -255,15 +313,28 @@ export default function DocumentReviewEditor({
       setError("Save a signature in Account Settings before signing.");
       return;
     }
-    const page = pages.find((value) => value.pageNumber === pageNumber);
-    const width = 24;
+    const viewportCenter = window.innerHeight / 2;
+    const visiblePage = pages
+      .map((value) => ({
+        pageNumber: value.pageNumber,
+        rect: pageRefs.current[value.pageNumber]?.getBoundingClientRect(),
+      }))
+      .filter((value) => value.rect && value.rect.bottom > 0 && value.rect.top < window.innerHeight)
+      .sort((left, right) => {
+        const leftCenter = (left.rect!.top + left.rect!.bottom) / 2;
+        const rightCenter = (right.rect!.top + right.rect!.bottom) / 2;
+        return Math.abs(leftCenter - viewportCenter) - Math.abs(rightCenter - viewportCenter);
+      })[0];
+    const targetPageNumber = visiblePage?.pageNumber ?? pageNumber;
+    const page = pages.find((value) => value.pageNumber === targetPageNumber);
+    const width = preferredSignatureWidth;
     const height = page ? clamp(((width / 100) * page.width / signatureRatio / page.height) * 100, 4, 18) : 10;
-    setPlacements((current) => [...current, { id: `${Date.now()}-${Math.random()}`, pageNumber, x: 12, y: 78, width, height, rotation: 0 }]);
+    setPlacements((current) => [...current, { id: `${Date.now()}-${Math.random()}`, pageNumber: targetPageNumber, x: Math.min(12, 100 - width), y: 78, width, height, rotation: 0 }]);
     setStatus("Signature added. Drag and resize it before approving.");
   }
 
   function startCircle(event: React.PointerEvent<HTMLDivElement>, pageNumber: number) {
-    if (textBoxMode || !circleMode || circleDrag) return;
+    if (textBoxMode || !circleMode || circleDrag) return; 
     const rect = event.currentTarget.getBoundingClientRect();
     const x = ((event.clientX - rect.left) / rect.width) * 100;
     const y = ((event.clientY - rect.top) / rect.height) * 100;
@@ -285,22 +356,30 @@ export default function DocumentReviewEditor({
     event.preventDefault();
   }
 
-  async function submit() {
-    const requiresSignature = decision === "APPROVE" && !(allowNoSignature && placements.length === 0);
-    if (decision === "APPROVE" && placements.length === 0 && !allowNoSignature) {
+  const validateBatch = useCallback((actionDecision: "APPROVE" | "REJECT" | "COMMENT"): string | null => {
+    if (actionDecision === "APPROVE" && !hasSignature) return "Save a signature in Account Settings before approving.";
+    if (actionDecision === "APPROVE" && placements.length === 0) return "Click Sign and place a signature before approving.";
+    if (!pdfBytesRef.current || !pdfJsDocumentRef.current) return "The PDF is still loading. Please try again.";
+    return null;
+  }, [hasSignature, placements.length]);
+
+  const submit = useCallback(async (batchSubmission = false, batchDecision?: "APPROVE" | "REJECT" | "COMMENT"): Promise<boolean> => {
+    const actionDecision = batchSubmission ? batchDecision ?? "APPROVE" : decision;
+    const requiresSignature = actionDecision === "APPROVE" && !(allowNoSignature && placements.length === 0);
+    if (actionDecision === "APPROVE" && placements.length === 0 && !allowNoSignature) {
       setError("Click Sign and place at least one signature before approving.");
-      return;
+      return false;
     }
     setSaving(true);
     setError(null);
     const startedAt = performance.now();
     try {
       const formData = new FormData();
-      formData.set("decision", decision);
-      if (errStage) formData.set("approvalRoute", approvalRoute);
+      formData.set("decision", actionDecision);
+      if (errStage || allowApprovalRouteSelection) formData.set("approvalRoute", approvalRoute);
       formData.set("comments", comments);
       if (allowQuotationUpload && quotationFile) formData.set("quotation", quotationFile);
-      if (decision === "APPROVE") {
+      if (actionDecision === "APPROVE") {
         const pdfBytes = pdfBytesRef.current;
         const coordinatePdf = pdfJsDocumentRef.current;
         if (!pdfBytes || !coordinatePdf) throw new Error("The PDF is still loading. Please try again.");
@@ -384,7 +463,7 @@ export default function DocumentReviewEditor({
           formData.set("signatureCount", "0");
         }
       }
-      console.info(`[review] Action prepared in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision, requiresSignature });
+      console.info(`[review] Action prepared in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision: actionDecision, requiresSignature });
       const response = await fetch(actionUrl, {
   method: "POST",
   headers: {
@@ -394,24 +473,35 @@ export default function DocumentReviewEditor({
 });
       const result = (await response.json()) as { message?: string };
       if (!response.ok) throw new Error(result.message || "Unable to process document action.");
-      console.info(`[review] Action request completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
-      router.push(returnUrl);
-      router.refresh();
+      console.info(`[review] Action request completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision: actionDecision });
+      if (batchSubmission) setStatus(actionDecision === "APPROVE" ? "Approved document submitted." : actionDecision === "REJECT" ? "Rejection submitted." : "Revision request submitted.");
+      else {
+        router.push(returnUrl);
+        router.refresh();
+      }
+      return true;
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to process document action.");
+      return false;
     } finally {
       setSaving(false);
     }
-  }
+  }, [actionUrl, allowApprovalRouteSelection, allowHold, allowNoSignature, allowQuotationUpload, approvalRoute, circles, comments, decision, documentId, errStage, placements, quotationFile, returnUrl, router, signatureUrl, textBoxes, title]);
+
+  useEffect(() => {
+    if (!batchMode || !onBatchAction) return;
+    onBatchAction(documentId, { validate: validateBatch, submit: (batchDecision) => submit(true, batchDecision) });
+    return () => onBatchAction(documentId, null);
+  }, [batchMode, documentId, onBatchAction, submit, validateBatch]);
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-900 sm:px-8">
       <div className="mx-auto max-w-6xl space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        {!batchMode ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Document Review</p><h1 className="mt-2 text-2xl font-semibold">{documentNumber}</h1><p className="mt-1 text-sm text-slate-600">{title}</p></div>
           <div className="flex flex-wrap gap-2"><button type="button" onClick={() => router.back()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><ArrowLeft className="h-4 w-4" />Back</button><a href={downloadUrl} download className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><Download className="h-4 w-4" />Download</a></div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        </div> : <h2 className="mb-3 text-lg font-semibold">{documentNumber} <span className="font-normal text-slate-600">{title}</span></h2>}
+        {!batchMode ? <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-52 flex-1">
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Decision</label>
@@ -427,8 +517,18 @@ export default function DocumentReviewEditor({
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Approval path</label>
                 <select value={approvalRoute} onChange={(event) => setApprovalRoute(event.target.value as typeof approvalRoute)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
                   <option value="FINALIZE">Finalize Approval</option>
-                  <option value="ACTING_CEO">Send to Acting CEO</option>
-                  <option value="ACTING_CEO_THEN_CEO">Send to Acting CEO then CEO</option>
+                  <option value="ACTING_CEO">Send to Managing Director</option>
+                  <option value="ACTING_CEO_THEN_CEO">Send to Managing Director then CEO</option>
+                  <option value="CEO">Send to CEO</option>
+                </select>
+              </div>
+            ) : null}
+            {allowApprovalRouteSelection && !errStage ? (
+              <div className="min-w-60 flex-1">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Approval path</label>
+                <select value={approvalRoute} onChange={(event) => setApprovalRoute(event.target.value as typeof approvalRoute)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                  <option value="FINALIZE">Finalize Approval</option>
+                  <option value="MANAGING_DIRECTOR">Send to Managing Director</option>
                 </select>
               </div>
             ) : null}
@@ -461,13 +561,23 @@ export default function DocumentReviewEditor({
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Comments</label>
               <input value={comments} onChange={(event) => setComments(event.target.value)} placeholder="Comments (optional)" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
             </div>
-            <button type="button" onClick={submit} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+            <button type="button" onClick={() => void submit()} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
               Submit Action
             </button>
           </div>
-        </div>
-        <div className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => { setCircleMode(false); setTextBoxMode(false); addSignature(activePlacement?.pageNumber || 1); }} disabled={!hasSignature} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><PenLine className="h-4 w-4" />Sign</button><button type="button" onClick={() => { setTextBoxMode(false); setCircleMode((value) => !value); }} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${circleMode ? "border-rose-600 bg-rose-600 text-white" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`} aria-pressed={circleMode} title="Circle markup tool"><span className="h-4 w-4 rounded-full border-2 border-current" />Circle</button><button type="button" onClick={() => { setCircleMode(false); setTextBoxMode((value) => !value); }} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${textBoxMode ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`} aria-pressed={textBoxMode} title="Insert text box"><Type className="h-4 w-4" />Text Box</button>{textBoxMode || selectedTextBoxId ? <><div className="flex items-center gap-1">{["#0f172a", "#dc2626", "#2563eb", "#16a34a"].map((color) => <button key={color} type="button" aria-label={`Text color ${color}`} onClick={() => { setTextBoxColor(color); if (selectedTextBoxId) setTextBoxes((current) => current.map((item) => item.id === selectedTextBoxId ? { ...item, color } : item)); }} className={`h-7 w-7 rounded-full border-2 ${textBoxColor === color ? "border-slate-900" : "border-white shadow-sm"}`} style={{ backgroundColor: color }} />)}</div><select aria-label="Text box font size" value={selectedTextBoxId ? textBoxes.find((item) => item.id === selectedTextBoxId)?.fontSize || textBoxFontSize : textBoxFontSize} onChange={(event) => { const fontSize = Number(event.target.value); setTextBoxFontSize(fontSize); if (selectedTextBoxId) setTextBoxes((current) => current.map((item) => item.id === selectedTextBoxId ? { ...item, fontSize } : item)); }} className="rounded-lg border border-slate-300 px-2 py-2 text-sm"><option value="10">10 px</option><option value="12">12 px</option><option value="14">14 px</option><option value="16">16 px</option><option value="18">18 px</option><option value="24">24 px</option></select></> : null}<span className="text-sm text-slate-500">{textBoxMode ? "Drag a box around the text." : circleMode ? "Drag around content to highlight it." : hasSignature ? `${placements.length} signature placement${placements.length === 1 ? "" : "s"}` : "Save a signature in Account Settings first."}</span></div><div className="flex items-center gap-2"><button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.1))} className="rounded-lg border px-3 py-2 text-sm">−</button><span className="min-w-16 text-center text-sm">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-2 text-sm">+</button></div></div>
+        </div> : null}
+        {!batchMode || batchActive ? <div className={`${batchMode ? "fixed left-1/2 top-3 z-[60] w-[calc(100%-2rem)] max-w-6xl -translate-x-1/2" : "sticky top-0 z-30"} flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-lg`}>
+          <div className="flex flex-wrap items-center gap-2">
+            {batchMode ? <div className="mr-2 min-w-48"><p className="text-xs font-semibold uppercase text-slate-500">Current document</p><p className="max-w-64 truncate text-sm font-semibold text-slate-900" title={`${documentNumber} - ${title}`}>{documentNumber} - {title}</p></div> : null}
+            <button type="button" onClick={() => { setCircleMode(false); setTextBoxMode(false); addSignature(activePlacement?.pageNumber || 1); }} disabled={!hasSignature} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><PenLine className="h-4 w-4" />Sign</button>
+            <button type="button" onClick={() => { setTextBoxMode(false); setCircleMode((value) => !value); }} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${circleMode ? "border-rose-600 bg-rose-600 text-white" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`} aria-pressed={circleMode} title="Circle markup tool"><span className="h-4 w-4 rounded-full border-2 border-current" />Circle</button>
+            <button type="button" onClick={() => { setCircleMode(false); setTextBoxMode((value) => !value); }} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${textBoxMode ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`} aria-pressed={textBoxMode} title="Insert text box"><Type className="h-4 w-4" />Text Box</button>
+            {textBoxMode || selectedTextBoxId ? <><div className="flex items-center gap-1">{["#0f172a", "#dc2626", "#2563eb", "#16a34a"].map((color) => <button key={color} type="button" aria-label={`Text color ${color}`} onClick={() => { setTextBoxColor(color); if (selectedTextBoxId) setTextBoxes((current) => current.map((item) => item.id === selectedTextBoxId ? { ...item, color } : item)); }} className={`h-7 w-7 rounded-full border-2 ${textBoxColor === color ? "border-slate-900" : "border-white shadow-sm"}`} style={{ backgroundColor: color }} />)}</div><select aria-label="Text box font size" value={selectedTextBoxId ? textBoxes.find((item) => item.id === selectedTextBoxId)?.fontSize || textBoxFontSize : textBoxFontSize} onChange={(event) => { const fontSize = Number(event.target.value); setTextBoxFontSize(fontSize); if (selectedTextBoxId) setTextBoxes((current) => current.map((item) => item.id === selectedTextBoxId ? { ...item, fontSize } : item)); }} className="rounded-lg border border-slate-300 px-2 py-2 text-sm"><option value="10">10 px</option><option value="12">12 px</option><option value="14">14 px</option><option value="16">16 px</option><option value="18">18 px</option><option value="24">24 px</option></select></> : null}
+            <span className="text-sm text-slate-500">{textBoxMode ? "Drag a box around the text." : circleMode ? "Drag around content to highlight it." : hasSignature ? `${placements.length} signature placement${placements.length === 1 ? "" : "s"}` : "Save a signature in Account Settings first."}</span>
+          </div>
+          <div className="flex items-center gap-2">{batchMode ? <select aria-label="Action for all documents" value={batchDecision} onChange={(event) => onBatchDecisionChange?.(event.target.value as "APPROVE" | "REJECT" | "COMMENT")} disabled={batchSubmitting} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"><option value="APPROVE">Approve</option><option value="REJECT">Reject</option><option value="COMMENT">Revision Required</option></select> : null}<button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.1))} className="rounded-lg border px-3 py-2 text-sm">−</button><span className="min-w-16 text-center text-sm">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-2 text-sm">+</button>{batchMode ? <button type="button" onClick={onBatchSubmit} disabled={saving || batchSubmitting} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving || batchSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Submit Action</button> : null}</div>
+        </div> : null}
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</div> : null}{status ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{status}</div> : null}
           <section className="space-y-5 rounded-2xl border border-slate-200 bg-slate-950 p-4 shadow-sm">
           {pages.map((page) => <div key={page.pageNumber} ref={(element) => { pageRefs.current[page.pageNumber] = element; }} className={`relative mx-auto overflow-visible bg-white shadow-2xl ${circleMode || textBoxMode ? "cursor-crosshair" : ""}`} style={{ width: `min(${page.width * zoom}px, calc(100vw - 2rem))`, aspectRatio: `${page.width} / ${page.height}` }} onPointerDown={(event) => { if (textBoxMode) startTextBox(event, page.pageNumber); else startCircle(event, page.pageNumber); }}><canvas ref={(element) => { canvasRefs.current[page.pageNumber] = element; }} className="absolute inset-0 h-full w-full" />{circles.filter((item) => item.pageNumber === page.pageNumber && item.width > 0 && item.height > 0).map((item) => <div key={item.id} className="absolute rounded-[50%] border-2 border-rose-600 bg-rose-200/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, pointerEvents: "none" }}><button type="button" aria-label="Delete circle" title="Delete circle" className="pointer-events-auto absolute -right-2 -top-7 rounded bg-rose-700 p-1 text-white" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setCircles((current) => current.filter((value) => value.id !== item.id)); }}><Trash2 className="h-3 w-3" /></button></div>)}{textBoxes.filter((item) => item.pageNumber === page.pageNumber && item.width > 0 && item.height > 0).map((item) => <div key={item.id} className={`absolute border border-slate-300 bg-white/70 ${selectedTextBoxId === item.id ? "ring-2 ring-slate-900" : ""}`} style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, touchAction: "none" }} onPointerDown={(event) => { event.stopPropagation(); setSelectedTextBoxId(item.id); }}><textarea value={item.text} onChange={(event) => setTextBoxes((current) => current.map((value) => value.id === item.id ? { ...value, text: event.target.value } : value))} placeholder="Text" className="h-full w-full resize-none border-0 bg-transparent p-1 outline-none" style={{ color: item.color, fontSize: `${item.fontSize}px` }} /><button type="button" aria-label="Remove text box" className="absolute -right-2 -top-7 rounded bg-rose-600 p-1 text-white" onPointerDown={(event) => event.stopPropagation()} onClick={() => { setSelectedTextBoxId(null); setTextBoxes((current) => current.filter((value) => value.id !== item.id)); }}><Trash2 className="h-3 w-3" /></button></div>)}{placements.filter((item) => item.pageNumber === page.pageNumber).map((item) => <div key={item.id} className="absolute border-2 border-cyan-500 bg-cyan-100/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, touchAction: "none", transform: `rotate(${item.rotation}deg)` }} onPointerDown={(event) => startDrag(event, item, "drag")}><img src={signatureUrl || ""} alt="Saved signature" className="h-full w-full select-none object-fill" draggable={false} /><button type="button" aria-label="Rotate signature" title="Rotate signature" className="absolute -left-2 -top-7 rounded bg-cyan-700 p-1 text-white" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setPlacements((current) => current.map((value) => value.id === item.id ? { ...value, rotation: (value.rotation + 90) % 360 } : value)); }}><RotateCw className="h-3 w-3" /></button><button type="button" aria-label="Resize signature" className="absolute -bottom-2 -right-2 h-5 w-5 rounded-full border-2 border-white bg-cyan-700" onPointerDown={(event) => startDrag(event, item, "resize")} /><button type="button" aria-label="Remove signature placement" className="absolute -right-2 -top-7 rounded bg-rose-600 p-1 text-white" onClick={() => setPlacements((current) => current.filter((value) => value.id !== item.id))}><Trash2 className="h-3 w-3" /></button></div>)}</div>)}

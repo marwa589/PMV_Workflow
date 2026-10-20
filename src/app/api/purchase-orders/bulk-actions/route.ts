@@ -5,12 +5,14 @@ import { validateCsrf } from "@/lib/csrf";
 import { deleteDocumentFiles } from "@/lib/files";
 import { isOmar, canViewPurchaseOrder } from "@/lib/po-access";
 import { prisma } from "@/lib/prisma";
+import { isKsaViewer } from "@/lib/ksa-viewer";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ message: "Please sign in." }, { status: 401 });
+  if (isKsaViewer(session)) return NextResponse.json({ message: "KSA Viewer access is read-only." }, { status: 403 });
   if (!validateCsrf(request)) return NextResponse.json({ message: "Invalid CSRF token." }, { status: 403 });
 
   const body = await request.json().catch(() => null) as { action?: string; ids?: unknown } | null;
@@ -32,7 +34,7 @@ export async function POST(request: Request) {
 
     const rows = await prisma.purchaseOrder.findMany({
       where: { id: { in: accessibleIds } },
-      select: { id: true, filePath: true },
+      select: { id: true, filePath: true, invoices: { select: { filePath: true } } },
     });
 
     await prisma.$transaction(async (tx) => {
@@ -40,7 +42,7 @@ export async function POST(request: Request) {
       await tx.purchaseOrder.deleteMany({ where: { id: { in: accessibleIds } } });
     });
 
-    await deleteDocumentFiles({ filePaths: rows.map((row) => row.filePath) });
+    await deleteDocumentFiles({ filePaths: rows.flatMap((row) => [row.filePath, ...row.invoices.map((invoice) => invoice.filePath)]) });
     return NextResponse.json({ message: `${accessibleIds.length} PO(s) deleted.` });
   }
 

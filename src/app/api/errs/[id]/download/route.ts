@@ -94,10 +94,19 @@ export async function GET(
   try {
     const buffer = await readFile(resolveStoredFilePath(file.filePath));
 
+    const isInline = new URL(request.url).searchParams.get("inline") === "1";
+    if (access.isUploader && file.kind === ErrFileKind.ERR_PDF && !isInline) {
+      await prisma.errDownload.upsert({
+        where: { errId_userId: { errId: id, userId: access.userId } },
+        create: { errId: id, userId: access.userId },
+        update: { downloadedAt: new Date() },
+      });
+    }
+
     return new NextResponse(buffer, {
       headers: {
         "Content-Type": file.mimeType || "application/pdf",
-        "Content-Disposition": `${new URL(request.url).searchParams.get("inline") === "1" ? "inline" : "attachment"}; filename="${file.originalName}"`,
+        "Content-Disposition": `${isInline ? "inline" : "attachment"}; filename="${file.originalName}"`,
         "Cache-Control": "no-store",
       },
     });

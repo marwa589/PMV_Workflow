@@ -4,12 +4,15 @@ import { getErrAccess, canViewErr, canViewErrQuotation } from "@/lib/err/permiss
 import { saveErrFile } from "@/lib/err/files";
 import { projectStorageFolderFromFile } from "@/lib/err-storage";
 import { validateCsrf } from "@/lib/csrf";
+import { isKsaViewer } from "@/lib/ksa-viewer";
+import { deleteDocumentFiles } from "@/lib/files";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const access = await getErrAccess();
   if (!access) return NextResponse.json({ message: "Please sign in." }, { status: 401 });
+  if (isKsaViewer(access)) return NextResponse.json({ message: "KSA Viewer access is read-only." }, { status: 403 });
   if (!validateCsrf(request)) return NextResponse.json({ message: "Invalid CSRF token." }, { status: 403 });
   if (!canViewErrQuotation(access) || !(await canViewErr(access, (await params).id))) {
     return NextResponse.json({ message: "You are not authorized to add quotations." }, { status: 403 });
@@ -41,4 +44,31 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   } catch {
     return NextResponse.json({ message: "Unable to attach quotations." }, { status: 500 });
   }
+}
+
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const access = await getErrAccess();
+  if (!access) return NextResponse.json({ message: "Please sign in." }, { status: 401 });
+  if (isKsaViewer(access)) return NextResponse.json({ message: "KSA Viewer access is read-only." }, { status: 403 });
+  if (!validateCsrf(request)) return NextResponse.json({ message: "Invalid CSRF token." }, { status: 403 });
+
+  const { id } = await params;
+  if (!canViewErrQuotation(access) || !(await canViewErr(access, id))) {
+    return NextResponse.json({ message: "You are not authorized to remove quotations." }, { status: 403 });
+  }
+
+  const body = (await request.json().catch(() => null)) as { fileId?: unknown } | null;
+  const fileId = typeof body?.fileId === "string" ? body.fileId : "";
+  if (!fileId) return NextResponse.json({ message: "Quotation file id is required." }, { status: 400 });
+
+  const quotation = await prisma.errFile.findFirst({
+    where: { id: fileId, errId: id, kind: "QUOTATION" },
+    select: { id: true, filePath: true },
+  });
+  if (!quotation) return NextResponse.json({ message: "Quotation not found." }, { status: 404 });
+
+  await prisma.errFile.delete({ where: { id: quotation.id } });
+  await deleteDocumentFiles({ filePaths: [quotation.filePath] });
+
+  return NextResponse.json({ message: "Quotation removed." });
 }

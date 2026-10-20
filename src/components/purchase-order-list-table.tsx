@@ -14,6 +14,7 @@ type PurchaseOrderRow = {
   receivedAt: string | null;
   receivedByName: string | null;
   receivedByEmail: string | null;
+  invoiceCount: number;
   linkedMrs: Array<{ id: string; documentNumber: string; title: string }>;
 };
 
@@ -187,6 +188,7 @@ export default function PurchaseOrderListTable({
               <th className="px-5 py-3 font-semibold">Uploaded</th>
               <th className="px-5 py-3 font-semibold">Uploaded By</th>
               <th className="px-5 py-3 font-semibold">Received by Muneer</th>
+              <th className="px-5 py-3 font-semibold">Invoices</th>
               <th className="px-5 py-3 font-semibold">Linked MRs</th>
               <th className="px-5 py-3 font-semibold">Actions</th>
             </tr>
@@ -233,6 +235,15 @@ export default function PurchaseOrderListTable({
                     "Not confirmed"
                   )}
                 </td>
+                <td className="px-5 py-4">
+                  {po.invoiceCount > 0 ? (
+                    <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 ring-1 ring-emerald-200">
+                      {po.invoiceCount} uploaded
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">No invoice</span>
+                  )}
+                </td>
                 <td className="px-5 py-4 text-slate-600">
                   {po.linkedMrs.length === 0 ? (
                     "—"
@@ -257,7 +268,7 @@ export default function PurchaseOrderListTable({
             ))}
             {visiblePurchaseOrders.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-5 py-8 text-center text-sm text-slate-500">
+                <td colSpan={10} className="px-5 py-8 text-center text-sm text-slate-500">
                   No matching purchase orders.
                 </td>
               </tr>

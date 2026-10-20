@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { DocumentStatus, Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
-import { canViewPurchaseOrdersSidebar, isOmar, resolvePurchaseOrderRecipients } from "@/lib/po-access";
+import { canViewPurchaseOrdersSidebar, isOmar, isReadyMixKhobarDirector, READY_MIX_KHOBAR_PROJECT_NAME, resolvePurchaseOrderRecipients } from "@/lib/po-access";
+import { getInvoiceScopeForUser, invoiceScopeMrWhere } from "@/lib/invoice-access";
 import { savePurchaseOrderFile, deleteDocumentFiles } from "@/lib/files";
 import { validateCsrf } from "@/lib/csrf";
 import { queuePurchaseOrderAvailableEvents } from "@/lib/workflow-email-batching";
 import { purchaseOrderStorageFolder } from "@/lib/storage-layout";
+import { isKsaViewer, KSA_USER_LOCATIONS } from "@/lib/ksa-viewer";
 
 export const runtime = "nodejs";
 
@@ -17,14 +19,22 @@ function nextPoNumber(nextNumber: number) {
 export async function GET(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-  if (!canViewPurchaseOrdersSidebar(session.role)) return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+  if (!canViewPurchaseOrdersSidebar(session)) return NextResponse.json({ message: "Forbidden" }, { status: 403 });
 
   const location = new URL(request.url).searchParams.get("location");
+  const isReadyMixViewer = isReadyMixKhobarDirector(session);
+  const invoiceScope = getInvoiceScopeForUser(session);
   const mrs = await prisma.document.findMany({
     where: {
       documentType: "MATERIAL_REQUISITION",
       status: DocumentStatus.APPROVED,
-      ...(location === "AVR" || location === "AVK" || location === "KUWAIT" ? { createdBy: { location } } : {}),
+      ...(isReadyMixViewer
+        ? { projectName: READY_MIX_KHOBAR_PROJECT_NAME }
+        : isKsaViewer(session)
+          ? { createdBy: { location: { in: [...KSA_USER_LOCATIONS] } } }
+        : invoiceScope
+          ? invoiceScopeMrWhere(invoiceScope)
+          : location === "AVR" || location === "AVK" || location === "KUWAIT" ? { createdBy: { location } } : {}),
     },
     select: { id: true, documentNumber: true, title: true, mrNumber: true },
     orderBy: { updatedAt: "desc" },
@@ -36,6 +46,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+  if (isKsaViewer(session)) return NextResponse.json({ message: "KSA Viewer access is read-only." }, { status: 403 });
   if (!isOmar(session)) return NextResponse.json({ message: "Only Omar can create purchase orders." }, { status: 403 });
   if (!validateCsrf(request)) return NextResponse.json({ message: "Invalid CSRF token." }, { status: 403 });
 
@@ -63,12 +74,12 @@ export async function POST(request: Request) {
       status: DocumentStatus.APPROVED,
       ...(requestedLocation === "AVR" || requestedLocation === "AVK" || requestedLocation === "KUWAIT" ? { createdBy: { location: requestedLocation } } : {}),
     },
-    select: { id: true, createdBy: { select: { email: true, location: true } } },
+    select: { id: true, projectName: true, createdBy: { select: { email: true, location: true } } },
   });
   if (approvedMrs.length !== new Set(fileMrIds).size) {
     return NextResponse.json({ message: requestedLocation ? "Every related MR must be approved and belong to the selected location." : "Every related MR must be approved." }, { status: 400 });
   }
-  const mrUploaderEmails = new Map(approvedMrs.map((mr) => [mr.id, mr.createdBy.email]));
+  const mrStorageInfo = new Map(approvedMrs.map((mr) => [mr.id, { email: mr.createdBy.email, projectName: mr.projectName }]));
 
   const savedPaths: string[] = [];
   try {
@@ -76,10 +87,10 @@ export async function POST(request: Request) {
       const created: Array<{ id: string; poNumber: string; originalName: string }> = [];
 
       for (const [fileIndex, file] of files.entries()) {
-        const mrUploaderEmail = mrUploaderEmails.get(fileMrIds[fileIndex]);
+        const mrStorage = mrStorageInfo.get(fileMrIds[fileIndex]);
         const saved = await savePurchaseOrderFile(
           file,
-          mrUploaderEmail ? purchaseOrderStorageFolder(mrUploaderEmail) : "POs",
+          mrStorage ? purchaseOrderStorageFolder(mrStorage.email, mrStorage.projectName) : "POs",
         );
         savedPaths.push(saved.relativePath);
 

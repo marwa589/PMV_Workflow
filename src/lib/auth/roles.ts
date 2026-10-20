@@ -18,6 +18,8 @@ export function getDefaultRouteForRole(role: UserRole): string {
       return "/admin";
     case UserRole.ERR_USER:
       return "/errs?section=dashboard";
+    case UserRole.KSA_VIEWER:
+      return "/ksa-viewer";
     default:
       return "/login";
   }
@@ -35,6 +37,8 @@ export function roleLabel(role: UserRole): string {
       return "PMV Manager";
     case UserRole.ADMIN:
       return "Admin";
+    case UserRole.KSA_VIEWER:
+      return "KSA Viewer";
     default:
       return "User";
   }

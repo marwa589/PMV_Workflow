@@ -8,7 +8,7 @@ export const USER_LOCATION_ASSIGNMENTS: Record<UserLocation, string[]> = {
   AVK: [
     "joemar.paraiso@ahmadiah.com",
     "bernabie.rocha@ahmadiah.com",
-    "mohamed.mahran@ahmadiah.com",
+    "mohamed.mahran@ahmadiah-sa.com",
     //temp
   "joemar.paraiso@example.com",
   "bernabie.rocha@example.com",

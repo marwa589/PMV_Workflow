@@ -16,7 +16,7 @@ export type DocumentListItem = {
   title: string;
   status: DocumentStatus;
   statusLabel?: string;
-  documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR" | null;
+  documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR";
   mrType?: "CASH" | "CREDIT" | null;
   poStatus?: "UPLOADED" | "PENDING" | "NOT_APPLICABLE";
   currentVersion: number;
@@ -265,8 +265,8 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                     </span>
                   </td>
                   <td className="px-5 py-4">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${doc.poStatus === "UPLOADED" ? "bg-emerald-50 text-emerald-700" : doc.poStatus === "PENDING" ? "bg-yellow-50 text-yellow-800" : "bg-slate-100 text-slate-600"}`}>
-                      {doc.poStatus === "UPLOADED" ? "PO Uploaded" : doc.poStatus === "PENDING" ? "PO Pending" : "Not Applicable"}
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${doc.documentType === "MATERIAL_REQUISITION" && doc.status === "REJECTED" ? "bg-rose-50 text-rose-700" : doc.poStatus === "UPLOADED" ? "bg-emerald-50 text-emerald-700" : doc.poStatus === "PENDING" ? "bg-yellow-50 text-yellow-800" : "bg-slate-100 text-slate-600"}`}>
+                      {doc.documentType === "MATERIAL_REQUISITION" && doc.status === "REJECTED" ? "Document Rejected" : doc.poStatus === "UPLOADED" ? "PO Uploaded" : doc.poStatus === "PENDING" ? "PO Pending" : "Not Applicable"}
                     </span>
                   </td>
                   <td className="px-5 py-4 text-slate-700">

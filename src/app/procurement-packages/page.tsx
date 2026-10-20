@@ -6,10 +6,12 @@ import { requireAuth } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { canAccessMrModuleForSession, isRestrictedClerk } from "@/lib/auth/resource-access";
+import { isKsaViewer } from "@/lib/ksa-viewer";
 export const dynamic = "force-dynamic";
 
 export default async function ProcurementPackagesPage() {
   const session = await requireAuth();
+  if (isKsaViewer(session)) redirect("/ksa-viewer");
     if (!canAccessMrModuleForSession(session)) {
     redirect("/unauthorized");
   }

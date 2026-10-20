@@ -4,6 +4,7 @@ import { validateCsrf } from "@/lib/csrf";
 import { deleteDocumentFiles } from "@/lib/files";
 import { isOmar } from "@/lib/po-access";
 import { prisma } from "@/lib/prisma";
+import { isKsaViewer } from "@/lib/ksa-viewer";
 
 export const runtime = "nodejs";
 
@@ -14,13 +15,19 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   }
 
   const { id } = await params;
+  if (isKsaViewer(session)) return NextResponse.json({ message: "KSA Viewer access is read-only." }, { status: 403 });
   if (!validateCsrf(request)) {
     return NextResponse.json({ message: "Invalid CSRF token." }, { status: 403 });
   }
 
   const purchaseOrder = await prisma.purchaseOrder.findUnique({
     where: { id },
-    select: { id: true, filePath: true, uploadedById: true },
+    select: {
+      id: true,
+      filePath: true,
+      uploadedById: true,
+      invoices: { select: { filePath: true } },
+    },
   });
 
   if (!purchaseOrder) {
@@ -38,7 +45,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
       await tx.purchaseOrder.delete({ where: { id } });
     });
 
-    await deleteDocumentFiles({ filePaths: [purchaseOrder.filePath] });
+    await deleteDocumentFiles({ filePaths: [purchaseOrder.filePath, ...purchaseOrder.invoices.map((invoice) => invoice.filePath)] });
     return NextResponse.json({ message: "Purchase order deleted." }, { status: 200 });
   } catch (error) {
     console.error("PO delete failed.", error);

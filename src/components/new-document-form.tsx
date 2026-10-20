@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle2,
@@ -77,7 +77,7 @@ function FileTypeIcon({ file }: { file: File | null }) {
 
 type ErrDirector = { projectId: string; directorId?: string; name: string; projectName: string; country?: string; accessRole?: "PROJECT_DIRECTOR" | "PROJECT_MANAGER" };
 
-export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDirectors = [], errOnly = false, marcOnly = false }: { defaultRedirectPath?: string; errDirectors?: ErrDirector[]; errOnly?: boolean; marcOnly?: boolean }) {
+export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDirectors = [], errOnly = false, marcOnly = false, allowErroReadyMixMr = false }: { defaultRedirectPath?: string; errDirectors?: ErrDirector[]; errOnly?: boolean; marcOnly?: boolean; allowErroReadyMixMr?: boolean }) {
   const router = useRouter();
 
   const [title, setTitle] = useState("");
@@ -85,6 +85,8 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
   const [documentType, setDocumentType] = useState<DocumentTypeOption | null>(errOnly ? "ERR" : null);
   const [comparisonType, setComparisonType] = useState<ComparisonTypeOption | null>(null);
   const [mrType, setMrType] = useState<MrTypeOption | null>(null);
+  const [mrWorkflowLocation, setMrWorkflowLocation] = useState<"AVR" | "READY_MIX_KHOBAR" | "">("");
+  const [comparisonWorkflowLocation, setComparisonWorkflowLocation] = useState<"AVR" | "READY_MIX_KHOBAR" | "">("");
   const [errType, setErrType] = useState<ErrTypeOption | null>(null);
   const [errProjectId, setErrProjectId] = useState("");
   const [quotations, setQuotations] = useState<File[]>([]);
@@ -95,6 +97,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
   const [selectedComparisonId, setSelectedComparisonId] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileTitles, setFileTitles] = useState<string[]>([]);
+  const errSubmissionKeys = useRef(new Map<File, string>());
   const [isDragging, setIsDragging] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +111,40 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
       type: file.type || "Unknown MIME type",
     }));
   }, [selectedFiles]);
+
+  function getErrSubmissionKey(file: File): string {
+    const cachedKey = errSubmissionKeys.current.get(file);
+    if (cachedKey) return cachedKey;
+
+    const storageKey = `err-submission:${file.name}:${file.size}:${file.lastModified}`;
+    let submissionKey: string | null = null;
+    try {
+      submissionKey = window.sessionStorage.getItem(storageKey);
+    } catch {
+      // Continue with the in-memory key if browser storage is unavailable.
+    }
+
+    submissionKey ||= crypto.randomUUID();
+    errSubmissionKeys.current.set(file, submissionKey);
+    try {
+      window.sessionStorage.setItem(storageKey, submissionKey);
+    } catch {
+      // In-memory retries remain protected for this mounted form.
+    }
+    return submissionKey;
+  }
+
+  function clearErrSubmissionKeys(files: File[]) {
+    for (const file of files) {
+      const storageKey = `err-submission:${file.name}:${file.size}:${file.lastModified}`;
+      errSubmissionKeys.current.delete(file);
+      try {
+        window.sessionStorage.removeItem(storageKey);
+      } catch {
+        // Ignore unavailable browser storage.
+      }
+    }
+  }
 
   function handleFileSelection(files: FileList | File[] | null) {
     const incomingFiles = Array.from(files ?? []);
@@ -146,11 +183,14 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
   }
 
   function resetForm() {
+    clearErrSubmissionKeys(selectedFiles);
     setTitle("");
     setDescription("");
     setDocumentType(errOnly ? "ERR" : null);
     setComparisonType(null);
     setMrType(null);
+    setMrWorkflowLocation("");
+    setComparisonWorkflowLocation("");
     setErrType(null);
     setErrProjectId("");
     setQuotations([]);
@@ -177,8 +217,18 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
       return;
     }
 
+    if (documentType === "MATERIAL_REQUISITION" && allowErroReadyMixMr && !mrWorkflowLocation) {
+      setError("Please select the MR location or project.");
+      return;
+    }
+
     if (documentType === "COMPARISON" && !comparisonType) {
       setError("Please select a comparison type.");
+      return;
+    }
+
+    if (documentType === "COMPARISON" && allowErroReadyMixMr && !comparisonWorkflowLocation) {
+      setError("Please select the comparison location or project.");
       return;
     }
 
@@ -212,7 +262,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
             }
           }
 
-          errFormData.set("submissionKey", crypto.randomUUID());
+          errFormData.set("submissionKey", getErrSubmissionKey(file));
           errFormData.append("files", file);
           if (index === 0) quotations.forEach((file) => errFormData.append("quotations", file));
 
@@ -247,11 +297,17 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
       if (documentType === "COMPARISON" && comparisonType) {
         formData.set("comparisonType", comparisonType);
       }
+      if (documentType === "COMPARISON" && allowErroReadyMixMr) {
+        formData.set("comparisonWorkflowLocation", comparisonWorkflowLocation);
+      }
 
       if (documentType === "CUSTODY") {
         formData.set("documentType", "CUSTODY");
       }
       if (documentType === "MATERIAL_REQUISITION") {
+        if (allowErroReadyMixMr) {
+          formData.set("mrWorkflowLocation", mrWorkflowLocation);
+        }
         if (mrType) {
           formData.set("mrType", mrType);
         }
@@ -384,6 +440,33 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                     </button>
                   ))}
                 </div>
+                {allowErroReadyMixMr ? (
+                  <div className="mt-4">
+                    <label className="mb-2 block text-sm font-medium text-slate-700">
+                      Comparison Location / Project <span className="text-rose-600">*</span>
+                    </label>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {[
+                        { value: "AVR", label: "AVR" },
+                        { value: "READY_MIX_KHOBAR", label: "Ready Mix Khobar" },
+                      ].map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setComparisonWorkflowLocation(option.value as typeof comparisonWorkflowLocation)}
+                          className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${
+                            comparisonWorkflowLocation === option.value
+                              ? "border-cyan-500 bg-cyan-50 text-cyan-700"
+                              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                          }`}
+                          aria-pressed={comparisonWorkflowLocation === option.value}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -436,6 +519,39 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                   </div>
                 </div>
 
+                {allowErroReadyMixMr ? (
+                  <div className="mt-4">
+                    <label className="mb-2 block text-sm font-medium text-slate-700">
+                      MR Location / Project <span className="text-rose-600">*</span>
+                    </label>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {[
+                        { value: "AVR", label: "AVR" },
+                        { value: "READY_MIX_KHOBAR", label: "Ready Mix Khobar" },
+                      ].map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => {
+                            setMrWorkflowLocation(option.value as typeof mrWorkflowLocation);
+                            setSelectedComparisonId(null);
+                            setComparisonSearch("");
+                            setComparisonOptions([]);
+                          }}
+                          className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${
+                            mrWorkflowLocation === option.value
+                              ? "border-cyan-500 bg-cyan-50 text-cyan-700"
+                              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                          }`}
+                          aria-pressed={mrWorkflowLocation === option.value}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
                   <label className="block text-sm font-medium text-slate-700">
                     Does this MR have a related Comparison?
@@ -477,7 +593,8 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                           }
 
                           try {
-                            const response = await fetch(`/api/documents/comparisons?search=${encodeURIComponent(value.trim())}`);
+                            const workflowLocation = allowErroReadyMixMr && mrWorkflowLocation ? `&workflowLocation=${mrWorkflowLocation}` : "";
+                            const response = await fetch(`/api/documents/comparisons?search=${encodeURIComponent(value.trim())}${workflowLocation}`);
                             const result = (await response.json()) as { comparisons?: Array<{ id: string; documentNumber: string; title: string; approvedAt: string }> };
                             setComparisonOptions(result.comparisons || []);
                           } catch {
@@ -562,7 +679,15 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                   <input id="err-quotation" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => setQuotations(Array.from(event.target.files ?? []))} className="block w-full rounded-lg border border-slate-300 bg-white text-sm text-slate-700 file:mr-3 file:cursor-pointer file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-blue-700" />
                   {quotations.length > 0 ? (
                     <ul className="mt-2 space-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                      {quotations.map((file) => <li key={`${file.name}-${file.size}-${file.lastModified}`} className="truncate" title={file.name}>{file.name}</li>)}
+                      {quotations.map((file, index) => (
+                        <li key={`${file.name}-${file.size}-${file.lastModified}`} className="flex min-w-0 items-center justify-between gap-3" title={file.name}>
+                          <span className="truncate">{file.name}</span>
+                          <button type="button" onClick={() => setQuotations((current) => current.filter((_, fileIndex) => fileIndex !== index))} aria-label={`Remove ${file.name}`} title="Remove quotation" className="inline-flex shrink-0 items-center gap-1.5 rounded border border-rose-300 bg-rose-50 px-3 py-1.5 font-semibold text-rose-800 transition hover:bg-rose-100">
+                            <XCircle size={14} aria-hidden="true" />
+                            Remove quotation
+                          </button>
+                        </li>
+                      ))}
                     </ul>
                   ) : null}
                 </div>

@@ -5,6 +5,7 @@ import DashboardShell from "@/components/dashboard-shell";
 import StatusBadge from "@/components/status-badge";
 import ErrVoucherModal from "@/components/err-voucher-modal";
 import ErrQuotationUpload from "@/components/err-quotation-upload";
+import ErrQuotationRemoveButton from "@/components/err-quotation-remove-button";
 import {
   canApproveErr,
   canViewErrQuotation,
@@ -24,7 +25,7 @@ type Props = {
 const stageLabels = {
   PROJECT_DIRECTOR: "Project Director",
   PMV_MANAGER: "PMV Manager",
-  ACTING_CEO: "Acting CEO",
+  ACTING_CEO: "Managing Director",
   CEO: "CEO",
 };
 
@@ -47,7 +48,7 @@ const actionLabels: Record<string, string> = {
   SUBMITTED: "Submitted",
   APPROVED: "Approved",
   FINALIZED_APPROVAL: "Finalized approval",
-  ESCALATED_TO_ACTING_CEO: "Sent to Acting CEO",
+  ESCALATED_TO_ACTING_CEO: "Sent to Managing Director",
   ESCALATED_TO_CEO: "Sent to CEO",
   REJECTED: "Rejected",
   REQUESTED_REVISION: "Requested revision",
@@ -531,6 +532,9 @@ export default async function ErrDetailsPage({ params }: Props) {
                     >
                       Open File
                     </a>
+                    {file.kind === "QUOTATION" && canViewErrQuotation(access) ? (
+                      <ErrQuotationRemoveButton errId={id} fileId={file.id} fileName={file.originalName} />
+                    ) : null}
                   </div>
                 </li>
               );

@@ -9,19 +9,19 @@ import { runInBackground } from "@/lib/background";
 import { resolveWorkflowApproverIdsForUploader } from "@/lib/workflow-locations";
 import { resolveDocumentWorkflowForSubmission } from "@/lib/document-workflow-config";
 import { documentStorageFolder } from "@/lib/storage-layout";
+import { isErroUser } from "@/lib/auth/resource-access";
+import { isAvkUploaderWorkflowDocument, MARC_PMV_MANAGER_EMAIL, RAMZI_DOCUMENT_APPROVER_EMAIL } from "@/lib/mohamed-document-workflow";
 
 export const runtime = "nodejs";
 
 async function nextDocumentNumber(tx: Prisma.TransactionClient): Promise<string> {
-  const latest = await tx.document.findFirst({
-    orderBy: { createdAt: "desc" },
-    select: { documentNumber: true },
+  const sequence = await tx.documentNumberSequence.upsert({
+    where: { id: 1 },
+    update: { lastNumber: { increment: 1 } },
+    create: { id: 1, lastNumber: 1 },
+    select: { lastNumber: true },
   });
-
-  const latestNumber = latest?.documentNumber.match(/DOC-(\d+)/)?.[1];
-  const current = latestNumber ? Number.parseInt(latestNumber, 10) : 0;
-  const next = current + 1;
-  return `DOC-${String(next).padStart(4, "0")}`;
+  return `DOC-${String(sequence.lastNumber).padStart(4, "0")}`;
 }
 
 async function nextCustodyNumber(tx: Prisma.TransactionClient): Promise<string> {
@@ -44,12 +44,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Only Clerk and Admin can submit documents." }, { status: 403 });
   }
 
+  const isDispatcher = session.userId === "cmtzdt5fx000uastr7kdqoe5c" || isErroUser(session);
+
   const formData = await request.formData();
   const title = String(formData.get("title") || "").trim();
   const description = String(formData.get("description") || "").trim();
   const documentType = String(formData.get("documentType") || "").trim();
   const comparisonType = String(formData.get("comparisonType") || "").trim();
+  const comparisonWorkflowLocation = String(formData.get("comparisonWorkflowLocation") || "").trim();
   const mrType = String(formData.get("mrType") || "").trim();
+  const mrWorkflowLocation = String(formData.get("mrWorkflowLocation") || "").trim();
   const mrNumber = String(formData.get("mrNumber") || "").trim();
   const relatedComparisonId = String(formData.get("relatedComparisonId") || "").trim();
   const rawFiles = formData.getAll("files");
@@ -93,18 +97,61 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
+  const isErroAvrUploader = uploader.email.trim().toLowerCase() === "dispatcher.pmv@ahmadiah.com"
+    && uploader.location === UserLocation.AVR;
+  const isReadyMixKhobarMr = documentType === "MATERIAL_REQUISITION"
+    && isErroAvrUploader
+    && mrWorkflowLocation === "READY_MIX_KHOBAR";
+  const isReadyMixKhobarComparison = documentType === "COMPARISON"
+    && isErroAvrUploader
+    && comparisonWorkflowLocation === "READY_MIX_KHOBAR";
+
+  if (comparisonWorkflowLocation && (documentType !== "COMPARISON" || !isErroAvrUploader)) {
+    return NextResponse.json({ message: "This comparison route is only available to the AVR ERRO uploader." }, { status: 403 });
+  }
+
+  if (documentType === "COMPARISON" && isErroAvrUploader && !["AVR", "READY_MIX_KHOBAR"].includes(comparisonWorkflowLocation)) {
+    return NextResponse.json({ message: "Select AVR or Ready Mix Khobar for this comparison." }, { status: 400 });
+  }
+
+  if (mrWorkflowLocation && (documentType !== "MATERIAL_REQUISITION" || !isErroAvrUploader)) {
+    return NextResponse.json({ message: "This MR route is only available to the AVR ERRO uploader." }, { status: 403 });
+  }
+
+  if (documentType === "MATERIAL_REQUISITION" && isErroAvrUploader && !["AVR", "READY_MIX_KHOBAR"].includes(mrWorkflowLocation)) {
+    return NextResponse.json({ message: "Select AVR or Ready Mix Khobar for this MR." }, { status: 400 });
+  }
+
+  const isReadyMixKhobarWorkflow = isReadyMixKhobarMr || isReadyMixKhobarComparison;
+  const isAvkUploaderWorkflow = isAvkUploaderWorkflowDocument(uploader.email, documentType);
+  const isAvkMrWorkflow = isAvkUploaderWorkflow && documentType === "MATERIAL_REQUISITION";
+  const isAvkComparisonWorkflow = isAvkUploaderWorkflow && documentType === "COMPARISON";
+
   if (documentType === "CUSTODY" && uploader.location !== UserLocation.AVR) {
     return NextResponse.json({ message: "Custody files can only be submitted by an AVR uploader." }, { status: 403 });
   }
 
-  const configuredWorkflow = documentType === "CUSTODY" ? null : await resolveDocumentWorkflowForSubmission(prisma, {
+  const configuredWorkflow = documentType === "CUSTODY" || isReadyMixKhobarWorkflow || isAvkUploaderWorkflow ? null : await resolveDocumentWorkflowForSubmission(prisma, {
     uploaderLocation: uploader.location,
     documentType,
     documentSubtype: documentType === "COMPARISON" ? comparisonType : mrType,
     projectName: uploader.projectName,
   });
 
-  const workflowApprovers = configuredWorkflow
+  const mohamedPmvManager = isAvkMrWorkflow
+    ? await prisma.user.findFirst({
+        where: { email: MARC_PMV_MANAGER_EMAIL, role: UserRole.APPROVER_3 },
+        select: { id: true },
+      })
+    : null;
+
+  const workflowApprovers = isReadyMixKhobarWorkflow
+    ? { approver1Id: null, approver2Id: null, approver3Id: null, location: uploader.location }
+    : isAvkMrWorkflow
+      ? { approver1Id: null, approver2Id: null, approver3Id: mohamedPmvManager?.id ?? null, location: uploader.location }
+      : isAvkComparisonWorkflow
+        ? await resolveWorkflowApproverIdsForUploader(prisma, uploader.email)
+    : configuredWorkflow
     ? { approver1Id: null, approver2Id: null, approver3Id: null, location: uploader.location }
     : await resolveWorkflowApproverIdsForUploader(prisma, uploader.email);
 
@@ -114,7 +161,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "User location is not configured for this workflow." }, { status: 400 });
   }
 
-  const requiresApprover1 = Boolean(configuredWorkflow?.approverId && configuredWorkflow.status === DocumentStatus.PENDING_APPROVER_1) || Boolean(approver1Id);
+  const requiresApprover1 = !isReadyMixKhobarWorkflow && !isAvkMrWorkflow && (Boolean(configuredWorkflow?.approverId && configuredWorkflow.status === DocumentStatus.PENDING_APPROVER_1) || Boolean(approver1Id));
   const approver1 = configuredWorkflow?.status === DocumentStatus.PENDING_APPROVER_1
     ? configuredWorkflow.approver
     : approver1Id ? await prisma.user.findUnique({ where: { id: approver1Id }, select: { id: true, email: true, name: true } }) : null;
@@ -129,18 +176,52 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Approver 1 account is missing for the configured location." }, { status: 400 });
   }
 
-  const requiresApprover2 = documentType !== "CUSTODY" && (configuredWorkflow?.status === DocumentStatus.PENDING_APPROVER_2 || requiresApprover1 || location === UserLocation.KUWAIT || documentType === "MATERIAL_REQUISITION" || (documentType === "COMPARISON" && comparisonType === "SPARE_PARTS"));
+  const requiresApprover2 = !isReadyMixKhobarWorkflow && !isAvkMrWorkflow && documentType !== "CUSTODY" && (configuredWorkflow?.status === DocumentStatus.PENDING_APPROVER_2 || requiresApprover1 || location === UserLocation.KUWAIT || documentType === "MATERIAL_REQUISITION" || (documentType === "COMPARISON" && comparisonType === "SPARE_PARTS"));
 
   if (requiresApprover2 && !approver2) {
     return NextResponse.json({ message: "Approver 2 account is missing for this workflow." }, { status: 400 });
   }
 
-  if (!approver3) {
+  if (!isReadyMixKhobarWorkflow && !approver3) {
     return NextResponse.json({ message: "PMV Manager account is missing." }, { status: 400 });
   }
 
-  const initialApprover = configuredWorkflow?.approverId ? configuredWorkflow.approver : requiresApprover1 ? approver1 : requiresApprover2 ? approver2 : approver3;
-  const initialStatus = configuredWorkflow?.status ?? (requiresApprover1 ? DocumentStatus.PENDING_APPROVER_1 : requiresApprover2 ? DocumentStatus.PENDING_APPROVER_2 : DocumentStatus.PENDING_APPROVER_3);
+  const readyMixDirector = isReadyMixKhobarWorkflow
+    ? await prisma.user.findUnique({
+        where: { email: "elie.azzam@ahmadiah.com" },
+        select: { id: true, email: true, name: true },
+      })
+    : null;
+
+  if (isReadyMixKhobarWorkflow && !readyMixDirector) {
+    return NextResponse.json({ message: "Elie Azzam's account is not available for this workflow." }, { status: 400 });
+  }
+
+  const mohamedWorkflowApprover = isAvkMrWorkflow
+    ? await prisma.user.findUnique({
+        where: { email: RAMZI_DOCUMENT_APPROVER_EMAIL },
+        select: { id: true, email: true, name: true },
+      })
+    : null;
+
+  if (isAvkMrWorkflow && !mohamedWorkflowApprover) {
+    return NextResponse.json({ message: "Ramzi Abou Chakra's account is not available for this workflow." }, { status: 400 });
+  }
+
+  if (isAvkUploaderWorkflow && approver3?.email.trim().toLowerCase() !== MARC_PMV_MANAGER_EMAIL) {
+    return NextResponse.json({ message: "Marc Baddour's PMV Manager account is not available for this workflow." }, { status: 400 });
+  }
+
+  const initialApprover = isReadyMixKhobarWorkflow
+    ? readyMixDirector
+    : isAvkMrWorkflow
+      ? mohamedWorkflowApprover
+    : configuredWorkflow?.approverId ? configuredWorkflow.approver : requiresApprover1 ? approver1 : requiresApprover2 ? approver2 : approver3;
+  const initialStatus = isReadyMixKhobarWorkflow
+    ? DocumentStatus.PENDING_APPROVER_1
+    : isAvkMrWorkflow
+      ? DocumentStatus.PENDING_APPROVER_1
+    : configuredWorkflow?.status ?? (requiresApprover1 ? DocumentStatus.PENDING_APPROVER_1 : requiresApprover2 ? DocumentStatus.PENDING_APPROVER_2 : DocumentStatus.PENDING_APPROVER_3);
 
   if (!initialApprover) {
     return NextResponse.json({ message: "Initial approver account is missing." }, { status: 400 });
@@ -154,11 +235,20 @@ export async function POST(request: Request) {
             id: relatedComparisonId,
             documentType: DocumentType.COMPARISON,
             status: DocumentStatus.APPROVED,
+            ...(isDispatcher ? {
+              OR: [
+                { createdById: session.userId },
+                { versions: { some: { uploadedById: session.userId } } },
+              ],
+            } : {}),
           },
-          select: { id: true },
+          select: { id: true, projectName: true },
         });
         if (!comparison) {
           throw new Error("The selected comparison is no longer available or is not approved.");
+        }
+        if (!isDispatcher && isReadyMixKhobarMr && comparison.projectName !== "Ready Mix Khobar") {
+          throw new Error("Ready Mix Khobar MRs can only link an approved Ready Mix Khobar comparison.");
         }
       }
 
@@ -186,9 +276,9 @@ export async function POST(request: Request) {
           currentApproverId: initialApprover.id,
           currentApproverAssignedAt: new Date(),
           uploaderLocation: uploader.location,
-          projectName: uploader.projectName ?? null,
-          workflowTemplateId: configuredWorkflow?.templateId ?? null,
-          currentWorkflowStep: configuredWorkflow?.stepNumber ?? null,
+          projectName: isReadyMixKhobarWorkflow ? "Ready Mix Khobar" : uploader.projectName ?? null,
+          workflowTemplateId: isAvkUploaderWorkflow ? null : configuredWorkflow?.templateId ?? null,
+          currentWorkflowStep: isAvkUploaderWorkflow ? null : configuredWorkflow?.stepNumber ?? null,
           documentType: normalizedDocumentType,
           comparisonType: normalizedDocumentType === DocumentType.COMPARISON ? comparisonType as "SPARE_PARTS" | "OTHER" : null,
           mrType: normalizedMrType,
@@ -206,6 +296,7 @@ export async function POST(request: Request) {
         const storageFolder = documentStorageFolder({
           uploaderEmail: uploader.email,
           location: uploader.location,
+          projectName: isReadyMixKhobarWorkflow ? "Ready Mix Khobar" : uploader.projectName,
           documentType: normalizedDocumentType,
           mrType: normalizedMrType === MrType.CREDIT ? "CREDIT" : normalizedMrType === MrType.CASH ? "CASH" : null,
           hasLinkedComparison: isMrLinked,
@@ -220,6 +311,7 @@ export async function POST(request: Request) {
           hasLinkedComparison: isMrLinked,
           uploaderEmail: uploader.email,
           mrType: normalizedMrType === MrType.CREDIT ? "CREDIT" : normalizedMrType === MrType.CASH ? "CASH" : null,
+          projectName: isReadyMixKhobarWorkflow ? "Ready Mix Khobar" : uploader.projectName,
           storageFolder,
         });
 

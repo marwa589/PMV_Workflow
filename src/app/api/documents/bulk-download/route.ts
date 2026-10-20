@@ -9,6 +9,7 @@ import { getSession } from '@/lib/auth/session';
 import { resolveStoredFilePath } from '@/lib/files';
 import { prisma } from '@/lib/prisma';
 import { canAccessMrModuleForSession } from "@/lib/auth/resource-access";
+import { KSA_USER_LOCATIONS, isKsaViewer } from "@/lib/ksa-viewer";
 
 export const runtime = 'nodejs';
 const execFileAsync = promisify(execFile);
@@ -38,7 +39,11 @@ export async function GET(request: Request) {
 
   // Only APPROVED documents, with linked comparison data
   const documents = await prisma.document.findMany({
-    where: { id: { in: ids }, status: DocumentStatus.APPROVED },
+    where: {
+      id: { in: ids },
+      status: DocumentStatus.APPROVED,
+      ...(isKsaViewer(session) ? { documentType: { in: ["MATERIAL_REQUISITION", "COMPARISON"] }, createdBy: { location: { in: [...KSA_USER_LOCATIONS] } } } : {}),
+    },
     select: {
       id: true,
       documentNumber: true,
@@ -118,8 +123,12 @@ export async function GET(request: Request) {
       `Compress-Archive -Path ${quotePowerShellPath(path.join(tempDir, '*'))} -DestinationPath ${quotePowerShellPath(archivePath)} -Force`,
     ]);
     const zipBuffer = await readFile(archivePath);
-    await prisma.document.updateMany({
-      where: { id: { in: includedDocumentIds }, status: DocumentStatus.APPROVED },
+    await prisma.documentDownload.createMany({
+      data: includedDocumentIds.map((documentId) => ({ documentId, userId: session.userId })),
+      skipDuplicates: true,
+    });
+    await prisma.documentDownload.updateMany({
+      where: { documentId: { in: includedDocumentIds }, userId: session.userId },
       data: { downloadedAt: new Date() },
     });
     return new NextResponse(new Uint8Array(zipBuffer), {

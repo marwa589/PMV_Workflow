@@ -3,12 +3,14 @@ import { getSession } from "@/lib/auth/session";
 import { validateCsrf } from "@/lib/csrf";
 import { canViewPurchaseOrder, isMuneer } from "@/lib/po-access";
 import { prisma } from "@/lib/prisma";
+import { isKsaViewer } from "@/lib/ksa-viewer";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+  if (isKsaViewer(session)) return NextResponse.json({ message: "KSA Viewer access is read-only." }, { status: 403 });
   if (!isMuneer(session)) return NextResponse.json({ message: "Only Muneer can confirm PO receipt." }, { status: 403 });
   if (!validateCsrf(request)) return NextResponse.json({ message: "Invalid CSRF token." }, { status: 403 });
 

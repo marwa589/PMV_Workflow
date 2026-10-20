@@ -54,7 +54,7 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
       .filter((doc) => !documentTypeFilter || doc.documentType === documentTypeFilter)
       .filter((doc) => !locationFilter || (doc.documentType === "MATERIAL_REQUISITION" && (doc.uploaderLocation ?? doc.createdBy.location) === locationFilter))
       .filter((doc) => !mrTypeFilter || (doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === mrTypeFilter))
-      .filter((doc) => !poStatusFilter || getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id)) === poStatusFilter)
+      .filter((doc) => !poStatusFilter || getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id), doc.status) === poStatusFilter)
       .map((doc) => ({
     id: doc.id,
     documentNumber: doc.documentNumber,
@@ -62,7 +62,7 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
     status: doc.status,
     documentType: doc.documentType,
     mrType: doc.mrType,
-    poStatus: getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id)),
+    poStatus: getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id), doc.status),
     currentVersion: doc.currentVersion,
     currentApproverName: doc.currentApprover?.name || null,
     relatedComparisonId: doc.relatedComparison?.id || null,

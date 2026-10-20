@@ -1,7 +1,9 @@
-import { ApprovalActionType, DocumentStatus, ErrStatus, UserRole } from "@prisma/client";
+import { ApprovalActionType, DocumentStatus, DocumentType, ErrStatus, UserLocation, UserRole, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getModuleVisibility } from "@/lib/auth/module-visibility";
 import { isRestrictedClerk } from "@/lib/auth/resource-access";
+import { AVK_WORKFLOW_UPLOADER_EMAILS, isRamziDocumentApprover } from "@/lib/mohamed-document-workflow";
+import { isAvkMrViewer } from "@/lib/avk-access";
 
 export async function getPurchaseOrderStatuses(documentIds: string[]) {
   if (documentIds.length === 0) return new Map<string, boolean>();
@@ -49,7 +51,15 @@ export async function getDocumentsForClerk(userId: string) {
   });
 
   const isRestricted = user ? isRestrictedClerk(user) : false;
-  const whereClause = isRestricted ? { createdById: userId } : {};
+  const canViewAvkMrs = user ? isAvkMrViewer(user) : false;
+  const whereClause: Prisma.DocumentWhereInput = isRestricted
+    ? {
+        OR: [
+          { createdById: userId },
+          ...(canViewAvkMrs ? [{ documentType: { in: [DocumentType.MATERIAL_REQUISITION, DocumentType.COMPARISON] }, createdBy: { location: UserLocation.AVK } }] : []),
+        ],
+      }
+    : {};
 
   const [documents, total, pending, approved, rejected] = await Promise.all([
     prisma.document.findMany({
@@ -57,6 +67,7 @@ export async function getDocumentsForClerk(userId: string) {
       include: {
         createdBy: { select: { location: true } },
         currentApprover: { select: { name: true } },
+        downloadRecords: { where: { userId }, select: { downloadedAt: true }, take: 1 },
         relatedComparison: { select: { id: true, documentNumber: true, title: true } },
         approvals: {
           where: { action: { in: [ApprovalActionType.REJECTED, ApprovalActionType.APPROVED] } },
@@ -81,8 +92,29 @@ export async function getDocumentsForClerk(userId: string) {
   return { documents, total, pending, approved, rejected};
 }
 
-export async function getDocumentsForApprover(userId: string, role: UserRole, userName: string) {
-  const canQueryErrs = getModuleVisibility(userName, role) !== "DOCUMENTS_ONLY";
+export async function getDocumentsForApprover(userId: string, role: UserRole, userName: string, userEmail?: string) {
+  const isRamziWorkflowApprover = isRamziDocumentApprover(userEmail);
+  const viewer = await prisma.user.findUnique({ where: { id: userId }, select: { location: true } });
+  const canViewAvkMrs = isAvkMrViewer({ email: userEmail, location: viewer?.location, role });
+  const avkMrScope: Prisma.DocumentWhereInput = {
+    documentType: { in: [DocumentType.MATERIAL_REQUISITION, DocumentType.COMPARISON] },
+    createdBy: { location: UserLocation.AVK },
+  };
+  const canQueryErrs = !isRamziWorkflowApprover && getModuleVisibility(userName, role) !== "DOCUMENTS_ONLY";
+  const isGeorgeAzzi = userEmail?.trim().toLowerCase() === "george.azzi@ahmadiah.com";
+  const rejectedDocumentsWhere: Prisma.DocumentWhereInput = {
+    OR: [
+      { approvals: { some: { performedById: userId, action: ApprovalActionType.REJECTED } } },
+      ...(isGeorgeAzzi ? [{
+        status: DocumentStatus.REJECTED,
+        documentType: { in: [DocumentType.MATERIAL_REQUISITION, DocumentType.COMPARISON] },
+        OR: [
+          { uploaderLocation: UserLocation.KUWAIT },
+          { createdBy: { location: UserLocation.KUWAIT } },
+        ],
+      }] : []),
+    ],
+  };
 
   const [
     pendingDocuments,
@@ -147,7 +179,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
       orderBy: { createdAt: "desc" },
     }),
     prisma.document.findMany({
-      where: { approvals: { some: { performedById: userId, action: ApprovalActionType.REJECTED } } },
+      where: rejectedDocumentsWhere,
       include: {
         createdBy: { select: { location: true } },
         currentApprover: { select: { name: true } },
@@ -163,7 +195,12 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
     }),
     prisma.document.findMany({
       where: {
-        OR: [{ currentApproverId: userId }, { approvals: { some: { performedById: userId } } }],
+        OR: [
+          { currentApproverId: userId },
+          { approvals: { some: { performedById: userId } } },
+          ...(canViewAvkMrs ? [avkMrScope] : []),
+          ...(isRamziWorkflowApprover ? [{ documentType: { in: [DocumentType.MATERIAL_REQUISITION, DocumentType.COMPARISON] }, createdBy: { email: { in: [...AVK_WORKFLOW_UPLOADER_EMAILS] } } }] : []),
+        ],
       },
       include: {
         createdBy: { select: { location: true } },
@@ -179,7 +216,15 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
       orderBy: { createdAt: "desc" },
     }),
     prisma.approvalHistory.findMany({
-      where: { performedById: userId },
+      where: {
+        performedById: userId,
+        ...(isRamziWorkflowApprover ? {
+          document: {
+            documentType: { in: [DocumentType.MATERIAL_REQUISITION, DocumentType.COMPARISON] },
+            createdBy: { email: { in: [...AVK_WORKFLOW_UPLOADER_EMAILS] } },
+          },
+        } : {}),
+      },
       include: { document: { select: { documentNumber: true, title: true } } },
       orderBy: { performedAt: "desc" },
       take: 8,

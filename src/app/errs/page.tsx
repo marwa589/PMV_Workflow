@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { ErrStage, ErrStatus, ErrType, UserRole } from "@prisma/client";
+import { DocumentStatus, ErrProjectCountry, ErrStage, ErrStatus, ErrType, UserRole } from "@prisma/client";
 import { redirect } from "next/navigation";
 import DashboardShell from "@/components/dashboard-shell";
 import DocumentStatusFilter from "@/components/document-status-filter";
 import StatusBadge from "@/components/status-badge";
-import { requireErrAccess } from "@/lib/err/permissions";
+import { canViewErrQuotation, getErrVisibilityWhere, requireErrAccess } from "@/lib/err/permissions";
 import { prisma } from "@/lib/prisma";
 import ErrSummaryCards from "@/components/err-summary-cards";
 import {
@@ -27,7 +27,7 @@ const PAGE_SIZE = 20;
 const stageLabels: Record<ErrStage, string> = {
   PROJECT_DIRECTOR: "Project Director",
   PMV_MANAGER: "PMV Manager",
-  ACTING_CEO: "Acting CEO",
+  ACTING_CEO: "Managing Director",
   CEO: "CEO",
 };
 
@@ -74,13 +74,13 @@ const viewLabels: Record<ErrView, string> = {
 function getListUrl(
   view: ErrView,
   page: number,
-  filters: { search?: string | string[]; status?: string | string[]; errType?: string | string[]; section?: string | string[] },
+  filters: { search?: string | string[]; status?: string | string[]; errType?: string | string[]; section?: string | string[]; country?: string | string[]; projectId?: string | string[] },
 ) {
   const params = new URLSearchParams({
     view,
     page: String(page),
   });
-  for (const key of ["search", "status", "errType", "section"] as const) {
+  for (const key of ["search", "status", "errType", "section", "country", "projectId"] as const) {
     const value = filters[key];
     if (typeof value === "string" && value) params.set(key, value);
   }
@@ -96,6 +96,8 @@ type PageProps = {
     errType?: string | string[];
     section?: string | string[];
     search?: string | string[];
+    country?: string | string[];
+    projectId?: string | string[];
   }>;
 };
 
@@ -135,6 +137,25 @@ export default async function ErrPage({ searchParams }: PageProps) {
   const statusFilter = parseErrStatusFilter(params.status);
   const errTypeFilter = parseErrTypeFilter(params.errType);
   const searchQuery = typeof params.search === "string" ? params.search.trim() : "";
+  const canSeeAllErrs = access.isAdmin || access.isWorkshopManager || access.isPmvManager || access.isGlobalUploader || access.isGlobalViewer;
+  const errVisibilityWhere = getErrVisibilityWhere(access);
+  const errProjects = await prisma.errProject.findMany({
+    where: {
+      ...(canSeeAllErrs ? {} : { errs: { some: errVisibilityWhere } }),
+    },
+    select: { id: true, name: true, country: true },
+    orderBy: [{ country: "asc" }, { name: "asc" }],
+  });
+  const accessibleCountries = canSeeAllErrs
+    ? [ErrProjectCountry.KUWAIT, ErrProjectCountry.KSA]
+    : Array.from(new Set(errProjects.map((project) => project.country)));
+  const requestedCountry = params.country === "KSA" || params.country === "KUWAIT"
+    ? params.country as ErrProjectCountry
+    : "";
+  const countryFilter = accessibleCountries.includes(requestedCountry as ErrProjectCountry) ? requestedCountry : "";
+  const projectsForCountry = errProjects.filter((project) => !countryFilter || project.country === countryFilter);
+  const selectedProject = projectsForCountry.find((project) => project.id === params.projectId);
+  const showCountryFilter = canSeeAllErrs || accessibleCountries.length > 1;
   const isDashboardView = params.section === "dashboard";
   const listView: ErrView = isDashboardView ? "pending" : view;
 
@@ -156,7 +177,14 @@ export default async function ErrPage({ searchParams }: PageProps) {
     : {};
 
   const where = {
-    AND: [baseWhere, statusClause, errTypeClause, searchClause],
+    AND: [
+      baseWhere,
+      statusClause,
+      errTypeClause,
+      searchClause,
+      countryFilter ? { project: { country: countryFilter } } : {},
+      selectedProject ? { projectId: selectedProject.id } : {},
+    ],
   };
   const total = await prisma.err.count({ where });
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -173,6 +201,7 @@ export default async function ErrPage({ searchParams }: PageProps) {
       currentStage: true,
       currentApproverId: true,
       createdAt: true,
+      downloadRecords: { where: { userId: access.userId }, select: { downloadedAt: true }, take: 1 },
       files: {
         where: { kind: "QUOTATION" },
         orderBy: { versionNumber: "desc" },
@@ -199,11 +228,36 @@ export default async function ErrPage({ searchParams }: PageProps) {
   });
 
   const isUploaderUser = access.isUploader || isErrUploaderAccount(access.name, access.role);
+  const isReadyMixDirector = access.email.trim().toLowerCase() === "elie.azzam@ahmadiah.com";
+  const readyMixDocuments = isReadyMixDirector
+    ? await prisma.document.findMany({
+        where: {
+          currentApproverId: access.userId,
+          documentType: { in: ["MATERIAL_REQUISITION", "COMPARISON"] },
+          projectName: "Ready Mix Khobar",
+          status: DocumentStatus.PENDING_APPROVER_1,
+          createdBy: { email: "dispatcher.pmv@ahmadiah.com" },
+        },
+        select: {
+          id: true,
+          documentNumber: true,
+          title: true,
+          documentType: true,
+          comparisonType: true,
+          status: true,
+          mrNumber: true,
+          mrType: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: "desc" },
+      })
+    : [];
 
   return (
     <DashboardShell
       role={access.role}
       userName={access.name}
+      userEmail={access.email}
       title={heading}
       subtitle="ERR workflow queue"
       isUploader={isUploaderUser}
@@ -223,6 +277,53 @@ export default async function ErrPage({ searchParams }: PageProps) {
         </div>
       ) : null}
       <ErrSummaryCards counts={counts} personal={personal} />
+      {isDashboardView && isReadyMixDirector ? (
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4">
+            <h2 className="text-base font-semibold text-slate-900">Ready Mix Khobar Documents</h2>
+            <p className="mt-1 text-sm text-slate-500">Material requisitions and comparison sheets awaiting your Project Director review.</p>
+          </div>
+          {readyMixDocuments.length === 0 ? (
+            <p className="px-5 py-6 text-sm text-slate-500">No Ready Mix Khobar documents are waiting for your review.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-5 py-3 font-semibold">Document</th>
+                    <th className="px-5 py-3 font-semibold">Type</th>
+                    <th className="px-5 py-3 font-semibold">MR Number</th>
+                    <th className="px-5 py-3 font-semibold">Status</th>
+                    <th className="px-5 py-3 font-semibold">Submitted</th>
+                    <th className="px-5 py-3 font-semibold">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {readyMixDocuments.map((document) => (
+                    <tr key={document.id} className="border-t border-slate-100">
+                      <td className="px-5 py-4">
+                        <p className="font-semibold text-slate-900">{document.documentNumber}</p>
+                        <p className="text-slate-500">{document.title}</p>
+                      </td>
+                      <td className="px-5 py-4 text-slate-700">
+                        {document.documentType === "COMPARISON"
+                          ? document.comparisonType === "SPARE_PARTS" ? "Spare Parts Comparison" : "Comparison Sheet"
+                          : "Material Requisition"}
+                      </td>
+                      <td className="px-5 py-4 text-slate-700">{document.mrNumber || "—"}</td>
+                      <td className="px-5 py-4"><StatusBadge status={document.status} label="Pending Project Director" /></td>
+                      <td className="px-5 py-4 text-slate-500">{new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(document.createdAt)}</td>
+                      <td className="px-5 py-4">
+                        <Link href={`/approver/review/${document.id}`} className="font-semibold text-cyan-700 hover:underline">Review</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : null}
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -231,24 +332,41 @@ export default async function ErrPage({ searchParams }: PageProps) {
             </div>
           </div>
         </div>
-        {!isDashboardView ? <div className="border-b border-slate-200 px-5 py-4">
+        <div className="border-b border-slate-200 px-5 py-4">
           <DocumentStatusFilter
             value={statusFilter}
             documentType="ERR"
             errType={errTypeFilter}
-            showErrTypeFilter
-            showStatusFilter
+            showErrTypeFilter={!isDashboardView}
+            showStatusFilter={!isDashboardView}
             statusFilterOptions={ERR_STATUS_FILTER_OPTIONS}
             title="Status"
+            errCountry={countryFilter}
+            errCountries={accessibleCountries}
+            showErrCountryFilter={showCountryFilter}
+            errProjectId={selectedProject?.id ?? ""}
+            errProjects={projectsForCountry}
+            showErrScopeFilters
+            showErrProjectFilter={canSeeAllErrs}
+            gridLayout
+            hiddenFields={{
+              ...(typeof params.view === "string" ? { view: params.view } : {}),
+              ...(typeof params.section === "string" ? { section: params.section } : {}),
+              ...(typeof params.search === "string" ? { search: params.search } : {}),
+            }}
           />
-        </div> : null}
+        </div>
 
         <ErrListTable
-          errs={errs.map((err) => ({ ...err, createdAt: err.createdAt.toISOString() }))}
+          errs={errs.map((err) => ({
+            ...err,
+            downloadedAt: err.downloadRecords[0]?.downloadedAt ?? null,
+            createdAt: err.createdAt.toISOString(),
+          }))}
           userId={access.userId}
           canDelete={access.isAdmin}
           canRequestDeletion={access.isUploader}
-          showQuotation={access.isUploader || access.isAdmin || access.isPmvManager || access.isActingCeo || access.isCeo}
+          showQuotation={canViewErrQuotation(access)}
         />
 
         <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">

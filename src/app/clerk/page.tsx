@@ -25,7 +25,7 @@ export default async function ClerkDashboardPage() {
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     createdAt: Date;
-    downloadedAt: Date | null;
+    downloadRecords: { downloadedAt: Date }[];
     currentApprover: { name: string } | null;
     relatedComparison: { id: string; documentNumber: string } | null;
     approvals: { performedAt: Date }[];
@@ -45,6 +45,7 @@ export default async function ClerkDashboardPage() {
         where: clerkWhere,
         include: {
           currentApprover: { select: { name: true } },
+          downloadRecords: { where: { userId: session.userId }, select: { downloadedAt: true }, take: 1 },
           relatedComparison: { select: { id: true, documentNumber: true } },
           approvals: {
             where: { action: "APPROVED" },
@@ -109,7 +110,7 @@ export default async function ClerkDashboardPage() {
       ]} />
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4"><h3 className="text-base font-semibold text-slate-900">Pending Approvals</h3></div>
-        <DocumentListTable documents={pendingDocuments.map((doc) => ({ id: doc.id, documentNumber: doc.documentNumber, title: doc.title, status: doc.status, documentType: doc.documentType, mrType: doc.mrType, currentVersion: doc.currentVersion, currentApproverName: doc.currentApprover?.name || null, relatedComparisonId: doc.relatedComparison?.id || null, relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null, downloadedAt: doc.downloadedAt, approvalDate: doc.approvals[0]?.performedAt || null, dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt) }))} emptyMessage="No pending approvals." showDownloadTracking />
+        <DocumentListTable documents={pendingDocuments.map((doc) => ({ id: doc.id, documentNumber: doc.documentNumber, title: doc.title, status: doc.status, documentType: doc.documentType, mrType: doc.mrType, currentVersion: doc.currentVersion, currentApproverName: doc.currentApprover?.name || null, relatedComparisonId: doc.relatedComparison?.id || null, relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null, downloadedAt: doc.downloadRecords[0]?.downloadedAt ?? null, approvalDate: doc.approvals[0]?.performedAt || null, dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt) }))} emptyMessage="No pending approvals." showDownloadTracking />
       </section>
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-200 px-5 py-4"><h3 className="text-base font-semibold text-slate-900">Workflow Activity</h3></div><div className="divide-y divide-slate-100">{activities.length === 0 ? <div className="px-5 py-6 text-sm text-slate-500">No workflow activity found.</div> : activities.map((item) => <div key={item.id} className="px-5 py-4"><p className="text-sm font-semibold text-slate-900">{item.document.documentNumber} - {item.document.title}</p><p className="mt-1 text-sm text-slate-700">Action: {item.action.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-slate-500">{new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(item.performedAt)}</p></div>)}</div></section>
     </DashboardShell>
@@ -164,7 +165,7 @@ export default async function ClerkDashboardPage() {
             currentApproverName: doc.currentApprover?.name || null,
             relatedComparisonId: doc.relatedComparison?.id || null,
             relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
-            downloadedAt: doc.downloadedAt,
+            downloadedAt: doc.downloadRecords[0]?.downloadedAt ?? null,
             approvalDate: doc.approvals[0]?.performedAt || null,
             dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
           }))}

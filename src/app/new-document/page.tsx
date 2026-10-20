@@ -6,6 +6,7 @@ import { requireRole } from "@/lib/auth/guards";
 import { getErrProjectDirectors } from "@/lib/err/directors";
 import { getErrAccess } from "@/lib/err/permissions";
 import { isErrUploaderAccount } from "@/lib/err/uploader-access";
+import { isErroUser } from "@/lib/auth/resource-access";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,7 @@ export default async function NewDocumentPage() {
       subtitle="Upload and submit a document to start workflow"
       isUploader={isUploader}
     >
-      <NewDocumentForm defaultRedirectPath={session.role === UserRole.ADMIN ? "/admin" : session.role === UserRole.ERR_USER ? "/errs" : "/clerk"} errDirectors={errDirectors} errOnly={session.role === UserRole.ERR_USER} />
+      <NewDocumentForm defaultRedirectPath={session.role === UserRole.ADMIN ? "/admin" : session.role === UserRole.ERR_USER ? "/errs" : "/clerk"} errDirectors={errDirectors} errOnly={session.role === UserRole.ERR_USER} allowErroReadyMixMr={session.role === UserRole.CLERK && (session.userId === "cmtzdt5fx000uastr7kdqoe5c" || isErroUser(session))} />
     </DashboardShell>
   );
 }

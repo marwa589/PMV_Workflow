@@ -2,6 +2,7 @@ import Link from "next/link";
 import { KeyRound, PenLine } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
 import { requireErrAccess } from "@/lib/err/permissions";
+import { isKsaViewer } from "@/lib/ksa-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,7 @@ export default async function ErrSettingsPage() {
           </div>
         </Link>
 
-        <Link
+        {!isKsaViewer(session) ? <Link
           href="/approver/settings/signature"
           className="group block rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
         >
@@ -43,7 +44,7 @@ export default async function ErrSettingsPage() {
             </div>
             <PenLine className="h-6 w-6 text-slate-700 transition group-hover:text-slate-900" />
           </div>
-        </Link>
+        </Link> : null}
       </div>
     </DashboardShell>
   );

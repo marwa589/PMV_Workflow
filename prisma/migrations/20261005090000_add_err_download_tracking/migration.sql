@@ -1,0 +1,1 @@
+ALTER TABLE "Err" ADD COLUMN "downloadedAt" TIMESTAMP(3);

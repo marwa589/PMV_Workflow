@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
-import { Plus, Trash2, ShieldCheck, Building2 } from "lucide-react";
+import { Plus, Trash2, ShieldCheck } from "lucide-react";
 
-type Role = "CLERK" | "APPROVER_1" | "APPROVER_2" | "APPROVER_3" | "ADMIN" | "ERR_USER";
+type Role = "CLERK" | "APPROVER_1" | "APPROVER_2" | "APPROVER_3" | "ADMIN" | "ERR_USER" | "KSA_VIEWER";
 type UserLocationType = "AVR" | "AVK" | "KUWAIT";
 type ErrRole = "UPLOADER" | "PROJECT_DIRECTOR" | "PROJECT_MANAGER" | "ACTING_CEO" | "CEO" | "VIEWER";
 type ErrProjectCountry = "KSA" | "KUWAIT";
@@ -43,13 +43,14 @@ const roleOptions: Array<{ value: Role; label: string }> = [
   { value: "APPROVER_3", label: "PMV Manager" },
   { value: "ADMIN", label: "Admin" },
   { value: "ERR_USER", label: "ERR User" },
+  { value: "KSA_VIEWER", label: "KSA Viewer" },
 ];
 
 const errRoleOptions: Array<{ value: ErrRole; label: string; defaultProjectRequired?: boolean }> = [
   { value: "UPLOADER", label: "ERR Uploader" },
   { value: "PROJECT_DIRECTOR", label: "Project Director", defaultProjectRequired: true },
   { value: "PROJECT_MANAGER", label: "Project Manager", defaultProjectRequired: true },
-  { value: "ACTING_CEO", label: "Acting CEO" },
+  { value: "ACTING_CEO", label: "Managing Director" },
   { value: "CEO", label: "CEO" },
   { value: "VIEWER", label: "ERR Viewer" },
 ];

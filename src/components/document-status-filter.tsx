@@ -22,11 +22,23 @@ type Props = {
   showStatusFilter?: boolean;
   statusFilterOptions?: Array<{ value: string; label: string }>;
   location?: string;
+  errCountry?: "KSA" | "KUWAIT" | "";
+  errProjectId?: string;
+  errCountries?: Array<"KSA" | "KUWAIT">;
+  errProjects?: Array<{ id: string; name: string }>;
+  showErrScopeFilters?: boolean;
+  showErrCountryFilter?: boolean;
+  showErrProjectFilter?: boolean;
+  gridLayout?: boolean;
+  hiddenFields?: Record<string, string>;
 };
 
-export default function DocumentStatusFilter({ value = "", title = "Status", documentType = "", downloadStatus = "", approvalFrom = "", approvalTo = "", showDownloadFilters = false, mrType = "", poStatus = "", errType = "", errStatus = "", location = "", showMrTypeFilter = false, showPoStatusFilter = false, showErrTypeFilter = false, showErrStatusFilter = false, showDocumentTypeFilter = false, showErrDocumentType = true, showStatusFilter = true, statusFilterOptions = DOCUMENT_STATUS_FILTER_OPTIONS }: Props) {
+export default function DocumentStatusFilter({ value = "", title = "Status", documentType = "", downloadStatus = "", approvalFrom = "", approvalTo = "", showDownloadFilters = false, mrType = "", poStatus = "", errType = "", errStatus = "", location = "", errCountry = "", errProjectId = "", errCountries = [], errProjects = [], showErrScopeFilters = false, showErrCountryFilter = false, showErrProjectFilter = false, gridLayout = false, hiddenFields = {}, showMrTypeFilter = false, showPoStatusFilter = false, showErrTypeFilter = false, showErrStatusFilter = false, showDocumentTypeFilter = false, showErrDocumentType = true, showStatusFilter = true, statusFilterOptions = DOCUMENT_STATUS_FILTER_OPTIONS }: Props) {
   return (
-    <form method="get" className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <form method="get" className={gridLayout ? "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5" : "flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"}>
+      {Object.entries(hiddenFields).map(([key, fieldValue]) => (
+        <input key={key} type="hidden" name={key} value={fieldValue} />
+      ))}
       {showDocumentTypeFilter ? (
         <div className="min-w-0 flex-1">
           <label htmlFor="document-type" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type</label>
@@ -73,6 +85,30 @@ export default function DocumentStatusFilter({ value = "", title = "Status", doc
           </select>
         </div>
       ) : null}
+      {showErrScopeFilters && documentType === "ERR" ? (
+        <>
+          {showErrCountryFilter ? (
+            <div className="min-w-0 flex-1">
+              <label htmlFor="err-country" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Country</label>
+              <select id="err-country" name="country" defaultValue={errCountry} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400">
+                <option value="">All accessible countries</option>
+                {errCountries.map((country) => (
+                  <option key={country} value={country}>{country === "KUWAIT" ? "Kuwait" : "KSA"}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+          {showErrProjectFilter || errProjects.length > 1 ? (
+            <div className="min-w-0 flex-1">
+              <label htmlFor="err-project" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Project</label>
+              <select id="err-project" name="projectId" defaultValue={errProjectId} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400">
+                <option value="">All accessible projects</option>
+                {errProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+              </select>
+            </div>
+          ) : null}
+        </>
+      ) : null}
       {showDownloadFilters ? (
         <>
           <div className="min-w-0 flex-1">
@@ -112,7 +148,9 @@ export default function DocumentStatusFilter({ value = "", title = "Status", doc
       ) : null}
       <button
         type="submit"
-        className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700"
+        className={gridLayout
+          ? "inline-flex h-[38px] w-full self-end items-center justify-center rounded-xl bg-slate-900 px-4 text-sm font-medium text-white transition hover:bg-slate-700"
+          : "inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700"}
       >
         Apply Filter
       </button>

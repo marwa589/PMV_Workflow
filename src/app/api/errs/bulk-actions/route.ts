@@ -29,6 +29,12 @@ export async function POST(request: Request) {
     if (session.role !== UserRole.ADMIN) return NextResponse.json({ message: "Only admins can permanently delete ERRs." }, { status: 403 });
 
     await prisma.$transaction(async (tx) => {
+      await tx.emailNotificationEvent.deleteMany({
+        where: {
+          documentId: { in: visibleIds },
+          type: "ERR_WORKFLOW_UPDATE",
+        },
+      });
       await tx.errNotification.deleteMany({ where: { errId: { in: visibleIds } } });
       await tx.errApprovalHistory.deleteMany({ where: { errId: { in: visibleIds } } });
       await tx.errFile.deleteMany({ where: { errId: { in: visibleIds } } });

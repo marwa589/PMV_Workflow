@@ -7,6 +7,10 @@ export function getModuleVisibility(_name: string, role: UserRole): ModuleVisibi
     return "ERR_ONLY";
   }
 
+  if (role === "KSA_VIEWER") {
+    return "ALL";
+  }
+
   if (role === "ADMIN" || role === "APPROVER_3") {
     return "ALL";
   }

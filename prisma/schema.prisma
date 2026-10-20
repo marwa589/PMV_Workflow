@@ -22,12 +22,14 @@ model User {
   signatureOriginalName     String?
   signaturePath             String?
   signatureUpdatedAt        DateTime?
+  preferredSignatureWidth  Float                    @default(24)
   approvalHistory           ApprovalHistory[]        @relation("ApprovalsPerformedBy")
   auditLogsPerformed        AuditLog[]               @relation("AuditLogsPerformedBy")
   deletionRequestsReviewed  DeletionRequest[]        @relation("DeletionRequestsReviewedBy")
   deletionRequestsApproved  DeletionRequest[]        @relation("DeletionRequestsApprovedBy")
   deletionRequestsRequested DeletionRequest[]        @relation("DeletionRequestsRequestedBy")
   createdDocuments          Document[]               @relation("DocumentsCreatedBy")
+  documentDownloads         DocumentDownload[]
   assignedDocuments         Document[]               @relation("CurrentApprover")
   uploadedVersions          DocumentVersion[]        @relation("VersionsUploadedBy")
   emailNotificationEvents   EmailNotificationEvent[] @relation("EmailEventsForUser")
@@ -36,6 +38,7 @@ model User {
   trustedDevices            TrustedDevice[]
   passwordResetTokens       PasswordResetToken[]
   createdErrs               Err[]                    @relation("ErrCreatedBy")
+  errDownloads              ErrDownload[]
   projectDirectorErrs       Err[]                    @relation("ErrProjectDirector")
   assignedErrs              Err[]                    @relation("ErrCurrentApprover")
   workflowStepApprovals     DocumentWorkflowStep[]   @relation("WorkflowStepApprover")
@@ -46,6 +49,7 @@ model User {
   directedErrProjects       ErrProject[]             @relation("ErrProjectDirectorAccount")
   purchaseOrdersCreated     PurchaseOrder[]          @relation("PurchaseOrdersCreatedBy")
   purchaseOrdersReceived    PurchaseOrder[]          @relation("PurchaseOrdersReceivedBy")
+  purchaseOrderInvoicesUploaded PurchaseOrderInvoice[] @relation("PurchaseOrderInvoicesUploadedBy")
   purchaseOrderLinksCreated PurchaseOrderMrLink[]     @relation("PurchaseOrderLinksCreatedBy")
   roleAssignments           UserRoleAssignment[]     @relation("UserRoleAssignmentsForUser")
 }
@@ -109,12 +113,27 @@ model Document {
   linkedMRs                 Document[]        @relation("MRToComparison")
   versions                  DocumentVersion[]
   purchaseOrderLinks        PurchaseOrderMrLink[]
+  invoices                  PurchaseOrderInvoice[]
+  downloadRecords           DocumentDownload[]
 
   @@index([createdById])
   @@index([currentApproverId])
   @@index([workflowTemplateId])
   @@index([relatedComparisonId])
   @@index([status])
+}
+
+model DocumentDownload {
+  id           String   @id @default(cuid())
+  documentId   String
+  userId       String
+  downloadedAt DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, userId])
+  @@index([userId, downloadedAt])
 }
 
 model DocumentWorkflowTemplate {
@@ -179,6 +198,12 @@ model PurchaseOrderSequence {
   updatedAt  DateTime @updatedAt
 }
 
+model DocumentNumberSequence {
+  id         Int      @id @default(1)
+  lastNumber Int      @default(0)
+  updatedAt  DateTime @updatedAt
+}
+
 model CustodyFileSequence {
   id         Int      @id @default(1)
   nextNumber Int      @default(1)
@@ -201,10 +226,31 @@ model PurchaseOrder {
   uploadedBy User                  @relation("PurchaseOrdersCreatedBy", fields: [uploadedById], references: [id])
   receivedBy User?                 @relation("PurchaseOrdersReceivedBy", fields: [receivedById], references: [id])
   mrLinks    PurchaseOrderMrLink[]
+  invoices   PurchaseOrderInvoice[]
 
   @@index([uploadedById])
   @@index([uploadedAt])
   @@index([receivedById])
+}
+
+model PurchaseOrderInvoice {
+  id              String   @id @default(cuid())
+  purchaseOrderId String?
+  documentId      String?
+  originalName    String
+  filePath        String   @unique
+  mimeType        String
+  fileSize        Int
+  uploadedAt      DateTime @default(now())
+  uploadedById    String
+
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  document      Document?      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy    User          @relation("PurchaseOrderInvoicesUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([purchaseOrderId, uploadedAt])
+  @@index([documentId, uploadedAt])
+  @@index([uploadedById])
 }
 
 model PurchaseOrderMrLink {
@@ -343,6 +389,7 @@ enum UserRole {
   APPROVER_3
   ADMIN
   ERR_USER
+  KSA_VIEWER
 }
 
 enum UserLocation {
@@ -434,6 +481,7 @@ enum ErrApprovalPath {
   FINALIZE
   ACTING_CEO
   ACTING_CEO_THEN_CEO
+  CEO
 }
 
 model Err {
@@ -458,6 +506,7 @@ model Err {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
   approvedAt DateTime?
+  downloadedAt DateTime?
 
   createdBy       User                 @relation("ErrCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   projectDirector User                 @relation("ErrProjectDirector", fields: [projectDirectorId], references: [id], onDelete: Restrict)
@@ -465,6 +514,7 @@ model Err {
   files           ErrFile[]
   approvalHistory ErrApprovalHistory[]
   notifications   ErrNotification[]
+  downloadRecords ErrDownload[]
 
   projectId           String?
   projectNameSnapshot String?
@@ -477,6 +527,19 @@ model Err {
   @@index([status, currentStage])
   @@index([createdAt])
   @@index([projectId, status])
+}
+
+model ErrDownload {
+  id           String   @id @default(cuid())
+  errId        String
+  userId       String
+  downloadedAt DateTime @default(now())
+
+  err  Err  @relation(fields: [errId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([errId, userId])
+  @@index([userId, downloadedAt])
 }
 
 model ErrSequence {

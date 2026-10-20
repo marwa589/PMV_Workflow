@@ -1,6 +1,7 @@
 import "server-only";
 
 import { ErrAccessRole } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireErrAccess } from "@/lib/err/permissions";
 import { isErrUploaderAccount } from "@/lib/err/uploader-access";
@@ -14,8 +15,10 @@ export async function getErrProjectDirectors() {
     );
   }
 
-  const projectScope =
-    !access.isAdmin && !access.isGlobalUploader && access.uploaderProjectIds.length > 0
+  const projectScope: Prisma.ErrProjectWhereInput =
+    access.isKsaUploader
+      ? { country: "KSA" }
+      : !access.isAdmin && !access.isGlobalUploader && access.uploaderProjectIds.length > 0
       ? { id: { in: access.uploaderProjectIds } }
       : {};
 

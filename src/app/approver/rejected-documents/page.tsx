@@ -16,7 +16,7 @@ export default async function ApproverRejectedDocumentsPage({ searchParams }: an
   const session = await requireRole([UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]);
   const resolvedSearchParams = await Promise.resolve(searchParams);
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
-  const data = await getDocumentsForApprover(session.userId, session.role, session.name);
+  const data = await getDocumentsForApprover(session.userId, session.role, session.name, session.email);
 
   const documents = [
     ...data.rejectedDocuments

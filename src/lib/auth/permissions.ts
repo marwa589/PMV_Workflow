@@ -4,6 +4,9 @@ import { hasUserRole } from "@/lib/user-capabilities";
 
 export function hasRequiredRole(userRole: UserRole | { role: UserRole; roles?: UserRole[] | null }, allowedRoles: UserRole[]): boolean {
   if (typeof userRole === "object") {
+    if (userRole.role === UserRole.KSA_VIEWER) {
+      return allowedRoles.includes(UserRole.KSA_VIEWER);
+    }
     return allowedRoles.some((role) => hasUserRole(userRole, role));
   }
   return allowedRoles.includes(userRole);

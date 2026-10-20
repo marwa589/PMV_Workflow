@@ -8,7 +8,8 @@ export function parseMrLocationFilter(value: unknown): MrLocationFilter {
   return value === "AVR" || value === "AVK" || value === "KUWAIT" ? value : "";
 }
 
-export function getPoStatus(documentType: string, mrType: string | null | undefined, hasPurchaseOrder: boolean): "UPLOADED" | "PENDING" | "NOT_APPLICABLE" {
+export function getPoStatus(documentType: string, mrType: string | null | undefined, hasPurchaseOrder: boolean, documentStatus?: string): "UPLOADED" | "PENDING" | "NOT_APPLICABLE" {
+  if (documentStatus === "REJECTED") return "NOT_APPLICABLE";
   if (documentType !== "MATERIAL_REQUISITION" || mrType !== "CREDIT") return "NOT_APPLICABLE";
   return hasPurchaseOrder ? "UPLOADED" : "PENDING";
 }

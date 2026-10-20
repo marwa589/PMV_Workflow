@@ -12,6 +12,9 @@ import { canAccessMrModuleForSession } from "@/lib/auth/resource-access";
 import { resolveNextWorkflowStepForApproval } from "@/lib/document-workflow-config";
 import { documentStorageFolder } from "@/lib/storage-layout";
 import { appConfig } from "@/lib/env";
+import { isKsaViewer } from "@/lib/ksa-viewer";
+import { resolveWorkflowApproverIdsForUploader } from "@/lib/workflow-locations";
+import { isAvkUploaderWorkflowDocument, isRamziDocumentApprover, MARC_PMV_MANAGER_EMAIL, MOHAMED_AVK_WORKFLOW_UPLOADER_EMAIL } from "@/lib/mohamed-document-workflow";
 
 export const runtime = "nodejs";
 
@@ -26,6 +29,7 @@ function escapeEmailHtml(value: string | null | undefined): string {
 }
 
 type Decision = "APPROVE" | "REJECT" | "COMMENT";
+type ApprovalRoute = "FINALIZE" | "MANAGING_DIRECTOR";
 
 export async function POST(
   request: Request,
@@ -36,13 +40,20 @@ export async function POST(
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  if (!isApproverRole(session.role) || !canAccessMrModuleForSession(session)) {
+  if (isKsaViewer(session)) {
+    return NextResponse.json({ message: "KSA Viewer access is read-only." }, { status: 403 });
+  }
+
+  const isReadyMixDirectorAccount = session.email.trim().toLowerCase() === "elie.azzam@ahmadiah.com";
+  const isRamziAccount = isRamziDocumentApprover(session.email);
+  if ((!isApproverRole(session.role) || !canAccessMrModuleForSession(session)) && !isReadyMixDirectorAccount && !isRamziAccount) {
     return NextResponse.json({ message: "Only approvers can perform this action." }, { status: 403 });
   }
 
   const { id: documentId } = await params;
   const formData = await request.formData();
   const decision = String(formData.get("decision") || "").trim().toUpperCase() as Decision;
+  const approvalRoute = String(formData.get("approvalRoute") || "").trim().toUpperCase() as ApprovalRoute | "";
   const comments = String(formData.get("comments") || "").trim();
   const fileValue = formData.get("file");
   const signatureCount = Number(formData.get("signatureCount") || 0);
@@ -51,7 +62,7 @@ export async function POST(
     return NextResponse.json({ message: "Decision must be APPROVE, REJECT, or COMMENT." }, { status: 400 });
   }
 
-  const workflow = APPROVER_WORKFLOW[session.role];
+  const workflow = isApproverRole(session.role) ? APPROVER_WORKFLOW[session.role] : null;
   const startedAt = performance.now();
 
   try {
@@ -63,6 +74,7 @@ export async function POST(
           documentNumber: true,
           title: true,
           status: true,
+          projectName: true,
           currentVersion: true,
           currentApproverId: true,
           createdById: true,
@@ -98,18 +110,37 @@ export async function POST(
         throw new Error("Document not found.");
       }
 
+      const isReadyMixDirectorAction = isReadyMixDirectorAccount
+        && (document.documentType === "MATERIAL_REQUISITION" || document.documentType === "COMPARISON")
+        && document.projectName === "Ready Mix Khobar"
+        && document.createdBy?.email?.trim().toLowerCase() === "dispatcher.pmv@ahmadiah.com";
+      const isMohamedWorkflowAction = isRamziAccount
+        && document.documentType === "MATERIAL_REQUISITION"
+        && isAvkUploaderWorkflowDocument(document.createdBy?.email, document.documentType)
+        && document.status === DocumentStatus.PENDING_APPROVER_1;
+
       if (document.currentApproverId !== session.userId) {
         throw new Error("This document is not assigned to you.");
       }
 
-      const policy = getWorkflowAuthorizationPolicy({
-        role: session.role,
-        currentStatus: document.status,
-        action: decision,
-      });
+      if (isReadyMixDirectorAction) {
+        if (document.status !== DocumentStatus.PENDING_APPROVER_1 || decision === "COMMENT") {
+          throw new Error("This Ready Mix Khobar document is not available for your approval action.");
+        }
+      } else if (!isMohamedWorkflowAction) {
+        if (!workflow || !canAccessMrModuleForSession(session)) {
+          throw new Error("Only approvers can perform this action.");
+        }
 
-      if (!policy.allowed) {
-        throw new Error(policy.reason || "Document is not in your approval step.");
+        const policy = getWorkflowAuthorizationPolicy({
+          role: session.role,
+          currentStatus: document.status,
+          action: decision,
+        });
+
+        if (!policy.allowed) {
+          throw new Error(policy.reason || "Document is not in your approval step.");
+        }
       }
 
       const currentVersionRecord = await tx.documentVersion.findUnique({
@@ -233,6 +264,7 @@ export async function POST(
             hasLinkedComparison: !!document.relatedComparisonId,
             uploaderEmail: document.createdBy?.email ?? undefined,
             location: document.createdBy?.location ?? undefined,
+            projectName: document.projectName,
             mrType: document.mrType ?? undefined,
           });
 
@@ -320,13 +352,14 @@ export async function POST(
         hasLinkedComparison: !!document.relatedComparisonId,
         uploaderEmail: document.createdBy?.email ?? undefined,
         location: document.createdBy?.location ?? undefined,
+        projectName: document.projectName,
         mrType: document.mrType ?? undefined,
       });
 
       let finalFilePath = saved.relativePath;
       let finalOriginalName = fileValue.name;
       let mergedSourcePaths: string[] = [];
-      if (!workflow.nextApproverRole && document.documentType === "MATERIAL_REQUISITION" && document.relatedComparisonId) {
+      if (!workflow?.nextApproverRole && !isReadyMixDirectorAction && document.documentType === "MATERIAL_REQUISITION" && document.relatedComparisonId) {
         const comparison = await tx.document.findUnique({
           where: { id: document.relatedComparisonId },
           select: {
@@ -349,6 +382,7 @@ export async function POST(
             storageFolder: saved.storageFolder || documentStorageFolder({
               uploaderEmail: document.createdBy?.email ?? "",
               location: document.createdBy?.location ?? undefined,
+              projectName: document.projectName,
               documentType: "MATERIAL_REQUISITION",
               mrType: document.mrType ?? null,
               hasLinkedComparison: true,
@@ -378,28 +412,67 @@ export async function POST(
         },
       });
 
-      const nextApproverRole = document.documentType === "CUSTODY" && session.role === UserRole.APPROVER_1
+      const nextApproverRole = isReadyMixDirectorAction
         ? UserRole.APPROVER_3
-        : workflow.nextApproverRole;
+        : isMohamedWorkflowAction
+          ? UserRole.APPROVER_3
+        : document.documentType === "CUSTODY" && session.role === UserRole.APPROVER_1
+          ? UserRole.APPROVER_3
+          : workflow?.nextApproverRole ?? null;
       let nextApproverId: string | null = null;
-      let nextStatus = document.documentType === "CUSTODY" && session.role === UserRole.APPROVER_1
+      let nextStatus = isReadyMixDirectorAction
         ? DocumentStatus.PENDING_APPROVER_3
-        : workflow.nextStatus;
+        : isMohamedWorkflowAction
+          ? DocumentStatus.PENDING_APPROVER_3
+        : document.documentType === "CUSTODY" && session.role === UserRole.APPROVER_1
+          ? DocumentStatus.PENDING_APPROVER_3
+          : workflow?.nextStatus ?? DocumentStatus.APPROVED;
       let nextWorkflowStep: number | null = null;
       const templateTransition = resolveNextWorkflowStepForApproval(document.workflowTemplate, document.currentWorkflowStep);
 
-      if (document.workflowTemplate && document.workflowTemplate.steps.length > 0 && templateTransition.currentStep) {
+      if (isReadyMixDirectorAction) {
+        const avrApprovers = await resolveWorkflowApproverIdsForUploader(tx, document.createdBy?.email);
+        if (!avrApprovers.approver3Id) {
+          throw new Error("The AVR PMV Manager account is missing.");
+        }
+        nextApproverId = avrApprovers.approver3Id;
+      } else if (isMohamedWorkflowAction) {
+        const marc = await tx.user.findUnique({
+          where: { email: MARC_PMV_MANAGER_EMAIL },
+          select: { id: true },
+        });
+        if (!marc) {
+          throw new Error("Marc Baddour's PMV Manager account is not available.");
+        }
+        nextApproverId = marc.id;
+      } else if (session.role === UserRole.APPROVER_3 && approvalRoute === "MANAGING_DIRECTOR") {
+        const managingDirector = await tx.user.findFirst({
+          where: { role: UserRole.ADMIN },
+          select: { id: true },
+        });
+
+        if (managingDirector) {
+          nextApproverId = managingDirector.id;
+          nextStatus = DocumentStatus.PENDING_APPROVER_3;
+          nextWorkflowStep = document.currentWorkflowStep;
+        } else {
+          nextStatus = DocumentStatus.APPROVED;
+          nextApproverId = null;
+        }
+      }
+
+      if (!isReadyMixDirectorAction && document.workflowTemplate && document.workflowTemplate.steps.length > 0 && templateTransition.currentStep) {
         const fallbackApprover = templateTransition.nextStep?.approverUserId ?? templateTransition.nextStep?.approver?.id ?? null;
         if (templateTransition.nextStep) {
           nextApproverId = fallbackApprover ?? null;
-          nextStatus = templateTransition.nextStatus ?? workflow.nextStatus;
+          nextStatus = templateTransition.nextStatus ?? workflow?.nextStatus ?? DocumentStatus.APPROVED;
           nextWorkflowStep = templateTransition.nextStep.stepNumber;
         } else {
           nextApproverId = null;
           nextStatus = DocumentStatus.APPROVED;
           nextWorkflowStep = templateTransition.currentStep.stepNumber;
         }
-      } else if (nextApproverRole) {
+      } else if (!isReadyMixDirectorAction && !isMohamedWorkflowAction && nextApproverRole) {
         const nextApprover = await tx.user.findFirst({
           where: { role: nextApproverRole },
           select: { id: true },
@@ -531,7 +604,7 @@ export async function POST(
         mrType: true,
         createdAt: true,
         currentApprover: { select: { id: true, name: true, email: true } },
-        createdBy: { select: { id: true, name: true, email: true } },
+        createdBy: { select: { id: true, name: true, email: true, location: true } },
       },
     });
 
@@ -542,7 +615,7 @@ export async function POST(
     const isAvkUploader = [
       "joemar.paraiso@ahmadiah.com",
       "bernabie.rocha@ahmadiah.com",
-      "mohamed.mahran@ahmadiah.com",
+      "mohamed.mahran@ahmadiah-sa.com",
     ].includes(creatorEmail || "");
 
     if (result.status === DocumentStatus.REJECTED) {
@@ -632,6 +705,9 @@ export async function POST(
         : documentForEmail.currentApprover.id
           ? [{ id: documentForEmail.currentApprover.id }]
           : [];
+      if (documentForEmail.createdBy?.id && !recipients.some((recipient) => recipient.id === documentForEmail.createdBy?.id)) {
+        recipients.push({ id: documentForEmail.createdBy.id });
+      }
 
       await queueWorkflowEmailEvents(
         recipients.map((recipient) => ({
@@ -650,6 +726,17 @@ export async function POST(
         ? [...approvedRecipientEmail]
         : [...workflowRecipientEmails];
 
+      const avkCompletionEmails = result.status === DocumentStatus.APPROVED
+        && documentForEmail?.createdBy?.location === "AVK"
+        && (documentForEmail.documentType === "MATERIAL_REQUISITION" || documentForEmail.documentType === "COMPARISON")
+        ? [
+          ...(creatorEmail ? [creatorEmail] : []),
+            MOHAMED_AVK_WORKFLOW_UPLOADER_EMAIL,
+            ...(documentForEmail.documentType === "MATERIAL_REQUISITION" ? ["omar.merzek@ahmadiah.com"] : []),
+          ]
+        : [];
+      avkCompletionEmails.forEach((email) => targetEmails.push(email));
+
       if (result.status === DocumentStatus.REJECTED && documentForEmail?.createdBy?.email) {
         const uploaderEmail = documentForEmail.createdBy.email.trim().toLowerCase();
         if (!targetEmails.includes(uploaderEmail)) {
@@ -658,13 +745,12 @@ export async function POST(
       }
 
       if (
-        result.status === DocumentStatus.APPROVED &&
-        (documentForEmail?.documentType === "COMPARISON" || documentForEmail?.documentType === "CUSTODY") &&
         documentForEmail?.createdBy?.email
+        && creatorEmail
+        && !targetEmails.includes(creatorEmail)
+        && (result.status !== DocumentStatus.APPROVED || documentForEmail.documentType !== "MATERIAL_REQUISITION")
       ) {
-        if (creatorEmail && !targetEmails.includes(creatorEmail)) {
-          targetEmails.push(creatorEmail);
-        }
+        targetEmails.push(creatorEmail);
       }
 
       const clerkRecipients = await prisma.user.findMany({
@@ -677,6 +763,23 @@ export async function POST(
       });
       const emailType = result.status === DocumentStatus.APPROVED ? "WORKFLOW_APPROVED" : "WORKFLOW_REJECTED";
       await queueWorkflowEmailEvents(clerkRecipients.map((clerk) => ({ recipientId: clerk.id, type: emailType, documentId })));
+
+      if (avkCompletionEmails.length > 0 && documentForEmail?.createdBy?.id) {
+        runInBackground(async () => {
+          await Promise.all(
+            clerkRecipients
+              .filter((recipient) => avkCompletionEmails.includes(recipient.email.trim().toLowerCase()))
+              .filter((recipient) => recipient.id !== documentForEmail.createdBy?.id)
+              .map((recipient) => createNotification({
+                userId: recipient.id,
+                type: "DOCUMENT_APPROVED",
+                title: "AVK document approved",
+                message: `${documentForEmail.documentNumber} - ${documentForEmail.title}`,
+                documentId,
+              })),
+          );
+        });
+      }
     }
 
     console.info(`[actions] Queueing completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });

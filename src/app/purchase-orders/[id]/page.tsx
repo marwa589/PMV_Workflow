@@ -1,11 +1,15 @@
 import Link from "next/link";
+import { UserRole } from "@prisma/client";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, Download, FileText } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
 import PurchaseOrderDeleteButton from "@/components/purchase-order-delete-button";
+import InvoiceDeleteButton from "@/components/invoice-delete-button";
 import { requireAuth } from "@/lib/auth/guards";
-import { canViewPurchaseOrder } from "@/lib/po-access";
+import { canViewPurchaseOrder, isReadyMixKhobarDirector, READY_MIX_KHOBAR_PROJECT_NAME } from "@/lib/po-access";
+import { canViewInvoicesForPurchaseOrder } from "@/lib/invoice-access";
 import { prisma } from "@/lib/prisma";
+import { isKsaViewer, KSA_USER_LOCATIONS } from "@/lib/ksa-viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +24,7 @@ export default async function PurchaseOrderDetailsPage({ params }: { params: Pro
   const session = await requireAuth();
   const { id } = await params;
   if (!(await canViewPurchaseOrder(session, id))) redirect("/unauthorized");
+  const isReadyMixViewer = isReadyMixKhobarDirector(session);
 
   const po = await prisma.purchaseOrder.findUnique({
     where: { id },
@@ -27,11 +32,21 @@ export default async function PurchaseOrderDetailsPage({ params }: { params: Pro
       uploadedBy: { select: { name: true } },
       mrLinks: {
         orderBy: { createdAt: "asc" },
-        include: { document: { select: { id: true, documentNumber: true, title: true, status: true } } },
+        include: { document: { select: { id: true, documentNumber: true, title: true, status: true, projectName: true, createdBy: { select: { location: true } } } } },
+      },
+      invoices: {
+        orderBy: { uploadedAt: "desc" },
+        include: { uploadedBy: { select: { name: true } } },
       },
     },
   });
   if (!po) notFound();
+  const canViewInvoices = !isKsaViewer(session) && await canViewInvoicesForPurchaseOrder(session, po.id);
+  const visibleMrLinks = isKsaViewer(session)
+    ? po.mrLinks.filter((link) => KSA_USER_LOCATIONS.includes(link.document.createdBy.location as typeof KSA_USER_LOCATIONS[number]))
+    : isReadyMixViewer
+      ? po.mrLinks.filter((link) => link.document.projectName === READY_MIX_KHOBAR_PROJECT_NAME)
+      : po.mrLinks;
 
   return (
     <DashboardShell role={session.role} userName={session.name} title="Purchase Order" subtitle="Linked material requisitions">
@@ -48,7 +63,7 @@ export default async function PurchaseOrderDetailsPage({ params }: { params: Pro
           <FileText className="h-4 w-4" />
           Open File
         </a>
-        <PurchaseOrderDeleteButton purchaseOrderId={po.id} />
+        {!isReadyMixViewer && !isKsaViewer(session) ? <PurchaseOrderDeleteButton purchaseOrderId={po.id} /> : null}
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -74,19 +89,52 @@ export default async function PurchaseOrderDetailsPage({ params }: { params: Pro
             <div className="space-y-3 text-sm text-slate-700">
               <div className="flex items-center justify-between gap-3"><span className="font-medium text-slate-500">Submitted by</span><span className="font-semibold text-slate-900">{po.uploadedBy.name}</span></div>
               <div className="flex items-center justify-between gap-3"><span className="font-medium text-slate-500">Created at</span><span className="font-semibold text-slate-900">{formatDate(po.uploadedAt)}</span></div>
-              <div className="flex items-center justify-between gap-3"><span className="font-medium text-slate-500">Related MRs</span><span className="font-semibold text-slate-900">{po.mrLinks.length}</span></div>
+              <div className="flex items-center justify-between gap-3"><span className="font-medium text-slate-500">Related MRs</span><span className="font-semibold text-slate-900">{visibleMrLinks.length}</span></div>
             </div>
           </div>
         </div>
       </section>
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4"><h3 className="text-base font-semibold text-slate-900">Linked MRs</h3></div>
-        {po.mrLinks.length === 0 ? <p className="px-5 py-6 text-sm text-slate-500">No MRs linked.</p> : (
+        {visibleMrLinks.length === 0 ? <p className="px-5 py-6 text-sm text-slate-500">No MRs linked.</p> : (
           <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3 font-semibold">MR Number</th><th className="px-5 py-3 font-semibold">MR Status</th><th className="px-5 py-3 font-semibold">View Details</th></tr></thead><tbody>
-            {po.mrLinks.map(({ document }) => <tr key={document.id} className="border-t border-slate-100"><td className="px-5 py-4"><Link href={`/documents/${document.id}`} className="font-medium text-cyan-700 hover:underline">{document.documentNumber} - {document.title}</Link></td><td className="px-5 py-4 text-slate-600">{document.status.replaceAll("_", " ")}</td><td className="px-5 py-4"><Link href={`/documents/${document.id}`} className="font-medium text-cyan-700 hover:underline">View Details</Link></td></tr>)}
+            {visibleMrLinks.map(({ document }) => <tr key={document.id} className="border-t border-slate-100"><td className="px-5 py-4"><Link href={`/documents/${document.id}`} className="font-medium text-cyan-700 hover:underline">{document.documentNumber} - {document.title}</Link></td><td className="px-5 py-4 text-slate-600">{document.status.replaceAll("_", " ")}</td><td className="px-5 py-4"><Link href={`/documents/${document.id}`} className="font-medium text-cyan-700 hover:underline">View Details</Link></td></tr>)}
           </tbody></table></div>
         )}
       </section>
+      {canViewInvoices ? (
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4">
+            <h3 className="text-base font-semibold text-slate-900">Invoices</h3>
+          </div>
+          {po.invoices.length === 0 ? (
+            <p className="px-5 py-6 text-sm text-slate-500">No invoices have been uploaded for this PO.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr><th className="px-5 py-3 font-semibold">Invoice</th><th className="px-5 py-3 font-semibold">Uploaded</th><th className="px-5 py-3 font-semibold">Uploaded By</th><th className="px-5 py-3 font-semibold">Action</th></tr>
+                </thead>
+                <tbody>
+                  {po.invoices.map((invoice) => (
+                    <tr key={invoice.id} className="border-t border-slate-100">
+                      <td className="px-5 py-4 font-medium text-slate-900">{invoice.originalName}</td>
+                      <td className="px-5 py-4 text-slate-600">{formatDate(invoice.uploadedAt)}</td>
+                      <td className="px-5 py-4 text-slate-600">{invoice.uploadedBy.name}</td>
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <a href={`/api/invoices/${invoice.id}/download`} className="font-medium text-cyan-700 hover:underline">Download</a>
+                            {session.role === UserRole.ADMIN ? <InvoiceDeleteButton invoiceId={invoice.id} /> : null}
+                          </div>
+                        </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : null}
     </DashboardShell>
   );
 }

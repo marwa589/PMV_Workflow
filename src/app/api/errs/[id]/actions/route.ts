@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { EmailEventType } from "@prisma/client";
+import { EmailEventType, ErrType, UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getErrAccess, canApproveErr } from "@/lib/err/permissions";
 import {
@@ -19,13 +19,15 @@ import { getRequestOrigin } from "@/lib/request-origin";
 import { runInBackground } from "@/lib/background";
 import { isErrUploaderAccount } from "@/lib/err/uploader-access";
 import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
+import { MOHAMED_AVK_WORKFLOW_UPLOADER_EMAIL } from "@/lib/mohamed-document-workflow";
+import { GLOBAL_ERR_UPLOADER_EMAILS } from "@/lib/err/uploader-access";
 
 export const runtime = "nodejs";
 
 class ErrActionError extends Error {}
 
 type Decision = "APPROVE" | "REJECT" | "COMMENT" | "HOLD";
-type ApprovalRoute = "FINALIZE" | "ACTING_CEO" | "ACTING_CEO_THEN_CEO";
+type ApprovalRoute = "FINALIZE" | "ACTING_CEO" | "ACTING_CEO_THEN_CEO" | "CEO";
 
 export async function POST(
   request: Request,
@@ -192,6 +194,7 @@ export async function POST(
           nextApprovalPath: true,
           currentApproverId: true,
           createdById: true,
+          createdBy: { select: { location: true } },
           projectDirectorId: true,
           projectId: true,
           revisionNumber: true,
@@ -300,7 +303,9 @@ export async function POST(
           ? "ACTING_CEO_THEN_CEO"
           : pendingRoute === "ACTING_CEO"
             ? "ACTING_CEO"
-            : "FINALIZE";
+            : pendingRoute === "CEO"
+              ? "CEO"
+              : "FINALIZE";
 
         const outputFile = latestErrPdf
           ? await tx.errFile.update({
@@ -332,7 +337,11 @@ export async function POST(
             });
 
         const nextStage = err.currentStage === "PMV_MANAGER"
-          ? selectedRoute === "ACTING_CEO" || selectedRoute === "ACTING_CEO_THEN_CEO" ? "ACTING_CEO" : null
+          ? selectedRoute === "ACTING_CEO" || selectedRoute === "ACTING_CEO_THEN_CEO"
+            ? "ACTING_CEO"
+            : selectedRoute === "CEO"
+              ? "CEO"
+              : null
           : err.currentStage === "ACTING_CEO"
             ? selectedRoute === "ACTING_CEO_THEN_CEO" ? "CEO" : null
             : err.currentStage === "CEO"
@@ -364,7 +373,7 @@ export async function POST(
             status: nextStatus,
             currentStage: nextStageValue,
             nextApprovalPath: err.currentStage === "PMV_MANAGER"
-              ? selectedRoute === "ACTING_CEO" || selectedRoute === "ACTING_CEO_THEN_CEO"
+              ? selectedRoute === "ACTING_CEO" || selectedRoute === "ACTING_CEO_THEN_CEO" || selectedRoute === "CEO"
                 ? selectedRoute
                 : null
               : err.currentStage === "ACTING_CEO"
@@ -385,9 +394,11 @@ export async function POST(
               ? "APPROVED"
               : err.currentStage === "ACTING_CEO" && selectedRoute === "ACTING_CEO_THEN_CEO"
                 ? "ESCALATED_TO_CEO"
-                : selectedRoute === "ACTING_CEO" || selectedRoute === "ACTING_CEO_THEN_CEO"
-                  ? "ESCALATED_TO_ACTING_CEO"
-                  : "FINALIZED_APPROVAL",
+                : selectedRoute === "CEO"
+                  ? "ESCALATED_TO_CEO"
+                  : selectedRoute === "ACTING_CEO" || selectedRoute === "ACTING_CEO_THEN_CEO"
+                    ? "ESCALATED_TO_ACTING_CEO"
+                    : "FINALIZED_APPROVAL",
             stage: err.currentStage,
             comments: comments || null,
             revisionNumber: err.revisionNumber,
@@ -420,6 +431,26 @@ export async function POST(
               emailEnabled: false,
             },
           });
+
+          if (err.createdBy.location === "AVK" && err.createdById !== access.userId) {
+            const avkUploader = await tx.user.findUnique({
+              where: { email: MOHAMED_AVK_WORKFLOW_UPLOADER_EMAIL },
+              select: { id: true },
+            });
+            if (avkUploader && avkUploader.id !== err.createdById) {
+              await tx.errNotification.create({
+                data: {
+                  errId: err.id,
+                  recipientId: avkUploader.id,
+                  type: "APPROVED",
+                  eventKey: `err:${err.id}:approved:avk:${randomUUID()}`,
+                  title: "AVK ERR approved",
+                  message: `${err.documentNumber}: ${err.title}`,
+                  emailEnabled: false,
+                },
+              });
+            }
+          }
         }
 
         return {
@@ -511,40 +542,8 @@ export async function POST(
       };
     });
 
-    if (result.status === "PENDING") {
-      runInBackground(async () => {
-        try {
-          await prisma.emailNotificationEvent.updateMany({
-            where: {
-              recipientId: access.userId,
-              documentId: id,
-              type: EmailEventType.ERR_WORKFLOW_UPDATE,
-              emailSent: false,
-              claimedAt: null,
-            },
-            data: { emailSent: true, claimedAt: null },
-          });
-          const pendingErr = await prisma.err.findUnique({
-            where: { id },
-            select: {
-              currentApproverId: true,
-            },
-          });
-
-          if (pendingErr?.currentApproverId) {
-            await queueWorkflowEmailEvents([{
-              recipientId: pendingErr.currentApproverId,
-              type: EmailEventType.ERR_WORKFLOW_UPDATE,
-              documentId: id,
-            }]);
-          }
-        } catch (error) {
-          console.error("ERR next approver email could not be queued.", error);
-        }
-      });
-    } else {
-      runInBackground(async () => {
-        try {
+    runInBackground(async () => {
+      try {
         await prisma.emailNotificationEvent.updateMany({
           where: {
             recipientId: access.userId,
@@ -555,22 +554,71 @@ export async function POST(
           },
           data: { emailSent: true, claimedAt: null },
         });
+
         const errForEmail = await prisma.err.findUnique({
           where: { id },
           select: {
             documentNumber: true,
             title: true,
-            type: true,
-            projectNameSnapshot: true,
+            createdById: true,
             createdBy: { select: { location: true } },
+            currentApproverId: true,
+            type: true,
           },
         });
+        if (!errForEmail) return;
+
+        const globalErrUploaders = await prisma.user.findMany({
+          where: { email: { in: [...GLOBAL_ERR_UPLOADER_EMAILS] } },
+          select: { id: true },
+        });
+        const globalNotificationType = result.status === "APPROVED"
+          ? "APPROVED" as const
+          : result.status === "REJECTED"
+            ? "REJECTED" as const
+            : result.status === "REVISION_REQUIRED"
+              ? "REVISION_REQUIRED" as const
+              : result.status === "ON_HOLD"
+                ? "ON_HOLD" as const
+                : "APPROVAL_PENDING" as const;
+        const globalNotificationTitle = result.status === "APPROVED"
+          ? "ERR approved"
+          : result.status === "REJECTED"
+            ? "ERR rejected"
+            : result.status === "REVISION_REQUIRED"
+              ? "ERR requires revision"
+              : result.status === "ON_HOLD"
+                ? "ERR placed on hold"
+                : "ERR approval updated";
+        const globalNotificationRecipients = globalErrUploaders.filter((uploader) =>
+          uploader.id !== errForEmail.createdById
+          && !(result.status === "PENDING" && uploader.id === errForEmail.currentApproverId),
+        );
+        if (globalNotificationRecipients.length > 0) {
+          await prisma.errNotification.createMany({
+            data: globalNotificationRecipients.map((uploader) => ({
+              errId: id,
+              recipientId: uploader.id,
+              type: globalNotificationType,
+              eventKey: `err:${id}:global:${result.status}:${randomUUID()}`,
+              title: globalNotificationTitle,
+              message: `${errForEmail.documentNumber}: ${errForEmail.title}`,
+              emailEnabled: false,
+            })),
+            skipDuplicates: true,
+          });
+        }
 
         const uploaderUsers = await prisma.user.findMany({
           where: {
             OR: [
+              { id: errForEmail.createdById },
               { errAccess: { some: { role: "UPLOADER", isActive: true } } },
               { role: "ERR_USER" },
+              ...(result.status === "APPROVED" && errForEmail.createdBy.location === "AVK"
+                ? [{ email: MOHAMED_AVK_WORKFLOW_UPLOADER_EMAIL }]
+                : []),
+              { name: { contains: "kamel", mode: "insensitive" } },
             ],
           },
           select: {
@@ -585,29 +633,63 @@ export async function POST(
             },
           },
         });
-        const uploaderIsKuwait = errForEmail?.createdBy.location === "KUWAIT";
-        const recipients = uploaderUsers.filter((user) =>
+        const eligibleUploaders = uploaderUsers.filter((user) =>
           user.email && (
-            user.errAccess?.length > 0 || isErrUploaderAccount(user.name, user.role)
-          ) && (
-            uploaderIsKuwait
-              ? user.location === "KUWAIT"
-              : user.location !== "KUWAIT"
+            user.id === errForEmail.createdById
+            || user.errAccess.length > 0
+            || isErrUploaderAccount(user.name, user.role)
+            || (user.name.trim().toLowerCase().includes("kamel") && (result.status === "APPROVED" || result.status === "REJECTED"))
           ),
         );
+        const finalApprovalOnlyRecipientIds = new Set(
+          eligibleUploaders
+            .filter((user) => {
+              const normalizedName = user.name.trim().toLowerCase();
+              return normalizedName.includes("kamel");
+            })
+            .map((user) => user.id),
+        );
+        const locationRecipients = result.status === "PENDING"
+          ? []
+          : eligibleUploaders.filter((user) =>
+              (errForEmail.createdBy.location === "KUWAIT"
+                ? user.location === "KUWAIT"
+                : user.location !== "KUWAIT")
+              && (result.status !== "REJECTED"
+                || user.email.trim().toLowerCase() !== "mohammad.mehieddine@ahmadiah.com"
+                || user.id === errForEmail.createdById),
+            );
+        const globalRecipients = eligibleUploaders.filter((user) =>
+          isErrUploaderAccount(user.name, user.role)
+            || ((result.status === "APPROVED" || result.status === "REJECTED") && user.name.trim().toLowerCase().includes("kamel")),
+        );
+        const nextApprover = result.status === "PENDING" && errForEmail.currentApproverId
+          ? [{ id: errForEmail.currentApproverId }]
+          : [];
+        const workshopManagers = result.status === "APPROVED" && errForEmail.type === ErrType.RENTAL_ACTC
+          ? await prisma.user.findMany({
+              where: { role: UserRole.APPROVER_2 },
+              select: { id: true },
+            })
+          : [];
+        const recipients = Array.from(
+          new Map(
+            [...eligibleUploaders.filter((user) => user.id === errForEmail.createdById), ...globalRecipients, ...locationRecipients, ...nextApprover, ...workshopManagers]
+              .filter((recipient) => "email" in recipient ? Boolean(recipient.email) : true)
+              .filter((recipient) => result.status === "APPROVED" || result.status === "REJECTED" || !finalApprovalOnlyRecipientIds.has(recipient.id))
+              .map((recipient) => [recipient.id, recipient]),
+          ).values(),
+        );
 
-        if (errForEmail && recipients.length > 0) {
-          await queueWorkflowEmailEvents(recipients.map((recipient) => ({
-            recipientId: recipient.id,
-            type: EmailEventType.ERR_WORKFLOW_UPDATE,
-            documentId: id,
-          })));
-        }
-        } catch (error) {
-          console.error("ERR uploader email could not be queued.", error);
-        }
-      });
-    }
+        await queueWorkflowEmailEvents(recipients.map((recipient) => ({
+          recipientId: recipient.id,
+          type: EmailEventType.ERR_WORKFLOW_UPDATE,
+          documentId: id,
+        })));
+      } catch (error) {
+        console.error("ERR action email notifications could not be queued.", error);
+      }
+    });
 
     return NextResponse.json(
       { message: result.message, status: result.status },

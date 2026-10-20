@@ -51,8 +51,8 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
     .filter((doc) => !documentTypeFilter || doc.documentType === documentTypeFilter)
     .filter((doc) => !locationFilter || (doc.documentType === "MATERIAL_REQUISITION" && (doc.uploaderLocation ?? doc.createdBy.location) === locationFilter))
     .filter((doc) => !mrTypeFilter || (doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === mrTypeFilter))
-    .filter((doc) => !poStatusFilter || getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id)) === poStatusFilter)
-    .filter((doc) => !downloadStatusFilter || (downloadStatusFilter === "DOWNLOADED" ? doc.downloadedAt : !doc.downloadedAt))
+    .filter((doc) => !poStatusFilter || getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id), doc.status) === poStatusFilter)
+    .filter((doc) => !downloadStatusFilter || (downloadStatusFilter === "DOWNLOADED" ? doc.downloadRecords[0]?.downloadedAt : !doc.downloadRecords[0]?.downloadedAt))
     .filter((doc) => {
       const approvalTime = doc.approvals.find((approval) => approval.action === "APPROVED")?.performedAt?.getTime();
       const from = approvalFrom ? new Date(approvalFrom).getTime() : null;
@@ -66,7 +66,7 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
     status: doc.status,
     documentType: doc.documentType,
     mrType: doc.mrType,
-    poStatus: getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id)),
+    poStatus: getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id), doc.status),
     rejectionComments: doc.approvals[0]?.comments || null,
     currentVersion: doc.currentVersion,
     currentApproverName: doc.currentApprover?.name || null,
@@ -74,7 +74,7 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
     relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
     mrNumber: doc.mrNumber || null,
     relatedComparisonTitle: doc.relatedComparison?.title || null,
-    downloadedAt: doc.downloadedAt,
+    downloadedAt: doc.downloadRecords[0]?.downloadedAt ?? null,
     approvalDate: doc.approvals.find((approval) => approval.action === "APPROVED")?.performedAt || null,
     dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.updatedAt),
   }));

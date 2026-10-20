@@ -1,4 +1,5 @@
 import { UserRole } from "@prisma/client";
+import Link from "next/link";
 import DashboardShell from "@/components/dashboard-shell";
 import ApproverPendingTable from "@/components/approver-pending-table";
 import DocumentStatusFilter from "@/components/document-status-filter";
@@ -8,15 +9,17 @@ import { parseDocumentStatusFilter, parseDocumentTypeFilter } from "@/lib/docume
 import { getDocumentsForApprover } from "@/lib/document-queries";
 import { roleLabel } from "@/lib/auth/roles";
 import { getModuleVisibility } from "@/lib/auth/module-visibility";
+import { getReviewAllCounts } from "@/lib/review-all";
 
 export const dynamic = "force-dynamic";
 
-export default async function ApproverPendingApprovalsPage({ searchParams }: any) {
+export default async function ApproverPendingApprovalsPage({ searchParams }: { searchParams: Promise<{ status?: string; documentType?: string }> }) {
   const session = await requireRole([UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]);
   const resolvedSearchParams = await Promise.resolve(searchParams);
   const statusFilter = parseDocumentStatusFilter(resolvedSearchParams?.status);
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
   const data = await getDocumentsForApprover(session.userId, session.role, session.name);
+  const reviewAllCounts = await getReviewAllCounts(session.userId, session.email);
 
   const pendingDocuments = [
     ...data.pendingDocuments
@@ -63,8 +66,13 @@ export default async function ApproverPendingApprovalsPage({ searchParams }: any
     >
       <PageSummaryCards cards={cards} />
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
           <h3 className="text-base font-semibold text-slate-900">Pending Approvals</h3>
+          <div className="flex flex-wrap gap-2">
+            {reviewAllCounts.err > 0 ? <Link href="/approver/review-all?type=ERR" className="rounded-lg bg-cyan-800 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-700">Review ERRs ({reviewAllCounts.err})</Link> : null}
+            {reviewAllCounts.mr > 0 ? <Link href="/approver/review-all?type=MR" className="rounded-lg bg-cyan-800 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-700">Review MRs ({reviewAllCounts.mr})</Link> : null}
+            {reviewAllCounts.comparison > 0 ? <Link href="/approver/review-all?type=COMPARISON" className="rounded-lg bg-cyan-800 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-700">Review Comparison Sheets ({reviewAllCounts.comparison})</Link> : null}
+          </div>
         </div>
         <div className="border-b border-slate-200 px-5 py-4">
           <DocumentStatusFilter value={statusFilter} documentType={documentTypeFilter} showDocumentTypeFilter={true} showErrDocumentType={getModuleVisibility(session.name, session.role) === "ALL"} showStatusFilter={false} />

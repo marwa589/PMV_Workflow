@@ -13,7 +13,7 @@ export const OTP_DEVICE_BYPASS_COOKIE = "docflow_otp_device_bypass";
 
 // Change this one value to "OFF" to disable OTP, or to "ALL" to require it for every user.
 const OTP_ROLLOUT: "OFF" | "TEST_USER" | "ALL" = "TEST_USER";
-const OTP_TEST_USER_EMAIL = "reine.alsouki@ahmadiah.com";
+const OTP_TEST_USER_EMAIL = "marwa.mehieddine@ahmadiah.com";
 const OTP_EXEMPT_EMAILS = (process.env.OTP_EXEMPT_EMAILS ?? "")
   .split(",")
   .map((email) => email.trim().toLowerCase())

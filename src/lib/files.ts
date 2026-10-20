@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, unlink, writeFile } from "fs/promises";
 import { PDFDocument } from "pdf-lib";
 import path from "path";
 import { randomUUID } from "node:crypto";
-import { documentStorageFolder } from "@/lib/storage-layout";
+import { documentStorageFolder, purchaseOrderInvoiceStorageFolder } from "@/lib/storage-layout";
 
 export function getUploadRoot(): string {
   const uploadPath = process.env.UPLOAD_PATH?.trim();
@@ -160,6 +160,22 @@ export async function savePurchaseOrderFile(file: File, storageFolder = "POs"): 
   });
 }
 
+export async function savePurchaseOrderInvoiceFile(file: File, purchaseOrderFilePath: string): Promise<{ relativePath: string }> {
+  const validation = ensureAllowedFile(file);
+  if (!validation.ok || !validation.extension) {
+    throw new Error(validation.message || "Invalid invoice file.");
+  }
+
+  const baseName = safeFileName(file.name.replace(/\.[^.]+$/, "")) || "Invoice";
+  const fileName = `${baseName}-${randomUUID()}.${validation.extension}`;
+  const saved = await saveStoredFile({
+    relativePath: `${purchaseOrderInvoiceStorageFolder(purchaseOrderFilePath)}/${fileName}`,
+    bytes: new Uint8Array(await file.arrayBuffer()),
+  });
+
+  return { relativePath: saved.relativePath };
+}
+
 // Compute the structured storage directory based on document type and relationship.
 export function resolveStorageDir(params: {
   documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
@@ -167,12 +183,14 @@ export function resolveStorageDir(params: {
   mrType?: "CASH" | "CREDIT" | null;
   hasLinkedComparison: boolean;
   location?: string | null;
+  projectName?: string | null;
   uploaderEmail?: string;
 }): string {
   const resolvedPath = params.uploaderEmail
     ? documentStorageFolder({
         uploaderEmail: params.uploaderEmail,
         location: params.location,
+        projectName: params.projectName,
         documentType: params.documentType,
         mrType: params.mrType,
         hasLinkedComparison: params.hasLinkedComparison,
@@ -211,6 +229,7 @@ export async function saveDocumentVersionFile(params: {
   hasLinkedComparison?: boolean;
   uploaderEmail?: string;
   location?: string | null;
+  projectName?: string | null;
   mrType?: "CASH" | "CREDIT" | null;
   storageFolder?: string | null;
 }): Promise<{ relativePath: string; extension: string; storageFolder: string | null }> {
@@ -228,6 +247,7 @@ export async function saveDocumentVersionFile(params: {
       ? documentStorageFolder({
           uploaderEmail: params.uploaderEmail,
           location: params.location,
+          projectName: params.projectName,
           documentType: params.documentType,
           mrType: params.mrType,
           hasLinkedComparison: params.hasLinkedComparison ?? false,
@@ -238,6 +258,7 @@ export async function saveDocumentVersionFile(params: {
         mrType: params.mrType,
         hasLinkedComparison: params.hasLinkedComparison ?? false,
         location: params.location,
+        projectName: params.projectName,
         uploaderEmail: params.uploaderEmail,
       });
     fileName = documentFileName({

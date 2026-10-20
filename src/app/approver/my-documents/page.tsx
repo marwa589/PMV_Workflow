@@ -11,16 +11,21 @@ import { roleLabel } from "@/lib/auth/roles";
 import { getModuleVisibility } from "@/lib/auth/module-visibility";
 import { getSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
+import { isRamziDocumentApprover } from "@/lib/mohamed-document-workflow";
 
 export const dynamic = "force-dynamic";
 
 export default async function ApproverMyDocumentsPage({ searchParams }: any) {
   const currentSession = await getSession();
-  if (currentSession?.role === UserRole.ERR_USER) {
+  const isRamziWorkflowApprover = currentSession?.role === UserRole.ERR_USER
+    && isRamziDocumentApprover(currentSession.email);
+  if (currentSession?.role === UserRole.ERR_USER && !isRamziWorkflowApprover) {
     redirect("/errs?view=all&section=my-documents");
   }
-  const session = await requireRole([UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]);
-  const data = await getDocumentsForApprover(session.userId, session.role, session.name);
+  const session = isRamziWorkflowApprover && currentSession
+    ? currentSession
+    : await requireRole([UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]);
+  const data = await getDocumentsForApprover(session.userId, session.role, session.name, session.email);
   const resolvedSearchParams = await Promise.resolve(searchParams);
   const statusFilter = parseDocumentStatusFilter(resolvedSearchParams?.status);
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
@@ -54,7 +59,7 @@ export default async function ApproverMyDocumentsPage({ searchParams }: any) {
       .filter((doc) => !documentTypeFilter || doc.documentType === documentTypeFilter)
       .filter((doc) => !locationFilter || (doc.documentType === "MATERIAL_REQUISITION" && (doc.uploaderLocation ?? doc.createdBy.location) === locationFilter))
       .filter((doc) => !mrTypeFilter || (doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === mrTypeFilter))
-      .filter((doc) => !poStatusFilter || getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id)) === poStatusFilter)
+      .filter((doc) => !poStatusFilter || getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id), doc.status) === poStatusFilter)
       .map((doc) => ({
     id: doc.id,
     documentNumber: doc.documentNumber,
@@ -62,7 +67,7 @@ export default async function ApproverMyDocumentsPage({ searchParams }: any) {
     status: doc.status,
     documentType: doc.documentType,
     mrType: doc.mrType,
-    poStatus: getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id)),
+    poStatus: getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id), doc.status),
     rejectionComments: doc.approvals[0]?.comments || null,
     currentVersion: doc.currentVersion,
     currentApproverName: doc.currentApprover?.name || null,
@@ -124,6 +129,7 @@ export default async function ApproverMyDocumentsPage({ searchParams }: any) {
     <DashboardShell
       role={session.role}
       userName={session.name}
+      userEmail={session.email}
       title={pageTitle}
       subtitle={pageSubtitle}
     >

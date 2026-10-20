@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 
 const validDocumentTypes = Object.values(DocumentType);
 const validLocations = Object.values(UserLocation);
-const validRoles = Object.values(UserRole);
+const validRoles: UserRole[] = Object.values(UserRole).filter((role) => role !== UserRole.KSA_VIEWER);
 
 function isValidDocumentType(value: unknown): value is DocumentType {
   return typeof value === "string" && validDocumentTypes.includes(value as DocumentType);

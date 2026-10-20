@@ -1,4 +1,5 @@
 import { readFile } from "fs/promises";
+import { DocumentStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { canAccessDocument } from "@/lib/auth/resource-access";
@@ -28,6 +29,7 @@ export async function GET(
     select: {
       id: true,
       currentVersion: true,
+      status: true,
     },
   });
 
@@ -63,11 +65,20 @@ export async function GET(
     const absolutePath = resolveStoredFilePath(version.filePath);
     const buffer = await readFile(absolutePath);
 
+    const isInline = new URL(request.url).searchParams.get("inline") === "1";
+    if (document.status === DocumentStatus.APPROVED && !isInline) {
+      await prisma.documentDownload.upsert({
+        where: { documentId_userId: { documentId, userId: session.userId } },
+        create: { documentId, userId: session.userId },
+        update: { downloadedAt: new Date() },
+      });
+    }
+
     return new NextResponse(buffer, {
       status: 200,
       headers: {
         "Content-Type": version.mimeType || "application/octet-stream",
-        "Content-Disposition": `${new URL(request.url).searchParams.get("inline") === "1" ? "inline" : "attachment"}; filename="${version.originalName}"`,
+        "Content-Disposition": `${isInline ? "inline" : "attachment"}; filename="${version.originalName}"`,
       },
     });
   } catch {

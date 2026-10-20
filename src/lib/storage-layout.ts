@@ -5,7 +5,7 @@ const KSA_AVR_UPLOADER = "dispatcher.pmv@ahmadiah.com";
 const KSA_AVK_UPLOADERS = new Set([
   "joemar.paraiso@ahmadiah.com",
   "bernabie.rocha@ahmadiah.com",
-  "mohamed.mahran@ahmadiah.com",
+  "mohamed.mahran@ahmadiah-sa.com",
   //temp
   "joemar.paraiso@example.com",
   "bernabie.rocha@example.com",
@@ -84,6 +84,7 @@ function resolveStorageGroupFromUser(location?: string | null, uploaderEmail?: s
 export function documentStorageFolder(params: {
   uploaderEmail: string;
   location?: string | null;
+  projectName?: string | null;
   documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY";
   mrType?: "CASH" | "CREDIT" | null;
   hasLinkedComparison?: boolean;
@@ -97,7 +98,9 @@ export function documentStorageFolder(params: {
     return "Custody Files/AVR";
   }
 
-  const baseFolder = location === "KSA" && group ? `MRs/${location}/${group}` : `MRs/${location}`;
+  const baseFolder = params.projectName === "Ready Mix Khobar"
+    ? "MRs/KSA/Ready Mix Khobar"
+    : location === "KSA" && group ? `MRs/${location}/${group}` : `MRs/${location}`;
 
   if (params.documentType === "COMPARISON") {
     return `${baseFolder}/Comparisons`;
@@ -114,13 +117,23 @@ export function documentStorageFolder(params: {
   return `${baseFolder}/MRs`;
 }
 
-export function purchaseOrderStorageFolder(uploaderEmail: string): string {
+export function purchaseOrderStorageFolder(uploaderEmail: string, projectName?: string | null): string {
   const location = resolveStorageLocationFromUser(null, uploaderEmail);
   const group = resolveStorageGroupFromUser(null, uploaderEmail);
 
   if (!location) return "POs";
-  const baseFolder = location === "KSA" && group ? `MRs/${location}/${group}` : `MRs/${location}`;
+  const baseFolder = projectName === "Ready Mix Khobar"
+    ? "MRs/KSA/Ready Mix Khobar"
+    : location === "KSA" && group ? `MRs/${location}/${group}` : `MRs/${location}`;
   return `${baseFolder}/POs`;
+}
+
+export function purchaseOrderInvoiceStorageFolder(purchaseOrderFilePath: string): string {
+  const directory = path.posix.dirname(purchaseOrderFilePath.replaceAll("\\", "/"));
+  const invoiceParent = path.posix.basename(directory).toLowerCase() === "pos"
+    ? path.posix.dirname(directory)
+    : directory;
+  return path.posix.join(invoiceParent === "." ? "" : invoiceParent, "Invoices");
 }
 
 export function folderFromStoredPath(filePath?: string | null): string | null {

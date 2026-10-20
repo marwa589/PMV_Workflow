@@ -1,4 +1,6 @@
 import { ApprovalActionType, DocumentStatus, UserRole } from "@prisma/client";
+import Link from "next/link";
+import { redirect } from "next/navigation";
 import ApproverPendingTable from "@/components/approver-pending-table";
 import DashboardShell from "@/components/dashboard-shell";
 import DocumentListTable from "@/components/document-list-table";
@@ -7,10 +9,17 @@ import { requireRole } from "@/lib/auth/guards";
 import { APPROVER_ROLES, roleLabel } from "@/lib/auth/roles";
 import { getErrAccess } from "@/lib/err/permissions";
 import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth/session";
+import { isRamziDocumentApprover } from "@/lib/mohamed-document-workflow";
+import { getReviewAllCounts } from "@/lib/review-all";
 
 export const dynamic = "force-dynamic";
 
 export default async function ApproverDashboardPage() {
+  const currentSession = await getSession();
+  if (currentSession?.role === UserRole.ERR_USER && isRamziDocumentApprover(currentSession.email)) {
+    redirect("/approver/my-documents");
+  }
   const session = await requireRole(APPROVER_ROLES);
 
   let pendingCount = 0;
@@ -230,6 +239,8 @@ export default async function ApproverDashboardPage() {
     pendingCount = 0;
   }
 
+  const reviewAllCounts = await getReviewAllCounts(session.userId, session.email);
+
   return (
     <DashboardShell
       role={session.role}
@@ -263,8 +274,13 @@ export default async function ApproverDashboardPage() {
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
           <h3 className="text-base font-semibold text-slate-900">Pending Approvals</h3>
+          <div className="flex flex-wrap gap-2">
+            {reviewAllCounts.err > 0 ? <Link href="/approver/review-all?type=ERR" className="rounded-lg bg-cyan-800 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-700">Review ERRs ({reviewAllCounts.err})</Link> : null}
+            {reviewAllCounts.mr > 0 ? <Link href="/approver/review-all?type=MR" className="rounded-lg bg-cyan-800 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-700">Review MRs ({reviewAllCounts.mr})</Link> : null}
+            {reviewAllCounts.comparison > 0 ? <Link href="/approver/review-all?type=COMPARISON" className="rounded-lg bg-cyan-800 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-700">Review Comparison Sheets ({reviewAllCounts.comparison})</Link> : null}
+          </div>
         </div>
         <div className="px-1 py-4">
           <ApproverPendingTable documents={pendingDocuments} showQuotation={session.role === UserRole.APPROVER_3} />

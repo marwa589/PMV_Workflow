@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getErrAccess } from "@/lib/err/permissions";
 import { saveErrFile } from "@/lib/err/files";
 import { deleteDocumentFiles } from "@/lib/files";
-import { isErrUploaderAccount } from "@/lib/err/uploader-access";
+import { GLOBAL_ERR_UPLOADER_EMAILS, isErrUploaderAccount, isKsaErrUploaderAccount } from "@/lib/err/uploader-access";
 import { errDocumentStorageFolder, marcOnlyErrStorageFolder } from "@/lib/err-storage";
 import { isAllowedRequestOrigin } from "@/lib/request-origin";
 import { runInBackground } from "@/lib/background";
@@ -48,6 +48,11 @@ export async function POST(request: Request) {
     }
 
     uploaderId = access.userId;
+
+    const globalErrUploaders = await prisma.user.findMany({
+      where: { email: { in: [...GLOBAL_ERR_UPLOADER_EMAILS] } },
+      select: { id: true },
+    });
 
     // Early check when the browser supplies Content-Length.
     const lengthHeader = request.headers.get("content-length");
@@ -181,6 +186,7 @@ export async function POST(request: Request) {
           where: {
             id: projectId,
             isActive: true,
+            ...(access.isKsaUploader ? { country: "KSA" } : {}),
           },
           select: {
             name: true,
@@ -192,6 +198,10 @@ export async function POST(request: Request) {
 if (!marcOnly && !storageProject) {
   throw new SubmissionError("Select an existing, active project.");
 }
+
+    if (access.isKsaUploader && marcOnly) {
+      throw new SubmissionError("Select a KSA project for this ERR.");
+    }
 
     const errId = randomUUID();
     const storageFolder = marcOnly
@@ -256,7 +266,7 @@ if (!marcOnly && !storageProject) {
         }
 
         // Recheck permission when creating the records.
-        const uploader = access.isAdmin || isErrUploaderAccount(access.name, access.role)
+        const uploader = access.isAdmin || isErrUploaderAccount(access.name, access.role) || isKsaErrUploaderAccount(access.email)
           ? { id: access.userId }
           : await tx.errUserAccess.findFirst({
               where: {
@@ -278,6 +288,7 @@ if (!marcOnly && !storageProject) {
           where: {
             id: projectId,
             isActive: true,
+            ...(access.isKsaUploader ? { country: "KSA" } : {}),
             OR: [
               {
                 userAccess: {
@@ -434,20 +445,35 @@ if (!marcOnly && !storageProject) {
           },
         });
 
+        const globalUploaderNotifications = globalErrUploaders
+          .filter((uploader) => uploader.id !== access.userId && uploader.id !== projectDirectorId)
+          .map((uploader) => ({
+            errId,
+            recipientId: uploader.id,
+            type: "APPROVAL_PENDING" as const,
+            eventKey: `${action.id}:global-uploader`,
+            title: "New ERR submitted for approval",
+            message: `${documentNumber}: ${title}`,
+            emailEnabled: false,
+          }));
+        if (globalUploaderNotifications.length > 0) {
+          await tx.errNotification.createMany({ data: globalUploaderNotifications, skipDuplicates: true });
+        }
+
         approverId = projectDirectorId;
       },
       { timeout: 15000 },
     );
 
     if (approverId) {
-      const recipientId = approverId;
+      const recipientIds = [...new Set([approverId, ...globalErrUploaders.map((uploader) => uploader.id)])];
       runInBackground(async () => {
         try {
-          await queueWorkflowEmailEvents([{
+          await queueWorkflowEmailEvents(recipientIds.map((recipientId) => ({
             recipientId,
             type: EmailEventType.ERR_WORKFLOW_UPDATE,
             documentId: errId,
-          }]);
+          })));
         } catch (emailError) {
           console.error("ERR approver email could not be queued.", emailError);
         }
@@ -538,6 +564,9 @@ if (!marcOnly && !storageProject) {
     // A lost response does not prove that the commit failed.
     if (!expectedFailure) {
       console.error("ERR submission failed; inspect server/storage state.", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
         errorCode: error instanceof Prisma.PrismaClientKnownRequestError ? error.code : undefined,
         errorMeta: error instanceof Prisma.PrismaClientKnownRequestError ? error.meta : undefined,
       });
@@ -545,7 +574,7 @@ if (!marcOnly && !storageProject) {
 
     const developmentMessage = process.env.NODE_ENV !== "production" && error instanceof Error
       ? `Unable to save ERR: ${error.message}`
-      : "Unable to confirm submission. Check the ERR list before retrying.";
+      : "Unable to confirm submission. Check the ERR list; retrying this form will not create a duplicate.";
 
     return NextResponse.json(
       { message: expectedFailure && error instanceof Error ? error.message : developmentMessage },

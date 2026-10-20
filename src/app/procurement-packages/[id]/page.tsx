@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { Clock, Download } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
 import { requireAuth } from "@/lib/auth/guards";
+import { isKsaViewer } from "@/lib/ksa-viewer";
 import { canAccessPackage } from "@/lib/auth/resource-access";
 import { prisma } from "@/lib/prisma";
 
@@ -18,6 +19,7 @@ function formatTurnaround(ms: number): string {
 
 export default async function ProcurementPackagePage({ params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth();
+  if (isKsaViewer(session)) redirect("/ksa-viewer");
   const { id } = await params;
 
   const allowed = await canAccessPackage(session, id);

@@ -8,7 +8,7 @@ type PendingDocument = {
   id: string;
   documentNumber: string;
   title: string;
-  documentType?: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR" | null;
+  documentType: "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR";
   mrType?: "CASH" | "CREDIT" | null;
   currentVersion: number;
   uploadedAt: string;
@@ -72,16 +72,21 @@ export default function ApproverPendingTable({ documents, showQuotation }: { doc
                     {document.title}
                   </Link>
                 </td>
-                {showQuotation ? <td className="px-5 py-4">
+                <td className="px-5 py-4">
                   <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
                     {getDocumentTypeLabel(document)}
                   </span>
-                </td> : null}
-                <td className="px-5 py-4">
-                  {document.documentType === "ERR" && document.quotationFileName ? (
-                    <a href={`/api/errs/${document.id}/download?kind=QUOTATION&inline=1`} target="_blank" rel="noopener noreferrer" className="font-medium text-cyan-700 hover:underline">Open Quotation</a>
-                  ) : "—"}
                 </td>
+                {showQuotation ? (
+                  <td className="px-5 py-4">
+                    {document.documentType === "ERR" && document.quotationFileName ? (
+                      <div className="flex flex-wrap gap-x-3 gap-y-1">
+                        <a href={`/api/errs/${document.id}/download?kind=QUOTATION&inline=1`} target="_blank" rel="noopener noreferrer" className="font-medium text-cyan-700 hover:underline">Open Quotation</a>
+                        <Link href={`/errs/${document.id}/package`} target="_blank" rel="noopener noreferrer" className="font-medium text-cyan-700 hover:underline">Open package</Link>
+                      </div>
+                    ) : "—"}
+                  </td>
+                ) : null}
                 <td className="px-5 py-4">
                   {document.relatedComparisonId && document.relatedComparisonDocumentNumber ? (
                     <Link

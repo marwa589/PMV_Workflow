@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { X } from "lucide-react";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
 export default function ErrQuotationUpload({ errId }: { errId: string }) {
@@ -49,7 +50,19 @@ export default function ErrQuotationUpload({ errId }: { errId: string }) {
               <span className="mt-1 text-xs text-slate-500">PDF, Word, Excel, JPG, JPEG, or PNG</span>
               <input type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={(event) => setFiles(Array.from(event.target.files ?? []))} disabled={busy} className="sr-only" />
             </label>
-            {files.length > 0 ? <ul className="mt-3 max-h-28 space-y-1 overflow-y-auto rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{files.map((file) => <li key={`${file.name}-${file.size}-${file.lastModified}`} className="truncate" title={file.name}>{file.name}</li>)}</ul> : null}
+            {files.length > 0 ? (
+              <ul className="mt-3 max-h-28 space-y-1 overflow-y-auto rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                {files.map((file, index) => (
+                  <li key={`${file.name}-${file.size}-${file.lastModified}`} className="flex min-w-0 items-center justify-between gap-3" title={file.name}>
+                    <span className="truncate">{file.name}</span>
+                    <button type="button" onClick={() => setFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))} disabled={busy} aria-label={`Remove ${file.name}`} title="Remove quotation" className="inline-flex shrink-0 items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 font-medium text-slate-700 transition hover:border-rose-300 hover:text-rose-700 disabled:opacity-50">
+                      <X size={16} aria-hidden="true" />
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setOpen(false)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700">Cancel</button><button type="button" onClick={() => void submit()} disabled={busy || files.length === 0} className="rounded-lg bg-cyan-700 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{busy ? "Attaching..." : "Attach quotation"}</button></div>
             {message ? <p className="mt-3 text-sm text-slate-600">{message}</p> : null}
           </section>

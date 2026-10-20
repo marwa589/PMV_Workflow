@@ -18,6 +18,8 @@ export default async function AdminArchivePage() {
       documentNumber: doc.documentNumber,
       title: doc.title,
       status: doc.status,
+      documentType: doc.documentType,
+      mrType: doc.mrType,
       currentVersion: doc.currentVersion,
       currentApproverName: doc.currentApprover?.name || null,
       relatedComparisonId: doc.relatedComparison?.id || null,

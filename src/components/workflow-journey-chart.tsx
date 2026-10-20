@@ -3,6 +3,7 @@ import { DocumentStatus } from "@prisma/client";
 type Props = {
   status: DocumentStatus;
   lastActiveStage?: DocumentStatus | null;
+  downloadedAt?: Date | null;
 };
 
 const steps = [
@@ -57,9 +58,29 @@ function resolveStepIndex(status: DocumentStatus, lastActiveStage?: DocumentStat
   }
 }
 
-export default function WorkflowJourneyChart({ status, lastActiveStage }: Props) {
+export default function WorkflowJourneyChart({ status, lastActiveStage, downloadedAt }: Props) {
   const currentStep = resolveStepIndex(status, lastActiveStage);
-  const stageLabel = status === DocumentStatus.REJECTED ? getStageLabel(lastActiveStage) : getStageLabel(status);
+  const isDownloaded = Boolean(downloadedAt);
+  const isApproved = status === DocumentStatus.APPROVED || status === DocumentStatus.ARCHIVED;
+  const stageLabel = isDownloaded
+    ? "Downloaded"
+    : status === DocumentStatus.REJECTED
+      ? `Rejected at ${getStageLabel(lastActiveStage)}`
+      : getStageLabel(status);
+  const progressColor = status === DocumentStatus.REJECTED
+    ? "bg-rose-600"
+    : isDownloaded
+      ? "bg-cyan-600"
+      : isApproved
+        ? "bg-emerald-600"
+        : "bg-yellow-500";
+  const badgeColor = status === DocumentStatus.REJECTED
+    ? "bg-rose-50 text-rose-700"
+    : isDownloaded
+      ? "bg-cyan-50 text-cyan-700"
+      : isApproved
+        ? "bg-emerald-50 text-emerald-700"
+        : "bg-yellow-50 text-yellow-800";
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -68,30 +89,39 @@ export default function WorkflowJourneyChart({ status, lastActiveStage }: Props)
           <p className="text-sm font-semibold text-slate-900">Workflow journey</p>
           <p className="text-sm text-slate-600">A quick view of where this document is in the approval path.</p>
         </div>
-        <div className="rounded-full bg-cyan-50 px-3 py-1 text-sm font-medium text-cyan-700">
-          {status === DocumentStatus.REJECTED ? `Rejected at ${stageLabel}` : stageLabel}
+        <div className={`rounded-full px-3 py-1 text-sm font-medium ${badgeColor}`}>
+          {stageLabel}
         </div>
       </div>
 
       <div className="relative mx-auto max-w-3xl">
         <div className="absolute left-0 right-0 top-6 h-1 rounded-full bg-slate-200" />
         <div
-          className="absolute left-0 top-6 h-1 rounded-full bg-cyan-600 transition-all"
+          className={`absolute left-0 top-6 h-1 rounded-full transition-all ${progressColor}`}
           style={{ width: `${(currentStep / (steps.length - 1)) * 100}%` }}
         />
 
         <div className="relative flex items-start justify-between gap-2">
           {steps.map((step, index) => {
             const isComplete = index < currentStep;
-            const isCurrent = index === currentStep;
+            const isReached = index <= currentStep;
+            const isRejectedStep = status === DocumentStatus.REJECTED && index === currentStep;
+            const isPendingStep = index === currentStep && !isApproved && status !== DocumentStatus.REJECTED;
+            const stepColor = isRejectedStep
+              ? "border-rose-600 bg-rose-600 text-white"
+              : isReached && isDownloaded
+                ? "border-cyan-600 bg-cyan-600 text-white"
+                : isReached && isApproved
+                  ? "border-emerald-600 bg-emerald-600 text-white"
+                  : isPendingStep
+                    ? "border-yellow-500 bg-yellow-400 text-yellow-950"
+                    : isComplete
+                      ? "border-emerald-600 bg-emerald-600 text-white"
+                      : "border-slate-300 bg-white text-slate-500";
             return (
               <div key={step.label} className="flex flex-1 flex-col items-center text-center">
                 <div
-                  className={`flex h-8 w-8 items-center justify-center rounded-full border-2 ${
-                    isComplete || isCurrent
-                      ? "border-cyan-600 bg-cyan-600 text-white"
-                      : "border-slate-300 bg-white text-slate-500"
-                  }`}
+                  className={`flex h-8 w-8 items-center justify-center rounded-full border-2 ${stepColor}`}
                 >
                   {index + 1}
                 </div>

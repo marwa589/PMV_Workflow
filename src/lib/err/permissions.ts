@@ -5,7 +5,9 @@ import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { getModuleVisibility } from "@/lib/auth/module-visibility";
-import { isErrUploaderAccount } from "@/lib/err/uploader-access";
+import { isErrUploaderAccount, isKsaErrUploaderAccount } from "@/lib/err/uploader-access";
+import { isKsaViewer } from "@/lib/ksa-viewer";
+import { isAvkMrViewer } from "@/lib/avk-access";
 
 export async function getErrAccess() {
   const session = await getSession();
@@ -23,6 +25,7 @@ export async function getErrAccess() {
       name: true,
       email: true,
       role: true,
+      location: true,
       errAccess: {
         where: {
           isActive: true,
@@ -44,10 +47,13 @@ export async function getErrAccess() {
   const moduleVisibility = getModuleVisibility(user.name, user.role);
 
   const isAdmin = user.role === UserRole.ADMIN;
+  const isKsaViewerUser = isKsaViewer(user);
+  const isAvkDataViewer = isAvkMrViewer(user);
   const isWorkshopManager = user.role === UserRole.APPROVER_2;
   const isPmvManager = user.role === UserRole.APPROVER_3;
   const isNamedUploader = isErrUploaderAccount(user.name, user.role);
-  const isUploader = roles.includes(ErrAccessRole.UPLOADER) || isNamedUploader;
+  const isKsaUploader = isKsaErrUploaderAccount(user.email);
+  const isUploader = roles.includes(ErrAccessRole.UPLOADER) || isNamedUploader || isKsaUploader;
 
   const isProjectManager = roles.includes(ErrAccessRole.PROJECT_MANAGER);
 
@@ -83,10 +89,13 @@ export async function getErrAccess() {
     role: user.role,
 
     isAdmin,
+    isKsaViewer: isKsaViewerUser,
+    isAvkDataViewer,
     isPmvManager,
     isWorkshopManager,
 
     isUploader,
+    isKsaUploader,
     isGlobalUploader,
     uploaderProjectIds,
 
@@ -104,8 +113,8 @@ export async function getErrAccess() {
     viewerProjectIds,
 
     canAccessErrModule:
-      (moduleVisibility !== "DOCUMENTS_ONLY" || isWorkshopManager || isUploader) &&
-      (isAdmin || isWorkshopManager || isPmvManager || roles.length > 0 || isUploader),
+      (moduleVisibility !== "DOCUMENTS_ONLY" || isWorkshopManager || isUploader || isKsaViewerUser || isAvkDataViewer) &&
+      (isAdmin || isWorkshopManager || isPmvManager || roles.length > 0 || isUploader || isKsaViewerUser || isAvkDataViewer),
   };
 }
 
@@ -114,7 +123,7 @@ export type ErrAccess = NonNullable<
 >;
 
 export function canViewErrQuotation(access: ErrAccess): boolean {
-  return !access.isProjectDirector && !access.isProjectManager;
+  return !access.isKsaViewer && !access.isProjectDirector && !access.isProjectManager;
 }
 
 export async function requireErrAccess() {
@@ -139,12 +148,19 @@ export function getErrVisibilityWhere(
     };
   }
 
+  if (access.isKsaViewer) {
+    return { project: { country: "KSA" } };
+  }
+
   // Administrators, global uploaders, global viewers, and PMV Manager see all ERRs.
   if (access.isAdmin || access.isWorkshopManager || access.isGlobalUploader || access.isGlobalViewer || access.isPmvManager ) {
     return {};
   }
 
   const conditions: Prisma.ErrWhereInput[] = [];
+  if (access.isAvkDataViewer) {
+    conditions.push({ createdBy: { location: "AVK" } });
+  }
 // project managers retain visibility of ERRs in their assigned projects.
    if (access.isProjectManager && access.projectManagerProjectIds.length > 0) {
   conditions.push({
@@ -258,7 +274,7 @@ export async function canApproveErr(
   access: ErrAccess,
   errId: string,
 ): Promise<boolean> {
-  if (!access.canAccessErrModule || access.isWorkshopManager) {
+  if (!access.canAccessErrModule || access.isKsaViewer || access.isWorkshopManager) {
     return false;
   }
 

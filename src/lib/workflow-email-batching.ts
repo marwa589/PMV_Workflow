@@ -4,13 +4,21 @@ import { sendEmail } from "@/lib/mail";
 import { appConfig } from "@/lib/env";
 import { getPurchaseOrderRecipientIds } from "@/lib/po-access";
 
-const EMAIL_DELAY_MS = 10 * 60 * 1000;
+const EMAIL_DELAY_MS = 20 * 60 * 1000;
 const MR_COMPARISON_EMAIL_DELAY_MS = 20 * 60 * 1000;
 const REMINDER_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const CLAIM_TIMEOUT_MS = 15 * 60 * 1000;
+const SMTP_RATE_LIMIT_COOLDOWN_MS = 15 * 60 * 1000;
 const EMAIL_TIME_ZONE = "Asia/Kuwait";
 
 type ZonedParts = { year: number; month: number; day: number; hour: number; minute: number };
+
+function isSmtpRateLimitError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const details = error as { responseCode?: unknown; response?: unknown };
+  return details.responseCode === 421
+    || (typeof details.response === "string" && /\b421\b/.test(details.response));
+}
 
 function getKuwaitParts(date: Date): ZonedParts {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -70,6 +78,12 @@ function getEmailBatchCohort(documentType?: string | null): EmailBatchCohort {
     : "OTHER";
 }
 
+function getEmailEventBatchCohort(type: EmailEventType, documentType?: string | null): EmailBatchCohort {
+  return type === EmailEventType.PURCHASE_ORDER_AVAILABLE
+    ? "MR_COMPARISON"
+    : getEmailBatchCohort(documentType);
+}
+
 async function getDocumentTypes(documentIds: Array<string | null | undefined>) {
   const ids = [...new Set(documentIds.filter((id): id is string => Boolean(id)))];
   if (ids.length === 0) return new Map<string, string>();
@@ -86,7 +100,6 @@ async function alignRecipientEmailDueAt(
   desiredDueAt: Date,
   cohort: EmailBatchCohort,
   batchWindowMs: number,
-  documentTypeById: Map<string, string>,
 ) {
   const now = new Date();
   const batchWindowEnd = new Date(now.getTime() + batchWindowMs);
@@ -103,7 +116,7 @@ async function alignRecipientEmailDueAt(
   const candidateDocumentTypes = await getDocumentTypes(pendingEvents.map((event) => event.documentId));
   const matchingEvents = pendingEvents.filter((event) => {
     if (event.type === EmailEventType.ERR_WORKFLOW_UPDATE) return cohort === "ERR";
-    return getEmailBatchCohort(
+    return getEmailEventBatchCohort(event.type,
       event.documentId ? candidateDocumentTypes.get(event.documentId) : undefined,
     ) === cohort;
   });
@@ -161,7 +174,7 @@ export async function queueWorkflowEmailEvents(events: Array<{
   for (const event of dedupedEvents) {
     const cohort = event.type === EmailEventType.ERR_WORKFLOW_UPDATE
       ? "ERR"
-      : getEmailBatchCohort(event.documentId ? documentTypeById.get(event.documentId) : undefined);
+      : getEmailEventBatchCohort(event.type, event.documentId ? documentTypeById.get(event.documentId) : undefined);
     const batchWindowMs = cohort === "OTHER" ? EMAIL_DELAY_MS : MR_COMPARISON_EMAIL_DELAY_MS;
     const key = `${event.recipientId}:${cohort}`;
     if (!dueAtByCohort.has(key)) {
@@ -171,7 +184,6 @@ export async function queueWorkflowEmailEvents(events: Array<{
         desiredDueAt,
         cohort,
         batchWindowMs,
-        documentTypeById,
       ));
     }
   }
@@ -182,7 +194,7 @@ export async function queueWorkflowEmailEvents(events: Array<{
       type: event.type,
       documentId: event.documentId ?? null,
       createdAt,
-      emailDueAt: dueAtByCohort.get(`${event.recipientId}:${event.type === EmailEventType.ERR_WORKFLOW_UPDATE ? "ERR" : getEmailBatchCohort(event.documentId ? documentTypeById.get(event.documentId) : undefined)}`)!,
+      emailDueAt: dueAtByCohort.get(`${event.recipientId}:${event.type === EmailEventType.ERR_WORKFLOW_UPDATE ? "ERR" : getEmailEventBatchCohort(event.type, event.documentId ? documentTypeById.get(event.documentId) : undefined)}`)!,
       emailSent: false,
     })),
     skipDuplicates: true,
@@ -211,7 +223,7 @@ export async function queuePurchaseOrderAvailableEvents(purchaseOrderIds: string
   }
   if (events.length === 0) return 0;
   const createdAt = new Date();
-  const emailDueAt = nextEmailSendTime(new Date(createdAt.getTime() + EMAIL_DELAY_MS));
+  const emailDueAt = nextEmailSendTime(new Date(createdAt.getTime() + MR_COMPARISON_EMAIL_DELAY_MS));
   const recipientDueAtMap = new Map<string, Date>();
 
   for (const event of events) {
@@ -219,9 +231,8 @@ export async function queuePurchaseOrderAvailableEvents(purchaseOrderIds: string
     recipientDueAtMap.set(event.recipientId, await alignRecipientEmailDueAt(
       event.recipientId,
       dueAt,
-      "OTHER",
-      EMAIL_DELAY_MS,
-      new Map(),
+      "MR_COMPARISON",
+      MR_COMPARISON_EMAIL_DELAY_MS,
     ));
   }
 
@@ -575,6 +586,23 @@ export async function flushWorkflowEmailBatches() {
       });
       sentCount += 1;
     } catch (error) {
+      if (isSmtpRateLimitError(error)) {
+        const retryAt = new Date(Date.now() + SMTP_RATE_LIMIT_COOLDOWN_MS);
+        await prisma.emailNotificationEvent.updateMany({
+          where: {
+            id: { in: events.map((event) => event.id) },
+            emailSent: false,
+          },
+          data: { emailDueAt: retryAt },
+        });
+        await prisma.emailNotificationEvent.updateMany({
+          where: { id: { in: group.map((event) => event.id) }, claimedAt },
+          data: { claimedAt: null },
+        });
+        console.warn(`SMTP rate limit reached; remaining workflow email batches deferred until ${retryAt.toISOString()}.`);
+        break;
+      }
+
       await prisma.emailNotificationEvent.updateMany({
         where: { id: { in: group.map((event) => event.id) }, claimedAt },
         data: { claimedAt: null },

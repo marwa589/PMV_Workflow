@@ -13,8 +13,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PMV Workflow",
+  title: "PMV System",
   description: "Workflow System for PMV",
+  icons: {
+    icon: "/ahmadiah-a.svg",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

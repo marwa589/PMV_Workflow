@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { prisma } from '@/lib/prisma';
 import { canAccessMrModuleForSession } from "@/lib/auth/resource-access";
+import { KSA_USER_LOCATIONS, isKsaViewer } from "@/lib/ksa-viewer";
 
 export async function GET(request: Request) {
   const session = await getSession();
@@ -28,7 +29,10 @@ export async function GET(request: Request) {
   }
 
   const documents = await prisma.document.findMany({
-    where: { id: { in: ids } },
+    where: {
+      id: { in: ids },
+      ...(isKsaViewer(session) ? { documentType: { in: ["MATERIAL_REQUISITION", "COMPARISON"] }, createdBy: { location: { in: [...KSA_USER_LOCATIONS] } } } : {}),
+    },
     select: { id: true, title: true },
   });
 

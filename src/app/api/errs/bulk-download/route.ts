@@ -64,6 +64,18 @@ export async function GET(request: Request) {
     return NextResponse.json({ message: "No primary ERR PDF files found." }, { status: 404 });
   }
 
+  if (access.isUploader) {
+    const downloadedErrIds = orderedErrs.filter((err) => err.files[0]).map((err) => err.id);
+    await prisma.errDownload.createMany({
+      data: downloadedErrIds.map((errId) => ({ errId, userId: access.userId })),
+      skipDuplicates: true,
+    });
+    await prisma.errDownload.updateMany({
+      where: { errId: { in: downloadedErrIds }, userId: access.userId },
+      data: { downloadedAt: new Date() },
+    });
+  }
+
   const fileName = `errs-${Date.now()}.pdf`;
   return new NextResponse(new Uint8Array(await mergedPdf.save()), {
     status: 200,

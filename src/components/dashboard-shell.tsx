@@ -38,6 +38,7 @@ type AppRole = UserRole;
 type DashboardShellProps = {
   role: AppRole;
   userName: string;
+  userEmail?: string;
   title: string;
   subtitle: string;
   isUploader?: boolean;
@@ -46,20 +47,35 @@ type DashboardShellProps = {
 
 type SidebarCounts = {
   materialRequisitions: number;
+  materialRequisitionsByLocation: {
+    KUWAIT: number;
+    AVR: number;
+    AVK: number;
+    READY_MIX_KHOBAR: number;
+  };
   comparisons: number;
   pendingApprovals: number;
   errs: number;
   isErrUploader: boolean;
+  isAvkDataViewer: boolean;
   userLocation: "AVR" | "AVK" | "KUWAIT" | null;
+  canViewPurchaseOrders: boolean;
+  canViewReadyMixMrs: boolean;
+  canViewInvoices: boolean;
 };
 
 const emptySidebarCounts: SidebarCounts = {
   materialRequisitions: 0,
+  materialRequisitionsByLocation: { KUWAIT: 0, AVR: 0, AVK: 0, READY_MIX_KHOBAR: 0 },
   comparisons: 0,
   pendingApprovals: 0,
   errs: 0,
   isErrUploader: false,
+  isAvkDataViewer: false,
   userLocation: null,
+  canViewPurchaseOrders: false,
+  canViewReadyMixMrs: false,
+  canViewInvoices: false,
 };
 let lastSidebarCounts: { key: string; counts: SidebarCounts } | null = null;
 
@@ -75,6 +91,16 @@ type NotificationItem = {
 const navItemsByRole: Record<AppRole, NavItem[]> = {
     ERR_USER: [
     { label: "ERRs", href: "/errs", icon: FileText },
+    { label: "Account Settings", href: "/errs/settings", icon: Settings },
+  ],
+  KSA_VIEWER: [
+    { label: "Dashboard", href: "/ksa-viewer", icon: LayoutDashboard },
+    { label: "MRs - AVR", href: "/ksa-viewer?location=AVR&documentType=MATERIAL_REQUISITION", icon: FileText },
+    { label: "MRs - AVK", href: "/ksa-viewer?location=AVK&documentType=MATERIAL_REQUISITION", icon: FileText },
+    { label: "MRs - Ready Mix Khobar", href: "/ksa-viewer?project=READY_MIX_KHOBAR&documentType=MATERIAL_REQUISITION", icon: FileText },
+    { label: "Comparison Sheets", href: "/ksa-viewer?documentType=COMPARISON", icon: FileText },
+    { label: "ERRs", href: "/errs", icon: FileText },
+    { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
     { label: "Account Settings", href: "/errs/settings", icon: Settings },
   ],
   CLERK: [
@@ -156,14 +182,18 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
   ],
 };
 
-function getVisibleNavItems(role: AppRole, userName: string, userLocation: SidebarCounts["userLocation"], isUploader?: boolean): NavItem[] {
+function getVisibleNavItems(role: AppRole, userName: string, userLocation: SidebarCounts["userLocation"], isUploader?: boolean, canViewPurchaseOrders = false, canViewReadyMixMrs = false, canViewInvoices = false, userEmail?: string, canViewAvkData = false): NavItem[] {
+  if (role === "KSA_VIEWER") return navItemsByRole.KSA_VIEWER;
   const visibility = getModuleVisibility(userName, role);
 
   if (visibility === "ERR_ONLY") {
     const canUpload = isUploader ?? isErrUploaderAccount(userName, role);
     const items: NavItem[] = [
+      ...(userEmail?.trim().toLowerCase() === "ramzi@ahmadiah.com" ? [{ label: "MR / Comparison Approvals", href: "/approver/my-documents", icon: ClipboardCheck }] : []),
+      ...(userEmail?.trim().toLowerCase() === "ramzi@ahmadiah.com" ? [{ label: "MRs - AVK", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION&location=AVK", icon: FileText }] : []),
       { label: "Dashboard", href: "/errs?view=all&section=dashboard", icon: LayoutDashboard },
       { label: "My Documents", href: "/errs?view=all&section=my-documents", icon: FileText },
+      ...(canViewReadyMixMrs ? [{ label: "MRs - Ready Mix Khobar", href: "/ready-mix-khobar-mrs", icon: FileText }] : []),
       ...(canUpload ? [{ label: "New Document", href: "/new-document", icon: FilePlus2 }] : []),
       ...(canUpload ? [{ label: "ERR - Marc Only", href: "/errs/new?marcOnly=1", icon: FilePlus2 }] : []),
       { label: "ERRs", href: "/errs", icon: FileText },
@@ -173,6 +203,9 @@ function getVisibleNavItems(role: AppRole, userName: string, userLocation: Sideb
       { label: "On Hold", href: "/errs?view=on-hold", icon: PauseCircle },
       { label: "Approved Documents", href: "/errs?view=approved", icon: CheckCircle2 },
       { label: "Rejected Documents", href: "/errs?view=rejected", icon: FileCheck2 },
+      ...(canViewPurchaseOrders ? [{ label: "Purchase Orders", href: "/purchase-orders", icon: FileText }] : []),
+      ...(canViewInvoices ? [{ label: "Invoices", href: "/invoices", icon: FileText }] : []),
+      ...(canViewReadyMixMrs ? [{ label: "MRs - Ready Mix Khobar", href: "/ready-mix-khobar-mrs", icon: FileText }] : []),
       { label: "Account Settings", href: "/errs/settings", icon: Settings },
     ];
 
@@ -184,7 +217,7 @@ function getVisibleNavItems(role: AppRole, userName: string, userLocation: Sideb
       return false;
     }
     if (visibility === "DOCUMENTS_ONLY") {
-      return item.label === "ERRs" && role === "APPROVER_2"
+      return item.label === "ERRs" && (role === "APPROVER_2" || canViewAvkData)
       ? true
       : !["ERRs", "Users", "On Hold"].includes(item.label);
     }
@@ -203,14 +236,26 @@ function getVisibleNavItems(role: AppRole, userName: string, userLocation: Sideb
           { label: "MRs - AVR", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVR`, icon: FileText },
           { label: "MRs - AVK", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVK`, icon: FileText },
         ];
-  const navItemsWithLocationMrs = items.flatMap((item) => item.label === "MRs" ? locationMrItems : [item]);
+  const avkMrNavItem: NavItem = { label: "MRs - AVK", href: `${role === "CLERK" ? "/clerk/my-documents" : role === "ADMIN" ? "/admin/all-documents" : "/approver/my-documents"}?documentType=MATERIAL_REQUISITION&location=AVK`, icon: FileText };
+  const visibleLocationMrItems = canViewAvkData && userLocation !== "AVK" && !locationMrItems.some((item) => item.label === "MRs - AVK")
+    ? [...locationMrItems, avkMrNavItem]
+    : locationMrItems;
+  const navItemsWithLocationMrs = items.flatMap((item) => item.label === "MRs"
+    ? [
+        ...visibleLocationMrItems,
+        ...(canViewReadyMixMrs ? [{ label: "MRs - Ready Mix Khobar", href: "/ready-mix-khobar-mrs", icon: FileText }] : []),
+      ]
+    : [item]);
+  const navItemsWithInvoices = navItemsWithLocationMrs.flatMap((item) => item.label === "Purchase Orders" && canViewInvoices
+    ? [item, { label: "Invoices", href: "/invoices", icon: FileText }]
+    : [item]);
   const navItemsWithErrUpload = role === "APPROVER_1" && isUploader
     ? [
-        ...navItemsWithLocationMrs.filter((item) => item.label !== "ERRs"),
+        ...navItemsWithInvoices.filter((item) => item.label !== "ERRs"),
         { label: "ERRs", href: "/errs", icon: FileText },
         { label: "New ERR", href: "/errs/new", icon: FilePlus2 },
       ]
-    : navItemsWithLocationMrs;
+    : navItemsWithInvoices;
   const navItemsWithMarcErr = isUploader && role !== "APPROVER_1"
     ? [...navItemsWithErrUpload, { label: "ERR - Marc Only", href: "/errs/new?marcOnly=1", icon: FilePlus2 }]
     : navItemsWithErrUpload;
@@ -234,6 +279,7 @@ function Sidebar({
   counts,
   combinedErrLayout = false,
   isUploader,
+  userEmail,
 }: {
   role: AppRole;
   userName: string;
@@ -241,16 +287,28 @@ function Sidebar({
   counts: SidebarCounts;
   combinedErrLayout?: boolean;
   isUploader?: boolean;
+  userEmail?: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const navItems = getVisibleNavItems(role, userName, counts.userLocation, isUploader);
+  const navItems = getVisibleNavItems(role, userName, counts.userLocation, isUploader, counts.canViewPurchaseOrders, counts.canViewReadyMixMrs, counts.canViewInvoices, userEmail, counts.isAvkDataViewer);
   const settingsItem = navItems.find((item) => item.href.endsWith("/settings"));
   const primaryNavItems = navItems.filter((item) => item !== settingsItem);
   const renderNavItem = (item: NavItem) => {
     const Icon = item.icon;
+    const materialRequisitionCount = item.label === "MRs"
+      ? counts.materialRequisitions
+      : item.label === "MRs - Kuwait"
+        ? counts.materialRequisitionsByLocation.KUWAIT
+        : item.label === "MRs - AVR"
+          ? counts.materialRequisitionsByLocation.AVR
+          : item.label === "MRs - AVK"
+            ? counts.materialRequisitionsByLocation.AVK
+            : item.label === "MRs - Ready Mix Khobar"
+              ? counts.materialRequisitionsByLocation.READY_MIX_KHOBAR
+              : 0;
     const itemUrl = new URL(item.href, "http://localhost");
     const itemDocumentType = itemUrl.searchParams.get("documentType");
     const itemLocation = itemUrl.searchParams.get("location");
@@ -295,9 +353,9 @@ function Sidebar({
           <span className="truncate">{item.label}</span>
         </span>
         <span className="flex items-center gap-2">
-          {item.label === "MRs" && counts.materialRequisitions > 0 ? (
+          {materialRequisitionCount > 0 ? (
             <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"}`}>
-              {counts.materialRequisitions}
+              {materialRequisitionCount}
             </span>
           ) : null}
           {item.label === "Comparison Sheets" && counts.comparisons > 0 ? (
@@ -512,11 +570,14 @@ export default function DashboardShell({
         .catch(() => undefined);
     };
 
+      window.addEventListener("sidebar-counts-refresh", loadSidebarCounts);
+
     loadSidebarCounts();
     const intervalId = window.setInterval(loadSidebarCounts, 30000);
 
     return () => {
       active = false;
+      window.removeEventListener("sidebar-counts-refresh", loadSidebarCounts);
       window.clearInterval(intervalId);
     };
   }, [pathname, searchParams]);
