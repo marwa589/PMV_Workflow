@@ -46,13 +46,13 @@ async function countMaterialRequisitionsByLocation(
 
 export async function GET() {
   const session = await getSession();
-  if (!session) return NextResponse.json({ materialRequisitions: 0, materialRequisitionsByLocation: { KUWAIT: 0, AVR: 0, AVK: 0, READY_MIX_KHOBAR: 0 }, comparisons: 0, pendingApprovals: 0, errs: 0, isErrUploader: false, isAvkDataViewer: false, userLocation: null, canViewPurchaseOrders: false, canViewReadyMixMrs: false, canViewInvoices: false }, { status: 401 });
+  if (!session) return NextResponse.json({ materialRequisitions: 0, materialRequisitionsByLocation: { KUWAIT: 0, AVR: 0, AVK: 0, READY_MIX_KHOBAR: 0 }, comparisons: 0, pendingApprovals: 0, errs: 0, isErrUploader: false, isAvkDataViewer: false, userLocation: null, canViewPurchaseOrders: false, canViewReadyMixMrs: false, canViewInvoices: false, canViewMrApprovals: false }, { status: 401 });
 
   const user = await prisma.user.findUnique({ where: { id: session.userId }, select: { email: true, role: true, location: true } });
   const isAvkDataViewer = isAvkMrViewer({ email: session.email, location: user?.location, role: session.role });
 
   const visibility = getModuleVisibility(session.name, session.role);
-  const isRamziWorkflowApprover = isRamziDocumentApprover(session.email);
+  const canViewMrApprovals = session.role === UserRole.ERR_USER && isRamziDocumentApprover(session.email);
   if (isKsaViewer(session)) {
     const [materialRequisitionsByLocation, comparisons, errAccess] = await Promise.all([
       countMaterialRequisitionsByLocation({ createdBy: { location: { in: [...KSA_USER_LOCATIONS] } } }),
@@ -73,10 +73,10 @@ export async function GET() {
       canViewPurchaseOrders: true,
       canViewReadyMixMrs: false,
       canViewInvoices: false,
+      canViewMrApprovals: false,
     });
   }
-  const canQueryDocuments = (canAccessMrModule(session.role) && visibility !== "ERR_ONLY")
-    || isRamziWorkflowApprover;
+  const canQueryDocuments = canAccessMrModule(session.role) && visibility !== "ERR_ONLY";
   const errAccess = await getErrAccess();
   const canQueryErrs = Boolean(errAccess?.canAccessErrModule);
 
@@ -125,6 +125,7 @@ export async function GET() {
     canViewPurchaseOrders: canViewPurchaseOrdersSidebar(session),
     canViewReadyMixMrs: canViewReadyMixKhobarMrs(session),
     canViewInvoices: canViewInvoices(session),
+    canViewMrApprovals,
   }, {
     headers: { "Cache-Control": "no-store, max-age=0" },
   });

@@ -69,6 +69,11 @@ export async function canAccessDocument(
       projectName: true,
       uploaderLocation: true,
       createdBy: { select: { email: true, location: true } },
+      approvals: {
+        where: { performedById: session.userId, action: "APPROVED" },
+        select: { id: true },
+        take: 1,
+      },
     },
   });
 
@@ -84,11 +89,18 @@ export async function canAccessDocument(
     return true;
   }
 
+  // Ramzi keeps access to AVK-uploader MRs assigned to him, and to any document he has
+  // already approved (it moves on to the next approver but must stay viewable for him).
   if (
     isRamziDocumentApprover(session.email)
-    && document.currentApproverId === session.userId
-    && document.documentType === "MATERIAL_REQUISITION"
-    && isAvkUploaderWorkflowDocument(document.createdBy.email, document.documentType)
+    && (
+      document.approvals.length > 0
+      || (
+        document.currentApproverId === session.userId
+        && document.documentType === "MATERIAL_REQUISITION"
+        && isAvkUploaderWorkflowDocument(document.createdBy.email, document.documentType)
+      )
+    )
   ) {
     return true;
   }
