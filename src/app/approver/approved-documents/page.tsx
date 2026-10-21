@@ -9,6 +9,7 @@ import { getDocumentsForApprover } from "@/lib/document-queries";
 import { roleLabel } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
 import { getModuleVisibility } from "@/lib/auth/module-visibility";
+import { getDocumentTracking, getErrTracking } from "@/lib/download-tracking";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,9 @@ export default async function ApproverApprovedDocumentsPage({ searchParams }: an
   const statusFilter = parseDocumentStatusFilter(resolvedSearchParams?.status);
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
   const data = await getDocumentsForApprover(session.userId, session.role, session.name);
+
+  const docTracking = await getDocumentTracking(session.userId, data.approvedDocuments.map((doc) => doc.id));
+  const errTracking = await getErrTracking(session.userId, data.errApprovedDocuments.map((doc) => doc.id));
 
   const documents = [
     ...data.approvedDocuments
@@ -34,6 +38,8 @@ export default async function ApproverApprovedDocumentsPage({ searchParams }: an
         currentApproverName: doc.currentApprover?.name || null,
         relatedComparisonId: doc.relatedComparison?.id || null,
         relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
+        downloadedAt: docTracking.get(doc.id).downloadedAt,
+        approvalDate: docTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
       })),
     ...data.errApprovedDocuments
@@ -49,6 +55,8 @@ export default async function ApproverApprovedDocumentsPage({ searchParams }: an
         currentApproverName: doc.currentApprover?.name || null,
         relatedComparisonId: null,
         relatedComparisonDocumentNumber: null,
+        downloadedAt: errTracking.get(doc.id).downloadedAt,
+        approvalDate: errTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
       })),
   ];

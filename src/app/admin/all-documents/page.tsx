@@ -4,9 +4,10 @@ import DocumentListTable from "@/components/document-list-table";
 import DocumentStatusFilter from "@/components/document-status-filter";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
-import { getPoStatus, parseDocumentStatusFilter, parseDocumentTypeFilter, parseMrLocationFilter, parseMrTypeFilter, parsePoStatusFilter } from "@/lib/document-status";
+import { getPoStatus, parseDocumentStatusFilter, parseDocumentTypeFilter, parseDownloadStatusFilter, parseMrLocationFilter, parseMrTypeFilter, parsePoStatusFilter } from "@/lib/document-status";
 import { parseSearchQuery, matchesDocumentSearch } from "@/lib/document-search";
 import { getDocumentsForAdmin, getPurchaseOrderStatuses } from "@/lib/document-queries";
+import { getDocumentTracking, getErrTracking, matchesApprovalRange, matchesDownloadStatus } from "@/lib/download-tracking";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +20,12 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
   const mrTypeFilter = parseMrTypeFilter(resolvedSearchParams?.mrType);
   const locationFilter = parseMrLocationFilter(resolvedSearchParams?.location);
   const poStatusFilter = parsePoStatusFilter(resolvedSearchParams?.poStatus);
+  const downloadStatusFilter = parseDownloadStatusFilter(resolvedSearchParams?.downloadStatus);
+  const approvalFrom = typeof resolvedSearchParams?.approvalFrom === "string" ? resolvedSearchParams.approvalFrom : "";
+  const approvalTo = typeof resolvedSearchParams?.approvalTo === "string" ? resolvedSearchParams.approvalTo : "";
   const poStatuses = await getPurchaseOrderStatuses(data.documents.map((doc) => doc.id));
   const searchQuery = parseSearchQuery(resolvedSearchParams?.search);
+  const docTracking = await getDocumentTracking(session.userId, data.documents.map((doc) => doc.id));
 
   const isStatusSpecificPage = statusFilter === "REVISION_REQUIRED";
 
@@ -48,6 +53,8 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
     ...data.errOnHoldDocuments,
   ];
 
+  const errTracking = await getErrTracking(session.userId, errDocuments.map((doc) => doc.id));
+
   const documents = [
     ...data.documents
       .filter((doc) => !statusFilter || doc.status === statusFilter)
@@ -55,6 +62,8 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
       .filter((doc) => !locationFilter || (doc.documentType === "MATERIAL_REQUISITION" && (doc.uploaderLocation ?? doc.createdBy.location) === locationFilter))
       .filter((doc) => !mrTypeFilter || (doc.documentType === "MATERIAL_REQUISITION" && doc.mrType === mrTypeFilter))
       .filter((doc) => !poStatusFilter || getPoStatus(doc.documentType, doc.mrType, poStatuses.has(doc.id), doc.status) === poStatusFilter)
+      .filter((doc) => matchesDownloadStatus(docTracking.get(doc.id).downloadedAt, downloadStatusFilter))
+      .filter((doc) => matchesApprovalRange(docTracking.get(doc.id).approvalDate, approvalFrom, approvalTo))
       .map((doc) => ({
     id: doc.id,
     documentNumber: doc.documentNumber,
@@ -69,11 +78,15 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
     relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
     mrNumber: doc.mrNumber || null,
     relatedComparisonTitle: doc.relatedComparison?.title || null,
+    downloadedAt: docTracking.get(doc.id).downloadedAt,
+    approvalDate: docTracking.get(doc.id).approvalDate,
     dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
       })),
     ...errDocuments
       .filter((doc) => !statusFilter || doc.status === statusFilter)
       .filter((doc) => !documentTypeFilter || documentTypeFilter === "ERR")
+      .filter((doc) => matchesDownloadStatus(errTracking.get(doc.id).downloadedAt, downloadStatusFilter))
+      .filter((doc) => matchesApprovalRange(errTracking.get(doc.id).approvalDate, approvalFrom, approvalTo))
       .map((doc) => ({
         id: doc.id,
         documentNumber: doc.documentNumber,
@@ -86,6 +99,8 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
         currentApproverName: doc.currentApprover?.name || null,
         relatedComparisonId: null,
         relatedComparisonDocumentNumber: null,
+        downloadedAt: errTracking.get(doc.id).downloadedAt,
+        approvalDate: errTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
       })),
   ];
@@ -129,6 +144,10 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
             showMrTypeFilter
             showPoStatusFilter
             poStatus={poStatusFilter}
+            downloadStatus={downloadStatusFilter}
+            approvalFrom={approvalFrom}
+            approvalTo={approvalTo}
+            showDownloadFilters
             showDocumentTypeFilter={isStatusSpecificPage || !documentTypeFilter}
             showStatusFilter={!isStatusSpecificPage}
           />

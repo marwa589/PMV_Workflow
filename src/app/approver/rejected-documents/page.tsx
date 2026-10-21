@@ -9,6 +9,7 @@ import { getDocumentsForApprover } from "@/lib/document-queries";
 import { roleLabel } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
 import { getModuleVisibility } from "@/lib/auth/module-visibility";
+import { getDocumentTracking, getErrTracking } from "@/lib/download-tracking";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,9 @@ export default async function ApproverRejectedDocumentsPage({ searchParams }: an
   const resolvedSearchParams = await Promise.resolve(searchParams);
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
   const data = await getDocumentsForApprover(session.userId, session.role, session.name, session.email);
+
+  const docTracking = await getDocumentTracking(session.userId, data.rejectedDocuments.map((doc) => doc.id));
+  const errTracking = await getErrTracking(session.userId, data.errRejectedDocuments.map((doc) => doc.id));
 
   const documents = [
     ...data.rejectedDocuments
@@ -32,6 +36,8 @@ export default async function ApproverRejectedDocumentsPage({ searchParams }: an
         currentApproverName: doc.currentApprover?.name || null,
         relatedComparisonId: doc.relatedComparison?.id || null,
         relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
+        downloadedAt: docTracking.get(doc.id).downloadedAt,
+        approvalDate: docTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
       })),
     ...data.errRejectedDocuments
@@ -46,6 +52,8 @@ export default async function ApproverRejectedDocumentsPage({ searchParams }: an
         currentApproverName: doc.currentApprover?.name || null,
         relatedComparisonId: null,
         relatedComparisonDocumentNumber: null,
+        downloadedAt: errTracking.get(doc.id).downloadedAt,
+        approvalDate: errTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
       })),
   ];

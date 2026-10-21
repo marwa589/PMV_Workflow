@@ -95,7 +95,7 @@ export async function GET(
     const buffer = await readFile(resolveStoredFilePath(file.filePath));
 
     const isInline = new URL(request.url).searchParams.get("inline") === "1";
-    if (access.isUploader && file.kind === ErrFileKind.ERR_PDF && !isInline) {
+    if (file.kind === ErrFileKind.ERR_PDF && !isInline) {
       await prisma.errDownload.upsert({
         where: { errId_userId: { errId: id, userId: access.userId } },
         create: { errId: id, userId: access.userId },

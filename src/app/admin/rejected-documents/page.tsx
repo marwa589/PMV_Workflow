@@ -6,6 +6,7 @@ import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
 import { parseDocumentTypeFilter } from "@/lib/document-status";
 import { getDocumentsForAdmin } from "@/lib/document-queries";
+import { getDocumentTracking, getErrTracking } from "@/lib/download-tracking";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,9 @@ export default async function AdminRejectedDocumentsPage({ searchParams }: any) 
   const resolvedSearchParams = await Promise.resolve(searchParams);
   const documentTypeFilter = parseDocumentTypeFilter(resolvedSearchParams?.documentType);
   const data = await getDocumentsForAdmin();
+
+  const docTracking = await getDocumentTracking(session.userId, data.rejectedDocuments.map((doc) => doc.id));
+  const errTracking = await getErrTracking(session.userId, data.errRejectedDocuments.map((doc) => doc.id));
 
   const documents = [
     ...data.rejectedDocuments
@@ -29,6 +33,8 @@ export default async function AdminRejectedDocumentsPage({ searchParams }: any) 
         currentApproverName: doc.currentApprover?.name || null,
         relatedComparisonId: doc.relatedComparison?.id || null,
         relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
+        downloadedAt: docTracking.get(doc.id).downloadedAt,
+        approvalDate: docTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
       })),
     ...data.errRejectedDocuments
@@ -44,6 +50,8 @@ export default async function AdminRejectedDocumentsPage({ searchParams }: any) 
         currentApproverName: doc.currentApprover?.name || null,
         relatedComparisonId: null,
         relatedComparisonDocumentNumber: null,
+        downloadedAt: errTracking.get(doc.id).downloadedAt,
+        approvalDate: errTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
       })),
   ];

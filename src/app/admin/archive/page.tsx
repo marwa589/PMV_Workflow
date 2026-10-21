@@ -4,12 +4,16 @@ import DocumentListTable from "@/components/document-list-table";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
 import { getDocumentsForAdmin } from "@/lib/document-queries";
+import { getDocumentTracking } from "@/lib/download-tracking";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminArchivePage() {
   const session = await requireRole([UserRole.ADMIN]);
   const data = await getDocumentsForAdmin();
+
+  const archivedSource = data.documents.filter((doc) => doc.status === DocumentStatus.ARCHIVED);
+  const docTracking = await getDocumentTracking(session.userId, archivedSource.map((doc) => doc.id));
 
   const documents = data.documents
     .filter((doc) => doc.status === DocumentStatus.ARCHIVED)
@@ -24,6 +28,8 @@ export default async function AdminArchivePage() {
       currentApproverName: doc.currentApprover?.name || null,
       relatedComparisonId: doc.relatedComparison?.id || null,
       relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
+      downloadedAt: docTracking.get(doc.id).downloadedAt,
+      approvalDate: docTracking.get(doc.id).approvalDate,
       dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
     }));
 

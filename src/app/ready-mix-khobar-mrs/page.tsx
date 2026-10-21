@@ -9,6 +9,7 @@ import { getPurchaseOrderStatuses } from "@/lib/document-queries";
 import { requireAuth } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { canViewReadyMixKhobarMrs, READY_MIX_KHOBAR_PROJECT_NAME } from "@/lib/ready-mix-mr-access";
+import { getDocumentTracking } from "@/lib/download-tracking";
 
 export const dynamic = "force-dynamic";
 const PENDING_STATUSES: DocumentStatus[] = [
@@ -43,6 +44,7 @@ export default async function ReadyMixKhobarMrsPage({ searchParams }: { searchPa
     orderBy: { updatedAt: "desc" },
   });
   const poStatuses = await getPurchaseOrderStatuses(records.map((record) => record.id));
+  const tracking = await getDocumentTracking(session.userId, records.map((record) => record.id));
 
   const documents = records
     .filter((record) => !statusFilter || record.status === statusFilter)
@@ -67,6 +69,8 @@ export default async function ReadyMixKhobarMrsPage({ searchParams }: { searchPa
       rejectionComments: record.approvals[0]?.comments ?? null,
       relatedComparisonId: record.relatedComparison?.id ?? null,
       relatedComparisonDocumentNumber: record.relatedComparison?.documentNumber ?? null,
+      downloadedAt: tracking.get(record.id).downloadedAt,
+      approvalDate: tracking.get(record.id).approvalDate,
       dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(record.updatedAt),
     }));
 

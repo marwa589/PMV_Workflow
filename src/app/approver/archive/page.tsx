@@ -5,12 +5,16 @@ import PageSummaryCards from "@/components/page-summary-cards";
 import { requireRole } from "@/lib/auth/guards";
 import { getDocumentsForApprover } from "@/lib/document-queries";
 import { roleLabel } from "@/lib/auth/roles";
+import { getDocumentTracking } from "@/lib/download-tracking";
 
 export const dynamic = "force-dynamic";
 
 export default async function ApproverArchivePage() {
   const session = await requireRole([UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]);
   const data = await getDocumentsForApprover(session.userId, session.role, session.name);
+
+  const archivedSource = data.myDocuments.filter((doc) => doc.status === DocumentStatus.ARCHIVED);
+  const docTracking = await getDocumentTracking(session.userId, archivedSource.map((doc) => doc.id));
 
   const documents = data.myDocuments
     .filter((doc) => doc.status === DocumentStatus.ARCHIVED)
@@ -25,6 +29,8 @@ export default async function ApproverArchivePage() {
       currentApproverName: doc.currentApprover?.name || null,
       relatedComparisonId: doc.relatedComparison?.id || null,
       relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
+      downloadedAt: docTracking.get(doc.id).downloadedAt,
+      approvalDate: docTracking.get(doc.id).approvalDate,
       dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
     }));
 
