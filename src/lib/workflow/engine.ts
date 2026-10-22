@@ -11,7 +11,7 @@ import type { NotificationKind } from "@/lib/notifications";
 import { USER_TYPE, type UserTypeCode } from "@/lib/auth/roles";
 import { resolveFlow } from "@/lib/workflow/resolve-flow";
 import { getEligibleRecipients, loadDocScope, resolveActorEligibility } from "@/lib/workflow/eligibility";
-import { advanceProcessesForApprovedDocument } from "@/lib/workflow/processes";
+import { advanceProcessesForApprovedDocument, handleProcessDocumentRejected } from "@/lib/workflow/processes";
 import { WorkflowError } from "@/lib/workflow/errors";
 
 type Tx = Prisma.TransactionClient;
@@ -146,14 +146,14 @@ function notifyCreator(document: LoadedDocument, effects: WorkflowEffects, type:
 }
 
 /** Finish a document that needs no (more) approval and let any waiting process runs move on. */
-async function markApproved(tx: Tx, document: LoadedDocument) {
+async function markApproved(tx: Tx, document: LoadedDocument, effects: WorkflowEffects) {
   await saveDocument(tx, document, {
     status: DocumentStatus.APPROVED,
     approvedAt: new Date(),
     currentWorkflowStep: null,
     currentApproverAssignedAt: null,
   });
-  await advanceProcessesForApprovedDocument(tx, document.id);
+  await advanceProcessesForApprovedDocument(tx, document.id, effects);
 }
 
 /**
@@ -172,7 +172,7 @@ export async function startApproval(
   const approvalLevels = flow.kind === "flow" ? flow.template.steps.filter((step) => step.stepNumber > 0) : [];
 
   if (flow.kind === "auto" || approvalLevels.length === 0) {
-    await markApproved(tx, document);
+    await markApproved(tx, document, effects);
     await addHistory(tx, {
       documentId: document.id,
       action: ApprovalActionType.AUTO_APPROVED,
@@ -388,6 +388,8 @@ export async function performWorkflowAction(
       data: { status: StepStatus.REJECTED, actedById: actor.id, actedAt: now, comment: input.comment?.trim() || null },
     });
     await saveDocument(tx, document, { status: DocumentStatus.CANCELLED, lastActiveStage: DocumentStatus.PENDING });
+    // A rejected document reopens its choice in the process tree (or cancels the run when it was the root).
+    await handleProcessDocumentRejected(tx, document.id, effects);
     await addHistory(tx, {
       documentId: document.id, action: ApprovalActionType.REJECTED, actorId: actor.id, onBehalfOfUserId,
       comments: input.comment, levelNumber: level, fromStatus: document.status, toStatus: DocumentStatus.CANCELLED,
@@ -460,7 +462,7 @@ export async function performWorkflowAction(
     return { documentId: document.id, status: DocumentStatus.PENDING, currentWorkflowStep: nextStep.levelNumber, effects };
   }
 
-  await markApproved(tx, document);
+  await markApproved(tx, document, effects);
   await addHistory(tx, {
     documentId: document.id, action, actorId: actor.id, onBehalfOfUserId, comments: input.comment,
     levelNumber: level, fromStatus: DocumentStatus.PENDING, toStatus: DocumentStatus.APPROVED,

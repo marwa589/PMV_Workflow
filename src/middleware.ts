@@ -101,6 +101,7 @@ export const config = {
     "/new-document",
     "/documents/:path*",
     "/processes/:path*",
+    "/tasks/:path*",
     "/api/:path*",
   ],
 };

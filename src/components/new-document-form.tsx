@@ -39,14 +39,22 @@ export type UploadDocumentType = {
   fields: UploadField[];
 };
 
-// Set when the upload is for a step of a process run: the type (and sub type, project) are then fixed.
+// Set when the upload is the next document of a running process: the uploader picks one of the open choices
+// (the child nodes of the last approved document), and the type (and sub type, project) are then fixed by that choice.
+export type UploadProcessOption = {
+  stepId: string;
+  name: string;
+  documentTypeId: string;
+  documentSubtypeId: string | null;
+  typeName: string;
+  subtypeName: string | null;
+};
+
 export type UploadProcessContext = {
   instanceId: string;
   label: string;
-  stepName: string;
-  documentTypeId: string;
-  documentSubtypeId: string | null;
   projectId: string | null;
+  options: UploadProcessOption[];
 };
 
 type FieldValue = string | boolean | string[];
@@ -187,8 +195,10 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
   const router = useRouter();
 
   const [description, setDescription] = useState("");
-  const [documentTypeId, setDocumentTypeId] = useState(process?.documentTypeId ?? "");
-  const [documentSubtypeId, setDocumentSubtypeId] = useState(process?.documentSubtypeId ?? "");
+  const onlyOption = process && process.options.length === 1 ? process.options[0] : null;
+  const [processStepId, setProcessStepId] = useState(onlyOption?.stepId ?? "");
+  const [documentTypeId, setDocumentTypeId] = useState(onlyOption?.documentTypeId ?? "");
+  const [documentSubtypeId, setDocumentSubtypeId] = useState(onlyOption?.documentSubtypeId ?? "");
   const [projectId, setProjectId] = useState(process?.projectId ?? "");
   const [headerValues, setHeaderValues] = useState<FieldValues>({});
   const [lineItems, setLineItems] = useState<FieldValues[]>([]);
@@ -207,9 +217,20 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
   const headerFields = applicableFields.filter((field) => field.fieldGroup === "HEADER");
   const lineFields = applicableFields.filter((field) => field.fieldGroup === "LINE_ITEM");
   const showLineItems = Boolean(selectedType?.supportsLineItems) && lineFields.length > 0;
+  const chosenOption = process?.options.find((option) => option.stepId === processStepId) ?? null;
   const typeLocked = Boolean(process);
-  const subtypeLocked = Boolean(process?.documentSubtypeId);
-  const projectLocked = Boolean(process?.projectId);
+  const subtypeLocked = Boolean(chosenOption?.documentSubtypeId);
+  const projectLocked = Boolean(process);
+  // Inside a process only the chosen document's type is offered; elsewhere every type is.
+  const visibleTypes = process ? documentTypes.filter((type) => type.id === documentTypeId) : documentTypes;
+
+  function chooseProcessOption(option: UploadProcessOption) {
+    setProcessStepId(option.stepId);
+    setDocumentTypeId(option.documentTypeId);
+    setDocumentSubtypeId(option.documentSubtypeId ?? "");
+    setHeaderValues({});
+    setLineItems([]);
+  }
 
   const fileSummary = useMemo(() => {
     if (selectedFiles.length === 0) return null;
@@ -253,6 +274,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
     if (!typeLocked) setDocumentTypeId("");
     if (!subtypeLocked) setDocumentSubtypeId("");
     if (!projectLocked) setProjectId("");
+    if (!onlyOption) setProcessStepId("");
     setHeaderValues({});
     setLineItems([]);
     setSelectedFiles([]);
@@ -263,6 +285,10 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
+    if (process && !processStepId) {
+      setError("Choose which document to upload next.");
+      return;
+    }
     if (!selectedType) {
       setError("Please select a document type.");
       return;
@@ -301,7 +327,10 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
       formData.set("documentTypeId", selectedType.id);
       if (documentSubtypeId) formData.set("documentSubtypeId", documentSubtypeId);
       if (projectId) formData.set("projectId", projectId);
-      if (process) formData.set("processInstanceId", process.instanceId);
+      if (process) {
+        formData.set("processInstanceId", process.instanceId);
+        formData.set("processStepId", processStepId);
+      }
       formData.set("submissionKey", crypto.randomUUID());
       formData.set("fieldValues", JSON.stringify(cleanValues(headerFields, headerValues)));
       if (showLineItems) formData.set("lineItems", JSON.stringify(cleanLines));
@@ -328,7 +357,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
       resetForm();
       window.setTimeout(() => {
         setShowToast(false);
-        router.push(process ? `/processes/${process.instanceId}` : defaultRedirectPath);
+        router.push(process ? "/tasks" : defaultRedirectPath);
         router.refresh();
       }, 1600);
     } catch {
@@ -350,9 +379,33 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
 
       <form onSubmit={onSubmit} className="space-y-6">
         {process ? (
-          <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
-            Adding the document for step <span className="font-semibold">{process.stepName}</span> of <span className="font-semibold">{process.label}</span>.
-          </div>
+          <section className="rounded-2xl border border-cyan-200 bg-cyan-50 p-5 shadow-sm sm:p-6">
+            <h2 className="text-base font-semibold text-cyan-900">Next document of {process.label}</h2>
+            <p className="mt-1 text-sm text-cyan-900/80">
+              {process.options.length > 1
+                ? "Choose which document to upload next. The process follows the path of the one you choose."
+                : "Upload the next document of this process."}
+            </p>
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {process.options.map((option) => (
+                <button
+                  key={option.stepId}
+                  type="button"
+                  onClick={() => chooseProcessOption(option)}
+                  className={`rounded-xl border px-4 py-3 text-left text-sm transition ${
+                    processStepId === option.stepId
+                      ? "border-2 border-cyan-500 bg-white text-cyan-800"
+                      : "border-cyan-200 bg-white/70 text-slate-700 hover:border-cyan-400"
+                  }`}
+                >
+                  <span className="block font-semibold">{option.name}</span>
+                  <span className="block text-xs text-slate-500">
+                    {option.typeName}{option.subtypeName ? ` - ${option.subtypeName}` : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
         ) : null}
 
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -364,7 +417,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
                 Document Type <span className="text-rose-600">*</span>
               </label>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                {documentTypes.map((type) => (
+                {visibleTypes.map((type) => (
                   <button
                     key={type.id}
                     type="button"
@@ -394,7 +447,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
                   Sub Type <span className="text-rose-600">*</span>
                 </label>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  {selectedType.subtypes.map((subtype) => (
+                  {selectedType.subtypes.filter((subtype) => !subtypeLocked || subtype.id === documentSubtypeId).map((subtype) => (
                     <button
                       key={subtype.id}
                       type="button"
@@ -512,7 +565,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
                 <p className="text-sm font-medium text-slate-800">Drag and drop files here, or click to browse</p>
                 <p className="mt-1 text-xs text-slate-500">
                   {process
-                    ? "Upload the document for this process step."
+                    ? "Upload the document for the chosen process step."
                     : "Upload one or more files. Each file will become its own document."}
                 </p>
               </div>

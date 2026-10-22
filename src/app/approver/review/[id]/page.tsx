@@ -74,17 +74,7 @@ export default async function ApproverDocumentReviewPage({ params }: { params: P
         }));
   if (!allowed) redirect("/unauthorized");
 
-  const returnUrl = isRevision
-    ? session.userType === USER_TYPE.CLERK
-      ? "/clerk/my-documents?status=REVISION_REQUIRED"
-      : session.userType === USER_TYPE.ADMIN
-        ? "/admin/all-documents?status=REVISION_REQUIRED"
-        : "/approver/my-documents?status=REVISION_REQUIRED"
-    : session.userType === USER_TYPE.CLERK
-      ? "/clerk/my-documents"
-      : session.userType === USER_TYPE.ADMIN
-        ? "/admin/pending-approvals"
-        : "/approver/pending-approvals";
+  const returnUrl = "/tasks";
 
   const user = await prisma.user.findUnique({ where: { id: session.userId }, select: { signaturePath: true } });
 

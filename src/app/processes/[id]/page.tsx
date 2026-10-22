@@ -10,7 +10,7 @@ export default async function ProcessRunPage({ params }: { params: Promise<{ id:
   const { id } = await params;
 
   return (
-    <DashboardShell role={session.userType} userName={session.name} title="Process Run" subtitle="Follow the steps and the documents that fill them">
+    <DashboardShell role={session.userType} userName={session.name} title="Process Run" subtitle="Follow the documents and the path this process has taken">
       <ProcessRunView runId={id} />
     </DashboardShell>
   );

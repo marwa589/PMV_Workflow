@@ -528,6 +528,9 @@ model ProcessDefinition {
   name        String   @unique
   description String?
   isActive    Boolean  @default(true)
+  // Editing a process that already has runs creates a new version of its tree: runs keep the version they
+  // started with, new uploads use currentVersion.
+  currentVersion Int     @default(1)
   createdAt   DateTime @default(now())
 
   steps             ProcessStep[]
@@ -536,6 +539,10 @@ model ProcessDefinition {
   assignmentScopes  UserAssignmentProcessScope[]
 }
 
+// One node of a process tree. parentStepId = null marks the root (the document whose upload starts a run);
+// every other node hangs under exactly one parent. A node's children are the optional "next document" choices:
+// whichever child gets uploaded decides the path the run follows. A node with no children ends the path.
+// stepNumber is only a unique label for the node inside its process (1 = root, then depth-first order).
 model ProcessStep {
   id                  String  @id @default(cuid())
   processDefinitionId String
@@ -543,13 +550,19 @@ model ProcessStep {
   name                String
   documentTypeId      String
   documentSubtypeId   String?
+  parentStepId        String?
+  versionNumber       Int     @default(1)
 
   processDefinition ProcessDefinition     @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
   documentType      DocumentType          @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
   documentSubtype   DocumentSubtype?      @relation(fields: [documentSubtypeId], references: [id], onDelete: Restrict)
+  parentStep        ProcessStep?          @relation("ProcessStepTree", fields: [parentStepId], references: [id], onDelete: Cascade)
+  childSteps        ProcessStep[]         @relation("ProcessStepTree")
   stepDocuments     ProcessStepDocument[]
+  runsAtStep        ProcessInstance[]     @relation("ProcessInstanceCurrentStep")
 
-  @@unique([processDefinitionId, stepNumber])
+  @@unique([processDefinitionId, versionNumber, stepNumber])
+  @@index([parentStepId])
 }
 
 model ProcessInstance {
@@ -559,6 +572,11 @@ model ProcessInstance {
   reference           String?
   status              ProcessStatus @default(IN_PROGRESS)
   currentStepNumber   Int           @default(1)
+  // The last node whose document was approved (null until the root document is approved). While the run is
+  // in progress, its child nodes are the choices for the next upload.
+  currentStepId       String?
+  // Which version of the process tree this run follows (fixed when the run starts).
+  stepVersion         Int           @default(1)
   startedById         String
   startedAt           DateTime      @default(now())
   completedAt         DateTime?
@@ -566,14 +584,16 @@ model ProcessInstance {
   processDefinition ProcessDefinition     @relation(fields: [processDefinitionId], references: [id], onDelete: Restrict)
   project           Project?              @relation(fields: [projectId], references: [id], onDelete: Restrict)
   startedBy         User                  @relation("ProcessInstancesStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
+  currentStep       ProcessStep?          @relation("ProcessInstanceCurrentStep", fields: [currentStepId], references: [id], onDelete: SetNull)
   stepDocuments     ProcessStepDocument[]
 
   @@index([processDefinitionId, status])
+  @@index([currentStepId])
   @@index([projectId])
 }
 
-// One current document fills a step of a running process; rejected ones stay as history.
-// "Only one current document per step per run" is enforced by a partial unique index in the migration.
+// The document that filled a node of a run; rejected ones stay as history (isCurrent = false).
+// "Only one current document per node per run" is enforced by a partial unique index in the migration.
 model ProcessStepDocument {
   id                String            @id @default(cuid())
   processInstanceId String
@@ -847,6 +867,7 @@ enum NotificationType {
   DOCUMENT_DELETED
   DOCUMENT_ON_HOLD
   DOCUMENT_RESUMED
+  PROCESS_UPLOAD_READY
 }
 
 enum EmailEventType {
@@ -855,4 +876,5 @@ enum EmailEventType {
   WORKFLOW_REJECTED
   APPROVAL_OVERDUE
   PROCESS_STEP_OVERDUE
+  PROCESS_UPLOAD_READY
 }

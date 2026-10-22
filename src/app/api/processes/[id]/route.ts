@@ -6,12 +6,13 @@ import { validateCsrf } from "@/lib/csrf";
 import { prisma } from "@/lib/prisma";
 import { getDocumentStatusDisplay } from "@/lib/document-status";
 import { cancelProcess } from "@/lib/workflow/processes";
+import { canUserUpload } from "@/lib/workflow/eligibility";
 import { WorkflowError } from "@/lib/workflow/errors";
 import { getProcessStatusLabel } from "@/lib/process-status";
 
 export const runtime = "nodejs";
 
-// One run: its steps in order, the document now filling each step, and the earlier (rejected) ones as history.
+// One run: the whole tree, the documents that filled it (rejected ones as history) and the choices that are open now.
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
@@ -24,7 +25,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       id: true,
       reference: true,
       status: true,
-      currentStepNumber: true,
+      currentStepId: true,
+      stepVersion: true,
       startedAt: true,
       completedAt: true,
       project: { select: { id: true, code: true, name: true } },
@@ -35,7 +37,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
           name: true,
           steps: {
             orderBy: { stepNumber: "asc" },
-            select: { id: true, stepNumber: true, name: true, documentType: { select: { id: true, code: true, name: true } }, documentSubtype: { select: { id: true, code: true, name: true } } },
+            select: {
+              id: true,
+              stepNumber: true,
+              name: true,
+              parentStepId: true,
+              versionNumber: true,
+              documentType: { select: { id: true, code: true, name: true } },
+              documentSubtype: { select: { id: true, code: true, name: true } },
+            },
           },
         },
       },
@@ -55,19 +65,54 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   if (!run) return NextResponse.json({ message: "Process run not found." }, { status: 404 });
 
+  // The run follows the version of the tree it started with, even if the process was edited since.
+  const definitionSteps = run.processDefinition.steps.filter((step) => step.versionNumber === run.stepVersion);
+  const currentLinks = run.stepDocuments.filter((link) => link.isCurrent);
+  // The node of the choice already made under the last approved node (its document is in approval), if any.
+  const chosenLink = currentLinks.find((link) => definitionSteps.find((step) => step.id === link.processStepId)?.parentStepId === run.currentStepId);
+  // Nodes on the path taken so far: the chosen node and everything above it.
+  const pathIds = new Set<string>();
+  for (let cursor = chosenLink?.processStepId ?? run.currentStepId; cursor; ) {
+    pathIds.add(cursor);
+    cursor = definitionSteps.find((step) => step.id === cursor)?.parentStepId ?? null;
+  }
+
+  const awaitingUpload =
+    run.status === "IN_PROGRESS" &&
+    run.currentStepId !== null &&
+    !chosenLink &&
+    definitionSteps.some((step) => step.parentStepId === run.currentStepId);
+
+  // Buttons are shown only to people who could use them (same rules as the upload and cancel endpoints).
+  let canUpload = false;
+  if (awaitingUpload) {
+    const actor = { id: session.userId, userType: session.userType };
+    for (const step of definitionSteps.filter((candidate) => candidate.parentStepId === run.currentStepId)) {
+      if (await canUserUpload(prisma, actor, { documentTypeId: step.documentType.id, documentSubtypeId: step.documentSubtype?.id ?? null, projectId: run.project?.id ?? null })) {
+        canUpload = true;
+        break;
+      }
+    }
+  }
+  const canCancel = run.status === "IN_PROGRESS" && (run.startedBy.id === session.userId || (await userHasPermission(session, "processes.manage")));
+
   return NextResponse.json({
     run: {
       id: run.id,
       reference: run.reference,
       status: run.status,
-      statusLabel: getProcessStatusLabel(run.status, run.currentStepNumber, run.processDefinition.steps),
-      currentStepNumber: run.currentStepNumber,
+      statusLabel: getProcessStatusLabel(run, definitionSteps, run.stepDocuments),
+      currentStepId: run.currentStepId,
       startedAt: run.startedAt.toISOString(),
       completedAt: run.completedAt?.toISOString() ?? null,
       project: run.project,
       startedBy: run.startedBy,
       processDefinition: { id: run.processDefinition.id, name: run.processDefinition.name },
-      steps: run.processDefinition.steps.map((step) => {
+      // True while the run waits for someone to upload the next document (the open choices are the children of currentStepId).
+      awaitingUpload,
+      canUpload,
+      canCancel,
+      steps: definitionSteps.map((step) => {
         const documents = run.stepDocuments
           .filter((link) => link.processStepId === step.id)
           .map((link) => ({
@@ -85,8 +130,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
           id: step.id,
           stepNumber: step.stepNumber,
           name: step.name,
+          parentStepId: step.parentStepId,
           documentType: step.documentType,
           documentSubtype: step.documentSubtype,
+          onPath: pathIds.has(step.id),
+          // An open choice: a child of the last approved node while the run waits for the next upload.
+          isOpenChoice:
+            run.status === "IN_PROGRESS" && run.currentStepId !== null && !chosenLink && step.parentStepId === run.currentStepId,
           currentDocument: documents.find((doc) => doc.isCurrent) ?? null,
           history: documents.filter((doc) => !doc.isCurrent),
         };

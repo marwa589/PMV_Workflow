@@ -1,0 +1,5 @@
+-- RenameForeignKey
+ALTER TABLE "UserAssignmentDocumentSubtypeScope" RENAME CONSTRAINT "UserAssignmentDocumentSubtypeScope_userAssignmentId_documentTyp" TO "UserAssignmentDocumentSubtypeScope_userAssignmentId_docume_fkey";
+
+-- RenameIndex
+ALTER INDEX "DocumentNumberCounter_documentTypeId_documentSubtypeId_projectI" RENAME TO "DocumentNumberCounter_documentTypeId_documentSubtypeId_proj_idx";

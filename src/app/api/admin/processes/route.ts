@@ -1,17 +1,19 @@
-// src/app/api/admin/processes/route.ts
+import type { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { deactivationConfirmationResponse, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
+import { nodesOverlap } from "@/lib/workflow/processes";
 
 export const runtime = "nodejs";
 
-const MAX_STEPS = 10;
+const MAX_NODES = 100;
 
 const processSelect = {
   id: true,
   name: true,
   description: true,
   isActive: true,
+  currentVersion: true,
   createdAt: true,
   steps: {
     orderBy: { stepNumber: "asc" },
@@ -19,6 +21,8 @@ const processSelect = {
       id: true,
       stepNumber: true,
       name: true,
+      parentStepId: true,
+      versionNumber: true,
       documentTypeId: true,
       documentSubtypeId: true,
       documentType: { select: { id: true, code: true, name: true } },
@@ -28,29 +32,128 @@ const processSelect = {
   _count: { select: { instances: true } },
 } as const;
 
-type ParsedStep = { stepNumber: number; name: string; documentTypeId: string; documentSubtypeId: string | null };
+type ParsedNode = {
+  key: string;
+  parentKey: string | null;
+  name: string;
+  documentTypeId: string;
+  documentSubtypeId: string | null;
+};
 
-/** Steps run 1, 2, 3 ... up to 10. Each step asks for one document of a type, or of a specific sub type. */
-async function parseSteps(raw: unknown): Promise<{ steps?: ParsedStep[]; error?: string }> {
-  if (!Array.isArray(raw) || raw.length === 0) return { error: "A process needs at least one step." };
-  if (raw.length > MAX_STEPS) return { error: `A process can have at most ${MAX_STEPS} steps.` };
+type OrderedNode = ParsedNode & { stepNumber: number };
 
-  const steps: ParsedStep[] = [];
+/**
+ * A process is a tree of document nodes. The request sends a flat list: every node has a key, and every node
+ * except the single root names its parent's key. Each node asks for one document of a type, or of a specific
+ * sub type. The children of a node are the optional choices for what comes next; the uploader picks one.
+ * Validates the shape and returns the nodes numbered 1..n in depth-first order (root = 1).
+ */
+async function parseTree(raw: unknown): Promise<{ nodes?: OrderedNode[]; error?: string }> {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: "A process needs at least a starting document." };
+  if (raw.length > MAX_NODES) return { error: `A process can have at most ${MAX_NODES} documents.` };
+
+  const parsed: ParsedNode[] = [];
+  const keys = new Set<string>();
   for (const [index, item] of raw.entries()) {
     const record = (item ?? {}) as Record<string, unknown>;
+    const key = str(record.key);
+    const parentKey = str(record.parentKey) || null;
     const documentTypeId = str(record.documentTypeId);
     const documentSubtypeId = str(record.documentSubtypeId) || null;
     const name = str(record.name);
-    if (!name || !documentTypeId) return { error: `Step ${index + 1} needs a name and a document type.` };
+    if (!key || keys.has(key)) return { error: `Document ${index + 1} has a missing or repeated key.` };
+    if (!name || !documentTypeId) return { error: `Document ${index + 1} needs a name and a document type.` };
+    keys.add(key);
 
     const type = await prisma.documentType.findUnique({ where: { id: documentTypeId }, select: { id: true } });
-    if (!type) return { error: `Step ${index + 1}: the document type does not exist.` };
+    if (!type) return { error: `${name}: the document type does not exist.` };
     if (documentSubtypeId && !(await prisma.documentSubtype.findFirst({ where: { id: documentSubtypeId, documentTypeId }, select: { id: true } }))) {
-      return { error: `Step ${index + 1}: the sub type does not belong to the document type.` };
+      return { error: `${name}: the sub type does not belong to the document type.` };
     }
-    steps.push({ stepNumber: index + 1, name, documentTypeId, documentSubtypeId });
+    parsed.push({ key, parentKey, name, documentTypeId, documentSubtypeId });
   }
-  return { steps };
+
+  const roots = parsed.filter((node) => node.parentKey === null);
+  if (roots.length !== 1) return { error: "A process must have exactly one starting (root) document." };
+  for (const node of parsed) {
+    if (node.parentKey !== null && !keys.has(node.parentKey)) return { error: `${node.name}: its parent document does not exist.` };
+    if (node.parentKey === node.key) return { error: `${node.name} cannot follow itself.` };
+  }
+
+  // Walk the tree from the root (depth-first): numbers the nodes and proves there are no loops or detached branches.
+  const childrenOf = new Map<string, ParsedNode[]>();
+  for (const node of parsed) {
+    if (node.parentKey === null) continue;
+    childrenOf.set(node.parentKey, [...(childrenOf.get(node.parentKey) ?? []), node]);
+  }
+
+  const ordered: OrderedNode[] = [];
+  const visit = (node: ParsedNode) => {
+    ordered.push({ ...node, stepNumber: ordered.length + 1 });
+    for (const child of childrenOf.get(node.key) ?? []) visit(child);
+  };
+  visit(roots[0]);
+  if (ordered.length !== parsed.length) return { error: "Every document must connect to the starting document (no loops or detached branches)." };
+
+  // The choices after one document must be different documents, otherwise the uploader could not tell them apart.
+  for (const [parentKey, children] of childrenOf) {
+    for (const [i, a] of children.entries()) {
+      for (const b of children.slice(i + 1)) {
+        if (nodesOverlap(a, b)) {
+          const parent = parsed.find((node) => node.key === parentKey);
+          return { error: `The choices after "${parent?.name}" ("${a.name}" and "${b.name}") ask for the same kind of document. Each choice must be different.` };
+        }
+      }
+    }
+  }
+
+  return { nodes: ordered };
+}
+
+/** One active process per root document type: uploading that document starts exactly one tree. */
+async function rootConflict(definitionId: string | null, root: { documentTypeId: string; documentSubtypeId: string | null }): Promise<string | null> {
+  const others = await prisma.processDefinition.findMany({
+    where: { isActive: true, ...(definitionId ? { id: { not: definitionId } } : {}) },
+    select: {
+      name: true,
+      currentVersion: true,
+      steps: { where: { parentStepId: null }, select: { versionNumber: true, documentTypeId: true, documentSubtypeId: true } },
+    },
+  });
+  for (const other of others) {
+    // Only the current version counts (older versions just keep their running work going), and old linear
+    // processes (several "roots") can never run as trees.
+    const roots = other.steps.filter((step) => step.versionNumber === other.currentVersion);
+    if (roots.length === 1 && nodesOverlap(roots[0], root)) {
+      return `The active process "${other.name}" already starts with this document type. Only one active process can start with the same document.`;
+    }
+  }
+  return null;
+}
+
+/** The screens show (and edit) the current version of each tree; older versions only exist for runs that started on them. */
+function currentVersionOnly<T extends { currentVersion: number; steps: Array<{ versionNumber: number }> }>(process: T): T {
+  return { ...process, steps: process.steps.filter((step) => step.versionNumber === process.currentVersion) };
+}
+
+async function createNodes(tx: Prisma.TransactionClient, processDefinitionId: string, versionNumber: number, nodes: OrderedNode[]) {
+  // Parents come before their children in depth-first order, so each parent's real id is known when needed.
+  const idByKey = new Map<string, string>();
+  for (const node of nodes) {
+    const created = await tx.processStep.create({
+      data: {
+        processDefinitionId,
+        versionNumber,
+        stepNumber: node.stepNumber,
+        name: node.name,
+        documentTypeId: node.documentTypeId,
+        documentSubtypeId: node.documentSubtypeId,
+        parentStepId: node.parentKey ? idByKey.get(node.parentKey) ?? null : null,
+      },
+      select: { id: true },
+    });
+    idByKey.set(node.key, created.id);
+  }
 }
 
 export async function GET(request: Request) {
@@ -65,7 +168,7 @@ export async function GET(request: Request) {
       orderBy: { name: "asc" },
     }),
   ]);
-  return NextResponse.json({ processes, documentTypes });
+  return NextResponse.json({ processes: processes.map(currentVersionOnly), documentTypes });
 }
 
 export async function POST(request: Request) {
@@ -76,27 +179,34 @@ export async function POST(request: Request) {
   const name = str(body?.name);
   if (!name) return NextResponse.json({ message: "Process name is required." }, { status: 400 });
 
-  const parsed = await parseSteps(body?.steps);
-  if (parsed.error || !parsed.steps) return NextResponse.json({ message: parsed.error }, { status: 400 });
+  const parsed = await parseTree(body?.steps);
+  if (parsed.error || !parsed.nodes) return NextResponse.json({ message: parsed.error }, { status: 400 });
+
+  const isActive = body?.isActive === undefined ? true : Boolean(body.isActive);
+  if (isActive) {
+    const conflict = await rootConflict(null, parsed.nodes[0]);
+    if (conflict) return NextResponse.json({ message: conflict }, { status: 409 });
+  }
 
   try {
-    const process = await prisma.processDefinition.create({
-      data: {
-        name,
-        description: str(body?.description) || null,
-        isActive: body?.isActive === undefined ? true : Boolean(body.isActive),
-        steps: { create: parsed.steps },
-      },
-      select: processSelect,
+    const id = await prisma.$transaction(async (tx) => {
+      const definition = await tx.processDefinition.create({
+        data: { name, description: str(body?.description) || null, isActive },
+        select: { id: true },
+      });
+      await createNodes(tx, definition.id, 1, parsed.nodes as OrderedNode[]);
+      return definition.id;
     });
-    return NextResponse.json({ process }, { status: 201 });
+    const process = await prisma.processDefinition.findUnique({ where: { id }, select: processSelect });
+    return NextResponse.json({ process: process ? currentVersionOnly(process) : process }, { status: 201 });
   } catch (error) {
     return prismaErrorResponse(error, { duplicate: "A process with this name already exists." })
       ?? NextResponse.json({ message: "Unable to create the process." }, { status: 500 });
   }
 }
 
-// The steps of a process that already has runs cannot change; name, description and active state still can.
+// Editing the tree of a process that already has runs creates a new version: running and finished runs keep the
+// version they started with, and every new upload follows the new one.
 export async function PATCH(request: Request) {
   const auth = await requireApiPermission(request, "processes.manage");
   if (auth.response) return auth.response;
@@ -106,13 +216,34 @@ export async function PATCH(request: Request) {
   const name = str(body?.name);
   if (!id || !name) return NextResponse.json({ message: "Process id and name are required." }, { status: 400 });
 
+  const existing = await prisma.processDefinition.findUnique({
+    where: { id },
+    select: { isActive: true, currentVersion: true, steps: { select: { parentStepId: true, versionNumber: true, documentTypeId: true, documentSubtypeId: true } } },
+  });
+  if (!existing) return NextResponse.json({ message: "Record not found." }, { status: 404 });
+
   const runs = await prisma.processInstance.count({ where: { processDefinitionId: id } });
-  let steps: ParsedStep[] | undefined;
+  let nodes: OrderedNode[] | undefined;
   if (body?.steps !== undefined) {
-    if (runs > 0) return NextResponse.json({ message: "This process already has runs, so its steps cannot be changed. Create a new process instead." }, { status: 409 });
-    const parsed = await parseSteps(body.steps);
-    if (parsed.error || !parsed.steps) return NextResponse.json({ message: parsed.error }, { status: 400 });
-    steps = parsed.steps;
+    const parsed = await parseTree(body.steps);
+    if (parsed.error || !parsed.nodes) return NextResponse.json({ message: parsed.error }, { status: 400 });
+    nodes = parsed.nodes;
+  }
+
+  const willBeActive = typeof body?.isActive === "boolean" ? body.isActive : existing.isActive;
+  if (willBeActive) {
+    const root = nodes ? nodes[0] : (() => {
+      const roots = existing.steps.filter((step) => step.parentStepId === null && step.versionNumber === existing.currentVersion);
+      return roots.length === 1 ? roots[0] : null;
+    })();
+    if (!root) {
+      return NextResponse.json(
+        { message: "This is an old linear process (it has no starting document and follow-up choices), so it cannot be active. Rebuild it as a tree." },
+        { status: 409 },
+      );
+    }
+    const conflict = await rootConflict(id, root);
+    if (conflict) return NextResponse.json({ message: conflict }, { status: 409 });
   }
 
   try {
@@ -134,20 +265,30 @@ export async function PATCH(request: Request) {
       }
     }
 
-    const process = await prisma.$transaction(async (tx) => {
-      if (steps) await tx.processStep.deleteMany({ where: { processDefinitionId: id } });
-      return tx.processDefinition.update({
+    await prisma.$transaction(async (tx) => {
+      let nextVersion = existing.currentVersion;
+      if (nodes) {
+        if (runs > 0) {
+          // Runs already exist: keep the old tree exactly as it is (they keep following it) and add the edited tree
+          // as a new version. Every new upload uses the new version.
+          nextVersion = existing.currentVersion + 1;
+        } else {
+          await tx.processStep.deleteMany({ where: { processDefinitionId: id } });
+        }
+        await createNodes(tx, id, nextVersion, nodes);
+      }
+      await tx.processDefinition.update({
         where: { id },
         data: {
+          currentVersion: nextVersion,
           name,
           description: str(body?.description) || null,
           ...(typeof body?.isActive === "boolean" ? { isActive: body.isActive } : {}),
-          ...(steps ? { steps: { create: steps } } : {}),
         },
-        select: processSelect,
       });
     });
-    return NextResponse.json({ process });
+    const process = await prisma.processDefinition.findUnique({ where: { id }, select: processSelect });
+    return NextResponse.json({ process: process ? currentVersionOnly(process) : process });
   } catch (error) {
     return prismaErrorResponse(error, { duplicate: "A process with this name already exists." })
       ?? NextResponse.json({ message: "Unable to update the process." }, { status: 500 });

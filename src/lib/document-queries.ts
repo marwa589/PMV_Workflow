@@ -60,17 +60,22 @@ const documentListSelect = {
       processInstance: {
         select: {
           status: true,
-          currentStepNumber: true,
+          currentStepId: true,
           processDefinition: {
             select: {
               steps: {
                 select: {
-                  stepNumber: true,
+                  id: true,
+                  parentStepId: true,
                   documentType: { select: { code: true } },
                   documentSubtype: { select: { code: true } },
                 },
               },
             },
+          },
+          stepDocuments: {
+            where: { isCurrent: true },
+            select: { processStepId: true, isCurrent: true, document: { select: { status: true } } },
           },
         },
       },
@@ -158,7 +163,7 @@ export function toDocumentRow(document: RawDocument): DocumentRow {
       : null,
     processStatus: processInstance?.status ?? null,
     processStatusLabel: processInstance
-      ? getProcessStatusLabel(processInstance.status, processInstance.currentStepNumber, processInstance.processDefinition.steps)
+      ? getProcessStatusLabel(processInstance, processInstance.processDefinition.steps, processInstance.stepDocuments)
       : null,
   };
 }
