@@ -6,6 +6,10 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import {
+  Archive,
+  Building2,
+  UserCheck,
+  Workflow,
   Bell,
   CheckCircle2,
   ChevronRight,
@@ -18,6 +22,7 @@ import {
   FolderCog,
   GitBranch,
   LayoutDashboard,
+  Mail,
   Menu,
   Network,
   Search,
@@ -53,6 +58,7 @@ type SidebarCounts = {
   tasks: { uploads: number; reviews: number };
   pendingByType: Array<{ documentTypeId: string; code: string; name: string; count: number }>;
   canUpload: boolean;
+  canViewProcesses?: boolean;
   documentTypes: Array<{ id: string; code: string; name: string }>;
   manage: Partial<Record<
     "flows" | "types" | "processes" | "users" | "assignments" | "delegations" | "projects" | "deletionReview",
@@ -105,60 +111,44 @@ const HOME_BY_USER_TYPE: Record<
   },
 };
 
-function getVisibleNavItems(role: AppRole, counts: SidebarCounts): NavItem[] {
+// "Work" is what needs doing now; "Documents" is where the documents live.
+function getVisibleNavItems(role: AppRole, counts: SidebarCounts): { workItems: NavItem[]; documentItems: NavItem[] } {
   const home = HOME_BY_USER_TYPE[role];
   const isApprover = role === "eng" || role === "manager" || role === "admin";
+  const base = role === "admin" ? "/admin" : "/approver";
 
-  const items: NavItem[] = [
+  const workItems: NavItem[] = [
     { label: "Dashboard", href: home.dashboard, icon: LayoutDashboard },
+    // Everything waiting for this person: documents to upload (next step of a process) and documents to review.
+    { label: "My Tasks", href: "/tasks", icon: ClipboardList, badge: { kind: "tasks" } },
   ];
 
   if (counts.canUpload) {
-    items.push({
-      label: "New Document",
-      href: "/new-document",
-      icon: FilePlus2,
-    });
+    workItems.push({ label: "New Document", href: "/new-document", icon: FilePlus2 });
   }
 
-  items.push({
-    label: role === "admin" ? "All Documents" : "My Documents",
-    href: home.list,
-    icon: FileText,
-    badge: { kind: "all" },
-  });
+  if (counts.canViewProcesses) {
+    workItems.push({ label: "Process Runs", href: "/processes", icon: Workflow });
+  }
 
-  // Everything waiting for this person: documents to upload (next step of a process) and documents to review.
-  items.push({
-    label: "My Tasks",
-    href: "/tasks",
-    icon: ClipboardList,
-    badge: { kind: "tasks" },
-  });
+  const documentItems: NavItem[] = [
+    {
+      label: role === "admin" ? "All Documents" : "My Documents",
+      href: home.list,
+      icon: FileText,
+      badge: { kind: "all" },
+    },
+  ];
 
   if (isApprover) {
-    const base = role === "admin" ? "/admin" : "/approver";
-
-    items.push({
-      label: "Approved Documents",
-      href: `${base}/approved-documents`,
-      icon: CheckCircle2,
-    });
-
-    items.push({
-      label: "Rejected Documents",
-      href: `${base}/rejected-documents`,
-      icon: FileCheck2,
-    });
+    documentItems.push({ label: "Approved", href: `${base}/approved-documents`, icon: CheckCircle2 });
+    documentItems.push({ label: "Rejected", href: `${base}/rejected-documents`, icon: FileCheck2 });
+    documentItems.push({ label: "Archive", href: `${base}/archive`, icon: Archive });
   } else {
-    items.push({
-      label: "Rejected Documents",
-      href: `${home.list}?status=CANCELLED`,
-      icon: FileCheck2,
-    });
+    documentItems.push({ label: "Rejected", href: `${home.list}?status=CANCELLED`, icon: FileCheck2 });
   }
 
-  return items;
+  return { workItems, documentItems };
 }
 
 function Sidebar({
@@ -179,80 +169,39 @@ function Sidebar({
   const [accountOpen, setAccountOpen] = useState(false);
 
   const home = HOME_BY_USER_TYPE[role];
-  const navItems = getVisibleNavItems(role, counts);
+  const { workItems, documentItems } = getVisibleNavItems(role, counts);
   const manage = counts.manage;
 
-  const setupItems: NavItem[] = [];
-
-  if (manage.users) {
-    setupItems.push({
-      label: "Users",
-      href: "/admin/users",
-      icon: Users,
-    });
-  }
-
-  if (manage.assignments) {
-    setupItems.push({
-      label: "Roles & Access",
-      href: "/admin/roles",
-      icon: ShieldCheck,
-    });
-  }
-
-  if (manage.delegations) {
-    setupItems.push({
-      label: "Delegations",
-      href: "/admin/delegations",
-      icon: Users,
-    });
-  }
-
-  if (manage.types) {
-    setupItems.push({
-      label: "Document Types Setup",
-      href: "/admin/document-types",
-      icon: FileText,
-    });
-  }
-
-  if (manage.flows) {
-    setupItems.push({
-      label: "Approval Flows",
-      href: "/admin/flows",
-      icon: GitBranch,
-    });
-
-    setupItems.push({
-      label: "Flow Assignments",
-      href: "/admin/flow-assignments",
-      icon: ClipboardCheck,
-    });
-  }
-
-  if (manage.processes) {
-    setupItems.push({
-      label: "Process Setup",
-      href: "/admin/processes",
-      icon: Network,
-    });
-  }
-
-  if (manage.projects) {
-    setupItems.push({
-      label: "Projects & Locations",
-      href: "/admin/projects",
-      icon: Network,
-    });
-  }
-
-  if (role === "admin") {
-    setupItems.push({
-      label: "System Settings",
-      href: "/admin/settings",
-      icon: Settings,
-    });
-  }
+  // Setup is grouped by what the person is configuring, so related screens sit together.
+  const setupGroups: Array<{ label: string; items: NavItem[] }> = [
+    {
+      label: "People & access",
+      items: [
+        ...(manage.users ? [{ label: "Users", href: "/admin/users", icon: Users }] : []),
+        ...(manage.assignments ? [{ label: "Roles & Access", href: "/admin/roles", icon: ShieldCheck }] : []),
+        ...(manage.assignments ? [{ label: "Mailing List", href: "/admin/mailing-list", icon: Mail }] : []),
+        ...(manage.delegations ? [{ label: "Delegations", href: "/admin/delegations", icon: UserCheck }] : []),
+      ],
+    },
+    {
+      label: "Documents & workflow",
+      items: [
+        ...(manage.types ? [{ label: "Document Types", href: "/admin/document-types", icon: FileText }] : []),
+        ...(manage.flows ? [{ label: "Approval Flows", href: "/admin/flows", icon: GitBranch }] : []),
+        ...(manage.flows ? [{ label: "Flow Assignments", href: "/admin/flow-assignments", icon: ClipboardCheck }] : []),
+        ...(manage.processes ? [{ label: "Process Setup", href: "/admin/processes", icon: Network }] : []),
+      ],
+    },
+    {
+      label: "Organization",
+      items: [...(manage.projects ? [{ label: "Projects & Locations", href: "/admin/projects", icon: Building2 }] : [])],
+    },
+    {
+      label: "System",
+      items: [...(role === "admin" ? [{ label: "System Settings", href: "/admin/settings", icon: Settings }] : [])],
+    },
+  ].filter((group) => group.items.length > 0);
+  const setupItems = setupGroups.flatMap((group) => group.items);
 
   const currentDocumentType = searchParams.get("documentType") ?? "";
   const currentStatus = searchParams.get("status") ?? "";
@@ -379,6 +328,10 @@ const badgeCount = (item: NavItem): number => {
     );
   };
 
+  const renderSectionLabel = (label: string) => (
+    <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
+  );
+
   const renderGroupButton = (
     label: string,
     Icon: LucideIcon,
@@ -426,8 +379,12 @@ const badgeCount = (item: NavItem): number => {
         </div>
       </div>
 
-      <nav className="flex-1 space-y-2 overflow-y-auto px-3 py-4">
-        {navItems.map((item) => renderNavItem(item))}
+      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
+        {renderSectionLabel("Work")}
+        {workItems.map((item) => renderNavItem(item))}
+
+        {renderSectionLabel("Documents")}
+        {documentItems.map((item) => renderNavItem(item))}
 
         {counts.documentTypes.length > 0 && (
           <div className="space-y-1">
@@ -460,6 +417,8 @@ const badgeCount = (item: NavItem): number => {
           </div>
         )}
 
+        {setupItems.length > 0 && renderSectionLabel("Administration")}
+
         {setupItems.length > 0 && (
           <div className="space-y-1">
             {renderGroupButton(
@@ -472,11 +431,18 @@ const badgeCount = (item: NavItem): number => {
 
             {setupOpen && (
               <div className="ml-5 space-y-1 border-l border-slate-200">
-                {setupItems.map((item) => renderNavItem(item, true))}
+                {setupGroups.map((group) => (
+                  <div key={group.label} className="space-y-1">
+                    <p className="pb-0.5 pl-9 pt-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{group.label}</p>
+                    {group.items.map((item) => renderNavItem(item, true))}
+                  </div>
+                ))}
               </div>
             )}
           </div>
         )}
+
+        {renderSectionLabel("Account")}
 
         <div className="space-y-1">
           {renderGroupButton(

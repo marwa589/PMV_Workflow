@@ -39,6 +39,9 @@ const PERMISSIONS = [
   ["assignments.manage", "Manage assignments", "Role assignments and scopes"],
   ["delegations.manage", "Manage delegations", "Approval delegations"],
   ["projects.manage", "Manage projects", "Locations, companies and projects"],
+  ["mail.receive_approved", "Receive mail: approved", "Get an email when a document in scope is fully approved"],
+  ["mail.receive_rejected", "Receive mail: rejected", "Get an email when a document in scope is rejected"],
+  ["mail.receive_revision", "Receive mail: revision requested", "Get an email when a document in scope is sent back for revision"],
 ];
 
 // The Approver role has no permissions on purpose: it only sees what a flow names it for.
@@ -53,6 +56,8 @@ const ROLES = [
   { name: "Archivist", description: "Archive and print.", permissions: ["documents.archive", "documents.print", "documents.view"] },
   { name: "Deletion Reviewer", description: "Request and review deletions.", permissions: ["documents.delete_request", "documents.delete_review", "documents.view"] },
   { name: "Flow Admin", description: "Builds flows, document types and processes.", permissions: ["flows.manage", "types.manage", "processes.manage"] },
+  { name: "Mailing List (all events)", description: "Emailed when documents in scope are approved, rejected or sent back for revision. Includes view so the link in the email opens.", permissions: ["mail.receive_approved", "mail.receive_rejected", "mail.receive_revision", "documents.view"] },
+  { name: "Mailing List (approved only)", description: "Emailed when documents in scope are fully approved.", permissions: ["mail.receive_approved", "documents.view"] },
   { name: "User Admin", description: "Users, assignments, delegations, projects.", permissions: ["users.manage", "assignments.manage", "delegations.manage", "projects.manage"] },
 ];
 

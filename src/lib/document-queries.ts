@@ -207,6 +207,8 @@ export async function getActionableDocuments(
     .filter((document) => {
       const level = document.currentWorkflowStep;
       if (level === null) return false;
+      // Admin users see everything waiting at any level.
+      if (user.userType === USER_TYPE.ADMIN) return true;
       if (
         document.status === DocumentStatus.PENDING &&
         document.approvals[0]?.action === ApprovalActionType.RESUBMITTED &&

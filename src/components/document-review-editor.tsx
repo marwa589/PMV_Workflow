@@ -24,6 +24,10 @@ async function loadPdfJs() {
   return pdfjs;
 }
 
+type EditorDecision = "APPROVE" | "REJECT" | "REQUEST_REVISION" | "HOLD" | "RESUME";
+export type BatchDecision = "APPROVE" | "REJECT";
+export type BatchAction = { validate: (decision: BatchDecision) => string | null; submit: (decision: BatchDecision) => Promise<boolean> };
+
 type DocumentReviewEditorProps = {
   documentId: string;
   documentNumber: string;
@@ -40,6 +44,14 @@ type DocumentReviewEditorProps = {
   actionUrl?: string;
   returnUrl?: string;
   allowHold?: boolean;
+  // Batch mode: this editor is one of several stacked on the batch review screen, which submits them one after another.
+  batchMode?: boolean;
+  batchActive?: boolean;
+  batchSubmitting?: boolean;
+  batchDecision?: BatchDecision;
+  onBatchDecisionChange?: (decision: BatchDecision) => void;
+  onBatchSubmit?: () => void;
+  onBatchAction?: (documentId: string, action: BatchAction | null) => void;
 };
 
 export default function DocumentReviewEditor({
@@ -56,6 +68,13 @@ export default function DocumentReviewEditor({
   actionUrl = `/api/documents/${documentId}/actions`,
   returnUrl = "/approver/pending-approvals",
   allowHold = false,
+  batchMode = false,
+  batchActive = false,
+  batchSubmitting = false,
+  batchDecision = "APPROVE",
+  onBatchDecisionChange,
+  onBatchSubmit,
+  onBatchAction,
 }: DocumentReviewEditorProps) {
   const router = useRouter();
   const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -289,20 +308,25 @@ export default function DocumentReviewEditor({
     event.preventDefault();
   }
 
-  async function submit() {
+  function submit() {
+    void runDecision(decision, false);
+  }
+
+  // Sends one decision for this document. Batch mode returns true/false and leaves navigation to the batch screen.
+  async function runDecision(decision: EditorDecision, batch: boolean): Promise<boolean> {
     const action = revisionMode && decision !== "REJECT" ? "RESUBMIT" : decision;
     const requiresSignature = !revisionMode && decision === "APPROVE" && !(allowNoSignature && placements.length === 0);
     if (revisionMode && replacementFile && !isPdf(replacementFile)) {
       setError("The replacement document must be a PDF so it can be reviewed in the approval workflow.");
-      return;
+      return false;
     }
     if (!revisionMode && decision === "APPROVE" && placements.length === 0 && !allowNoSignature) {
       setError("Click Sign and place at least one signature before approving.");
-      return;
+      return false;
     }
     if (!revisionMode && decision === "REQUEST_REVISION" && !comments.trim()) {
       setError("Write a comment that tells the person what to fix.");
-      return;
+      return false;
     }
     setSaving(true);
     setError(null);
@@ -410,23 +434,44 @@ export default function DocumentReviewEditor({
       const result = (await response.json()) as { message?: string };
       if (!response.ok) throw new Error(result.message || "Unable to process document action.");
       console.info(`[review] Action request completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision: action });
-      router.push(returnUrl);
-      router.refresh();
+      if (batch) {
+        setStatus(decision === "APPROVE" ? "Approved and submitted." : "Rejected and submitted.");
+      } else {
+        router.push(returnUrl);
+        router.refresh();
+      }
+      return true;
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to process document action.");
+      return false;
     } finally {
       setSaving(false);
     }
   }
 
+  // Checked for every document before anything is sent, so one missing signature stops the whole batch early.
+  function validateBatch(nextDecision: BatchDecision): string | null {
+    if (nextDecision === "APPROVE" && !allowNoSignature && !hasSignature) return "Save a signature in Account Settings before approving.";
+    if (nextDecision === "APPROVE" && placements.length === 0 && !allowNoSignature) return "Click Sign and place a signature before approving.";
+    if (nextDecision === "APPROVE" && (!pdfBytesRef.current || !pdfJsDocumentRef.current)) return "The PDF is still loading. Please try again.";
+    return null;
+  }
+
+  // Runs after every render so the batch screen always holds the latest placements and comments for this document.
+  useEffect(() => {
+    if (!batchMode || !onBatchAction) return;
+    onBatchAction(documentId, { validate: validateBatch, submit: (nextDecision) => runDecision(nextDecision, true) });
+    return () => onBatchAction(documentId, null);
+  });
+
   return (
-    <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-900 sm:px-8">
+    <main className={batchMode ? "bg-slate-100 px-4 py-4 text-slate-900 sm:px-8" : "min-h-screen bg-slate-100 px-4 py-8 text-slate-900 sm:px-8"}>
       <div className="mx-auto max-w-6xl space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        {!batchMode ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{revisionMode ? "Revise Document" : "Document Review"}</p><h1 className="mt-2 text-2xl font-semibold">{documentNumber}</h1><p className="mt-1 text-sm text-slate-600">{title}</p></div>
           <div className="flex flex-wrap gap-2"><button type="button" onClick={() => router.back()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><ArrowLeft className="h-4 w-4" />Back</button><a href={downloadUrl} download className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><Download className="h-4 w-4" />Download</a></div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        </div> : null}
+        {!batchMode ? <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           {revisionMode ? (
             <div className="space-y-4">
               {revisionComment ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p className="font-semibold">Revision requested</p><p className="mt-1">{revisionComment}</p></div> : null}
@@ -499,8 +544,8 @@ export default function DocumentReviewEditor({
             </button>
           </div>
           )}
-        </div>
-        <div className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => { setCircleMode(false); setTextBoxMode(false); addSignature(activePlacement?.pageNumber || 1); }} disabled={!hasSignature} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><PenLine className="h-4 w-4" />Sign</button><button type="button" onClick={() => { setTextBoxMode(false); setCircleMode((value) => !value); }} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${circleMode ? "border-rose-600 bg-rose-600 text-white" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`} aria-pressed={circleMode} title="Circle markup tool"><span className="h-4 w-4 rounded-full border-2 border-current" />Circle</button><button type="button" onClick={() => { setCircleMode(false); setTextBoxMode((value) => !value); }} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${textBoxMode ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`} aria-pressed={textBoxMode} title="Insert text box"><Type className="h-4 w-4" />Text Box</button>{textBoxMode || selectedTextBoxId ? <><div className="flex items-center gap-1">{["#0f172a", "#dc2626", "#2563eb", "#16a34a"].map((color) => <button key={color} type="button" aria-label={`Text color ${color}`} onClick={() => { setTextBoxColor(color); if (selectedTextBoxId) setTextBoxes((current) => current.map((item) => item.id === selectedTextBoxId ? { ...item, color } : item)); }} className={`h-7 w-7 rounded-full border-2 ${textBoxColor === color ? "border-slate-900" : "border-white shadow-sm"}`} style={{ backgroundColor: color }} />)}</div><select aria-label="Text box font size" value={selectedTextBoxId ? textBoxes.find((item) => item.id === selectedTextBoxId)?.fontSize || textBoxFontSize : textBoxFontSize} onChange={(event) => { const fontSize = Number(event.target.value); setTextBoxFontSize(fontSize); if (selectedTextBoxId) setTextBoxes((current) => current.map((item) => item.id === selectedTextBoxId ? { ...item, fontSize } : item)); }} className="rounded-lg border border-slate-300 px-2 py-2 text-sm"><option value="10">10 px</option><option value="12">12 px</option><option value="14">14 px</option><option value="16">16 px</option><option value="18">18 px</option><option value="24">24 px</option></select></> : null}<span className="text-sm text-slate-500">{textBoxMode ? "Drag a box around the text." : circleMode ? "Drag around content to highlight it." : hasSignature ? `${placements.length} signature placement${placements.length === 1 ? "" : "s"}` : "Save a signature in Account Settings first."}</span></div><div className="flex items-center gap-2"><button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.1))} className="rounded-lg border px-3 py-2 text-sm">−</button><span className="min-w-16 text-center text-sm">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-2 text-sm">+</button></div></div>
+        </div> : null}
+        {!batchMode || batchActive ? <div className={`${batchMode ? "fixed left-1/2 top-3 z-[60] w-[calc(100%-2rem)] max-w-6xl -translate-x-1/2 shadow-lg" : "sticky top-0 z-30 shadow-sm"} flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4`}><div className="flex flex-wrap items-center gap-2">{batchMode ? <div className="mr-2 min-w-48"><p className="text-xs font-semibold uppercase text-slate-500">Current document</p><p className="max-w-64 truncate text-sm font-semibold text-slate-900" title={`${documentNumber} - ${title}`}>{documentNumber} - {title}</p></div> : null}<button type="button" onClick={() => { setCircleMode(false); setTextBoxMode(false); addSignature(activePlacement?.pageNumber || 1); }} disabled={!hasSignature} className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><PenLine className="h-4 w-4" />Sign</button><button type="button" onClick={() => { setTextBoxMode(false); setCircleMode((value) => !value); }} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${circleMode ? "border-rose-600 bg-rose-600 text-white" : "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"}`} aria-pressed={circleMode} title="Circle markup tool"><span className="h-4 w-4 rounded-full border-2 border-current" />Circle</button><button type="button" onClick={() => { setCircleMode(false); setTextBoxMode((value) => !value); }} className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${textBoxMode ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`} aria-pressed={textBoxMode} title="Insert text box"><Type className="h-4 w-4" />Text Box</button>{textBoxMode || selectedTextBoxId ? <><div className="flex items-center gap-1">{["#0f172a", "#dc2626", "#2563eb", "#16a34a"].map((color) => <button key={color} type="button" aria-label={`Text color ${color}`} onClick={() => { setTextBoxColor(color); if (selectedTextBoxId) setTextBoxes((current) => current.map((item) => item.id === selectedTextBoxId ? { ...item, color } : item)); }} className={`h-7 w-7 rounded-full border-2 ${textBoxColor === color ? "border-slate-900" : "border-white shadow-sm"}`} style={{ backgroundColor: color }} />)}</div><select aria-label="Text box font size" value={selectedTextBoxId ? textBoxes.find((item) => item.id === selectedTextBoxId)?.fontSize || textBoxFontSize : textBoxFontSize} onChange={(event) => { const fontSize = Number(event.target.value); setTextBoxFontSize(fontSize); if (selectedTextBoxId) setTextBoxes((current) => current.map((item) => item.id === selectedTextBoxId ? { ...item, fontSize } : item)); }} className="rounded-lg border border-slate-300 px-2 py-2 text-sm"><option value="10">10 px</option><option value="12">12 px</option><option value="14">14 px</option><option value="16">16 px</option><option value="18">18 px</option><option value="24">24 px</option></select></> : null}<span className="text-sm text-slate-500">{textBoxMode ? "Drag a box around the text." : circleMode ? "Drag around content to highlight it." : hasSignature ? `${placements.length} signature placement${placements.length === 1 ? "" : "s"}` : "Save a signature in Account Settings first."}</span></div><div className="flex items-center gap-2">{batchMode ? <select aria-label="Action for this document" value={batchDecision} onChange={(event) => onBatchDecisionChange?.(event.target.value as BatchDecision)} disabled={batchSubmitting} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"><option value="APPROVE">Approve</option><option value="REJECT">Reject</option></select> : null}<button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.1))} className="rounded-lg border px-3 py-2 text-sm">−</button><span className="min-w-16 text-center text-sm">{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.5, value + 0.1))} className="rounded-lg border px-3 py-2 text-sm">+</button>{batchMode ? <button type="button" onClick={onBatchSubmit} disabled={saving || batchSubmitting} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving || batchSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Submit all</button> : null}</div></div> : null}
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</div> : null}{status ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">{status}</div> : null}
           <section className="space-y-5 rounded-2xl border border-slate-200 bg-slate-950 p-4 shadow-sm">
           {pages.map((page) => <div key={page.pageNumber} ref={(element) => { pageRefs.current[page.pageNumber] = element; }} className={`relative mx-auto overflow-visible bg-white shadow-2xl ${circleMode || textBoxMode ? "cursor-crosshair" : ""}`} style={{ width: `min(${page.width * zoom}px, calc(100vw - 2rem))`, aspectRatio: `${page.width} / ${page.height}` }} onPointerDown={(event) => { if (textBoxMode) startTextBox(event, page.pageNumber); else startCircle(event, page.pageNumber); }}><canvas ref={(element) => { canvasRefs.current[page.pageNumber] = element; }} className="absolute inset-0 h-full w-full" />{circles.filter((item) => item.pageNumber === page.pageNumber && item.width > 0 && item.height > 0).map((item) => <div key={item.id} className="absolute rounded-[50%] border-2 border-rose-600 bg-rose-200/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, pointerEvents: "none" }}><button type="button" aria-label="Delete circle" title="Delete circle" className="pointer-events-auto absolute -right-2 -top-7 rounded bg-rose-700 p-1 text-white" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setCircles((current) => current.filter((value) => value.id !== item.id)); }}><Trash2 className="h-3 w-3" /></button></div>)}{textBoxes.filter((item) => item.pageNumber === page.pageNumber && item.width > 0 && item.height > 0).map((item) => <div key={item.id} className={`absolute border border-slate-300 bg-white/70 ${selectedTextBoxId === item.id ? "ring-2 ring-slate-900" : ""}`} style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, touchAction: "none" }} onPointerDown={(event) => { event.stopPropagation(); setSelectedTextBoxId(item.id); }}><textarea value={item.text} onChange={(event) => setTextBoxes((current) => current.map((value) => value.id === item.id ? { ...value, text: event.target.value } : value))} placeholder="Text" className="h-full w-full resize-none border-0 bg-transparent p-1 outline-none" style={{ color: item.color, fontSize: `${item.fontSize}px` }} /><button type="button" aria-label="Remove text box" className="absolute -right-2 -top-7 rounded bg-rose-600 p-1 text-white" onPointerDown={(event) => event.stopPropagation()} onClick={() => { setSelectedTextBoxId(null); setTextBoxes((current) => current.filter((value) => value.id !== item.id)); }}><Trash2 className="h-3 w-3" /></button></div>)}{placements.filter((item) => item.pageNumber === page.pageNumber).map((item) => <div key={item.id} className="absolute border-2 border-cyan-500 bg-cyan-100/10" style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`, touchAction: "none", transform: `rotate(${item.rotation}deg)` }} onPointerDown={(event) => startDrag(event, item, "drag")}><img src={signatureUrl || ""} alt="Saved signature" className="h-full w-full select-none object-fill" draggable={false} /><button type="button" aria-label="Rotate signature" title="Rotate signature" className="absolute -left-2 -top-7 rounded bg-cyan-700 p-1 text-white" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setPlacements((current) => current.map((value) => value.id === item.id ? { ...value, rotation: (value.rotation + 90) % 360 } : value)); }}><RotateCw className="h-3 w-3" /></button><button type="button" aria-label="Resize signature" className="absolute -bottom-2 -right-2 h-5 w-5 rounded-full border-2 border-white bg-cyan-700" onPointerDown={(event) => startDrag(event, item, "resize")} /><button type="button" aria-label="Remove signature placement" className="absolute -right-2 -top-7 rounded bg-rose-600 p-1 text-white" onClick={() => setPlacements((current) => current.filter((value) => value.id !== item.id))}><Trash2 className="h-3 w-3" /></button></div>)}</div>)}

@@ -4,6 +4,7 @@ import { DocumentStatus } from "@prisma/client";
 import ApproverPendingTable from "@/components/approver-pending-table";
 import DashboardShell from "@/components/dashboard-shell";
 import { requireAuth } from "@/lib/auth/guards";
+import { userCanBulkApprove } from "@/lib/bulk-approve";
 import { getActionableDocuments } from "@/lib/document-queries";
 import { prisma } from "@/lib/prisma";
 import { getUploadTasks } from "@/lib/workflow/processes";
@@ -21,9 +22,10 @@ export default async function MyTasksPage() {
   const session = await requireAuth();
   const user = { userId: session.userId, userType: session.userType };
 
-  const [uploadTasks, reviewDocuments] = await Promise.all([
+  const [uploadTasks, reviewDocuments, canBulkApprove] = await Promise.all([
     getUploadTasks(prisma, user),
     getActionableDocuments(user, [DocumentStatus.PENDING, DocumentStatus.ON_HOLD, DocumentStatus.REVISION_REQUIRED]),
+    userCanBulkApprove(session.userId),
   ]);
 
   return (
@@ -111,6 +113,7 @@ export default async function MyTasksPage() {
         <div className="px-1 py-4">
           <ApproverPendingTable
             emptyMessage="No documents are waiting for your review."
+            allowBatch={canBulkApprove}
             documents={reviewDocuments.map((row) => ({
               id: row.id,
               documentNumber: row.documentNumber,
@@ -120,6 +123,7 @@ export default async function MyTasksPage() {
               currentVersion: row.currentVersion,
               latestComment: row.latestComment,
               uploadedAt: dateFormat.format(row.createdAt),
+              batchEligible: row.status === DocumentStatus.PENDING,
             }))}
           />
         </div>

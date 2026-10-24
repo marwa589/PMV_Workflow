@@ -19,7 +19,8 @@ export default async function AdminArchivePage({ searchParams }: any) {
       subtitle="Administrative archive"
       emptyMessage="No archived documents."
       lockedStatus="ARCHIVED"
-      table={{ showBulkActions: true, allowAdminDelete: true }}
+      showDownloadFilters
+      table={{ showBulkActions: true, allowAdminDelete: true, showDownloadTracking: true }}
     />
   );
 }

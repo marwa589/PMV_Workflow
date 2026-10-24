@@ -104,12 +104,19 @@ export async function GET() {
   const permissionCodes = await getGlobalPermissionCodes(session);
   const has = (code: string) => permissionCodes.includes(code);
 
+  // Process Runs is shown to admins, people holding a process permission anywhere, and people who started a run.
+  const canViewProcesses =
+    session.userType === USER_TYPE.ADMIN ||
+    (await prisma.userAssignment.count({ where: { userId: session.userId, role: { permissions: { some: { permission: { code: { in: ["processes.view", "processes.start"] } } } } } } })) > 0 ||
+    (await prisma.processInstance.count({ where: { startedById: session.userId } })) > 0;
+
   return NextResponse.json({
     pendingDocuments,
     pendingApprovals,
     tasks: { uploads: uploadTasks.length, reviews: reviewTasks.length },
     pendingByType,
     canUpload,
+    canViewProcesses,
     documentTypes,
     manage: {
       flows: has("flows.manage"),

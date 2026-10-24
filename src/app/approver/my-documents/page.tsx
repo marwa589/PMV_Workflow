@@ -18,7 +18,8 @@ export default async function ApproverMyDocumentsPage({ searchParams }: any) {
       title="My Documents"
       subtitle="Documents assigned to you or previously handled by you"
       emptyMessage="No documents assigned or previously handled by you."
-      table={{ showBulkActions: true, allowReview: true }}
+      showDownloadFilters
+      table={{ showBulkActions: true, allowReview: true, showDownloadTracking: true }}
     />
   );
 }

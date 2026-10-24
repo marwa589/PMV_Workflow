@@ -9,6 +9,7 @@ import { USER_TYPE } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
 import { getDocumentsForClerk } from "@/lib/document-queries";
 import { toListItem } from "@/lib/document-list";
+import { withDownloadTracking } from "@/lib/download-tracking";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export default async function ClerkDashboardPage() {
     }),
   ]);
 
-  const recentDocuments = data.documents.slice(0, 6);
+  const recentDocuments = await withDownloadTracking(data.documents.slice(0, 6), session.userId);
   const revisionRequired = data.documents.filter((doc) => doc.status === DocumentStatus.REVISION_REQUIRED).length;
 
   return (

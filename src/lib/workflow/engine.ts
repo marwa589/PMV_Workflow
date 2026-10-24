@@ -11,6 +11,8 @@ import type { NotificationKind } from "@/lib/notifications";
 import { USER_TYPE, type UserTypeCode } from "@/lib/auth/roles";
 import { resolveFlow } from "@/lib/workflow/resolve-flow";
 import { getEligibleRecipients, loadDocScope, resolveActorEligibility } from "@/lib/workflow/eligibility";
+import { getMailingListRecipients } from "@/lib/workflow/mailing-list";
+import type { MailEvent } from "@/lib/mailing-list-config";
 import { advanceProcessesForApprovedDocument, handleProcessDocumentRejected } from "@/lib/workflow/processes";
 import { WorkflowError } from "@/lib/workflow/errors";
 
@@ -138,6 +140,42 @@ async function notifyLevel(
       documentId: document.id,
     });
     effects.emailEvents.push({ recipientId: recipient.id, type: EmailEventType.APPROVAL_PENDING, documentId: document.id });
+  }
+}
+
+const MAIL_EVENT_EFFECTS: Record<MailEvent, { email: EmailEventType; notification: NotificationKind; title: string }> = {
+  APPROVED: { email: EmailEventType.WORKFLOW_APPROVED, notification: "DOCUMENT_APPROVED", title: "Document approved" },
+  REJECTED: { email: EmailEventType.WORKFLOW_REJECTED, notification: "DOCUMENT_REJECTED", title: "Document rejected" },
+  REVISION: { email: EmailEventType.WORKFLOW_REVISION_REQUESTED, notification: "DOCUMENT_REVISED", title: "Revision requested" },
+};
+
+/** Also tell everyone on the mailing list for this event (people already told about this document are skipped). */
+async function notifyMailingList(
+  tx: Tx,
+  document: LoadedDocument,
+  event: MailEvent,
+  effects: WorkflowEffects,
+  // The person who just acted (and who they acted for) already know; they are not mailed about their own action.
+  actedBy: Array<string | null | undefined>,
+) {
+  const scope = await loadDocScope(tx, document);
+  const link = await tx.processStepDocument.findFirst({
+    where: { documentId: document.id, isCurrent: true },
+    select: { processInstance: { select: { processDefinitionId: true } } },
+  });
+  const members = await getMailingListRecipients(tx, event, { ...scope, processDefinitionId: link?.processInstance.processDefinitionId ?? null });
+
+  const alreadyTold = new Set<string>([
+    ...actedBy.filter((id): id is string => Boolean(id)),
+    ...effects.notifications.filter((entry) => entry.documentId === document.id).map((entry) => entry.userId),
+    ...effects.emailEvents.filter((entry) => entry.documentId === document.id).map((entry) => entry.recipientId),
+  ]);
+  const kind = MAIL_EVENT_EFFECTS[event];
+
+  for (const member of members) {
+    if (alreadyTold.has(member.id)) continue;
+    effects.notifications.push({ userId: member.id, type: kind.notification, title: kind.title, message: label(document), documentId: document.id });
+    effects.emailEvents.push({ recipientId: member.id, type: kind.email, documentId: document.id });
   }
 }
 
@@ -344,7 +382,11 @@ export async function performWorkflowAction(
     }
   }
 
-  const eligibility = await resolveActorEligibility(tx, actor.id, step.approvers, scope);
+  // Admin users may act at any level of any document; everyone else must be named by (or hold a matching assignment for) the level.
+  const eligibility =
+    actor.userType === USER_TYPE.ADMIN
+      ? { allowed: true, onBehalfOfUserId: null }
+      : await resolveActorEligibility(tx, actor.id, step.approvers, scope);
   if (!eligibility.allowed) throw new WorkflowError("You are not an approver for the current level of this document.", 403);
   const onBehalfOfUserId = eligibility.onBehalfOfUserId;
   const now = new Date();
@@ -397,6 +439,7 @@ export async function performWorkflowAction(
     });
     notifyCreator(document, effects, "DOCUMENT_REJECTED", "Document rejected");
     effects.emailEvents.push({ recipientId: document.createdById, type: EmailEventType.WORKFLOW_REJECTED, documentId: document.id });
+    await notifyMailingList(tx, document, "REJECTED", effects, [actor.id, onBehalfOfUserId]);
     return { documentId: document.id, status: DocumentStatus.CANCELLED, currentWorkflowStep: level, effects };
   }
 
@@ -438,6 +481,7 @@ export async function performWorkflowAction(
     } else {
       await notifyLevel(tx, await loadDocument(tx, document.id), target, effects, { type: "DOCUMENT_REVISED", title: "Revision required" });
     }
+    await notifyMailingList(tx, document, "REVISION", effects, [actor.id, onBehalfOfUserId]);
     return { documentId: document.id, status: DocumentStatus.REVISION_REQUIRED, currentWorkflowStep: target, effects };
   }
 
@@ -470,6 +514,7 @@ export async function performWorkflowAction(
   });
   notifyCreator(document, effects, "DOCUMENT_APPROVED", "Document approved");
   effects.emailEvents.push({ recipientId: document.createdById, type: EmailEventType.WORKFLOW_APPROVED, documentId: document.id });
+  await notifyMailingList(tx, document, "APPROVED", effects, [actor.id, onBehalfOfUserId]);
   return { documentId: document.id, status: DocumentStatus.APPROVED, currentWorkflowStep: null, effects };
 }
 

@@ -12,6 +12,8 @@ type Props = {
   currentWorkflowStep: number | null;
   // The levels copied onto the document when it was uploaded (level 0 is the uploader step).
   steps: JourneyStep[];
+  // When the person viewing this page last downloaded the approved document (null if they have not).
+  downloadedAt?: Date | null;
 };
 
 function stepLabel(step: JourneyStep): string {
@@ -20,7 +22,7 @@ function stepLabel(step: JourneyStep): string {
 }
 
 /** Draws the document's own approval path, so it follows whatever flow the document was given. */
-export default function WorkflowJourneyChart({ status, currentWorkflowStep, steps }: Props) {
+export default function WorkflowJourneyChart({ status, currentWorkflowStep, steps, downloadedAt = null }: Props) {
   const levels = [...steps].sort((a, b) => a.levelNumber - b.levelNumber);
   const nodes = [
     ...levels.map((step) => ({ label: stepLabel(step), state: step.status })),
@@ -28,10 +30,13 @@ export default function WorkflowJourneyChart({ status, currentWorkflowStep, step
   ];
 
   const currentName = levels.find((step) => step.levelNumber === currentWorkflowStep);
+  const isDownloaded = Boolean(downloadedAt) && status === "APPROVED";
   const headline =
     status === "CANCELLED"
       ? `Rejected${currentName ? ` at ${stepLabel(currentName)}` : ""}`
-      : getDocumentStatusDisplay(status, { levelNumber: currentWorkflowStep, name: currentName?.name ?? null });
+      : isDownloaded
+        ? "Downloaded"
+        : getDocumentStatusDisplay(status, { levelNumber: currentWorkflowStep, name: currentName?.name ?? null });
 
   // How far along the line to fill: up to the last level that is done, or the current one.
   const lastReached = nodes.reduce((reached, node, index) => (node.state === "WAITING" ? reached : index), 0);

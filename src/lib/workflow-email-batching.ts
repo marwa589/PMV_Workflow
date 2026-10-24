@@ -317,6 +317,8 @@ function summaryForType(type: EmailEventType): string {
       return "approved";
     case EmailEventType.WORKFLOW_REJECTED:
       return "rejected";
+    case EmailEventType.WORKFLOW_REVISION_REQUESTED:
+      return "revision";
     case EmailEventType.PROCESS_STEP_OVERDUE:
       return "processOverdue";
     case EmailEventType.PROCESS_UPLOAD_READY:
@@ -342,6 +344,7 @@ function renderSummary(
   const lines = [
     counts.approved ? `<p>Approved documents: ${counts.approved}</p>` : "",
     counts.rejected ? `<p>Rejected documents: ${counts.rejected}</p>` : "",
+    counts.revision ? `<p>Documents sent back for revision: ${counts.revision}</p>` : "",
     counts.pending ? `<p>Pending documents: ${counts.pending}</p>` : "",
     counts.overdue ? `<p>Documents pending for more than 24 hours: ${counts.overdue}</p>` : "",
     counts.uploadReady ? `<p>Process documents ready for you to upload (see My Tasks): ${counts.uploadReady}</p>` : "",

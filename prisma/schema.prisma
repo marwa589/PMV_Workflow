@@ -82,6 +82,8 @@ model User {
   signatureOriginalName String?
   signaturePath         String?
   signatureUpdatedAt    DateTime?
+  // When true, this user may select several pending documents and review/approve them together on one screen.
+  canBulkApprove        Boolean   @default(false)
 
   userType                  UserType                       @relation(fields: [userTypeId], references: [id], onDelete: Restrict)
   assignments               UserAssignment[]
@@ -107,6 +109,7 @@ model User {
   passwordResetTokens       PasswordResetToken[]
   processInstancesStarted   ProcessInstance[]              @relation("ProcessInstancesStartedBy")
   processStepLinks          ProcessStepDocument[]          @relation("ProcessStepLinkedBy")
+  documentDownloads         DocumentDownload[]
 
   @@index([userTypeId, isActive])
 }
@@ -454,6 +457,7 @@ model Document {
   fieldValues      DocumentFieldValue[]
   deletionRequests DeletionRequest[]         @relation("DeletionRequests")
   processLinks     ProcessStepDocument[]
+  downloadRecords  DocumentDownload[]
 
   @@index([createdById])
   @@index([workflowTemplateId])
@@ -462,6 +466,21 @@ model Document {
   @@index([status, currentWorkflowStep])
   @@index([createdAt])
   @@index([receivedById])
+}
+
+// One row per user per document: when that user last downloaded the approved document.
+// (Document.downloadedAt is the old, shared flag. It is no longer read or written.)
+model DocumentDownload {
+  id           String   @id @default(cuid())
+  documentId   String
+  userId       String
+  downloadedAt DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, userId])
+  @@index([userId, downloadedAt])
 }
 
 model DocumentLineItem {
@@ -874,6 +893,7 @@ enum EmailEventType {
   APPROVAL_PENDING
   WORKFLOW_APPROVED
   WORKFLOW_REJECTED
+  WORKFLOW_REVISION_REQUESTED
   APPROVAL_OVERDUE
   PROCESS_STEP_OVERDUE
   PROCESS_UPLOAD_READY

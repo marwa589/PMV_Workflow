@@ -11,6 +11,7 @@ const userSelect = {
   name: true,
   email: true,
   isActive: true,
+  canBulkApprove: true,
   createdAt: true,
   userType: { select: { id: true, code: true, name: true } },
   _count: { select: { assignments: true } },
@@ -21,6 +22,7 @@ type UserRow = {
   name: string;
   email: string;
   isActive: boolean;
+  canBulkApprove: boolean;
   createdAt: Date;
   userType: { id: string; code: string; name: string };
   _count: { assignments: number };
@@ -32,6 +34,7 @@ function serializeUser(user: UserRow) {
     name: user.name,
     email: user.email,
     isActive: user.isActive,
+    canBulkApprove: user.canBulkApprove,
     userType: user.userType,
     assignmentCount: user._count.assignments,
     createdAt: user.createdAt.toISOString(),
@@ -119,6 +122,7 @@ export async function PATCH(request: Request) {
   }
 
   const isActive = typeof body?.isActive === "boolean" ? body.isActive : undefined;
+  const canBulkApprove = typeof body?.canBulkApprove === "boolean" ? body.canBulkApprove : undefined;
   if (isActive === false && id === auth.session.userId) {
     return NextResponse.json({ message: "You cannot deactivate your own account." }, { status: 400 });
   }
@@ -160,6 +164,7 @@ export async function PATCH(request: Request) {
         name,
         email,
         ...(isActive !== undefined ? { isActive } : {}),
+        ...(canBulkApprove !== undefined ? { canBulkApprove } : {}),
         // A new password signs the user out everywhere.
         ...(password ? { passwordHash: await hash(password, 12), sessionVersion: { increment: 1 } } : {}),
       },

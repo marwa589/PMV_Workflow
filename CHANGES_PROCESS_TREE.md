@@ -13,3 +13,5 @@ My Tasks no longer cuts off at 500 runs; run page buttons (Upload / Cancel) show
 
 Update: migration `20261022090000_process_versions`. Editing a process that already has runs now creates a new version of its tree.
 Existing and running runs keep the version they started with; new uploads follow the newest version.
+
+Update: admins can approve/reject/hold/request revision at any level of any document, and My Tasks > Document review lists everything waiting for admins (engine.ts, document-queries.ts).

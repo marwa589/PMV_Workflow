@@ -58,6 +58,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
     include: {
       createdBy: { select: { name: true, email: true } },
       receivedBy: { select: { name: true } },
+      downloadRecords: { where: { userId: session.userId }, select: { downloadedAt: true }, take: 1 },
       documentType: { select: { code: true, name: true } },
       documentSubtype: { select: { code: true, name: true } },
       project: { select: { id: true, code: true, name: true, locationId: true, location: { select: { name: true } } } },
@@ -216,6 +217,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
           status={document.status}
           currentWorkflowStep={document.currentWorkflowStep}
           steps={document.approvalSteps.map((step) => ({ levelNumber: step.levelNumber, name: step.name, status: step.status }))}
+          downloadedAt={document.downloadRecords[0]?.downloadedAt ?? null}
         />
       </div>
 

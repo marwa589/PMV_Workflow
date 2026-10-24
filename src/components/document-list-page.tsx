@@ -5,6 +5,8 @@ import PageSummaryCards from "@/components/page-summary-cards";
 import ApproverPendingTable from "@/components/approver-pending-table";
 import type { UserTypeCode } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
+import { withDownloadTracking } from "@/lib/download-tracking";
+import { userCanBulkApprove } from "@/lib/bulk-approve";
 import type { DocumentRow } from "@/lib/document-queries";
 import { applyListFilters, buildSummaryCards, describeFilters, parseListFilters, toListItem, type ListSearchParams } from "@/lib/document-list";
 import type { DocumentStatusFilterValue } from "@/lib/document-status";
@@ -18,7 +20,7 @@ type TableOptions = {
 };
 
 type Props = {
-  session: { userType: UserTypeCode; name: string };
+  session: { userId: string; userType: UserTypeCode; name: string };
   rows: DocumentRow[];
   searchParams: ListSearchParams;
   title: string;
@@ -66,8 +68,15 @@ export default async function DocumentListPage({
   const filters = parseListFilters(searchParams);
   const { documentTypes, projects } = await loadFilterOptions();
 
-  const scoped = lockedStatus ? rows.filter((row) => row.status === lockedStatus) : rows;
+  // Download state is per user, so it is only looked up for screens that show or filter on it.
+  const needsDownloadState = showDownloadFilters || Boolean(table.showDownloadTracking);
+  const trackedRows = needsDownloadState ? await withDownloadTracking(rows, session.userId) : rows;
+
+  const scoped = lockedStatus ? trackedRows.filter((row) => row.status === lockedStatus) : trackedRows;
   const filtered = applyListFilters(scoped, filters, { ignoreStatus: Boolean(lockedStatus) });
+
+  // Tick boxes on the pending table are only for users an admin allowed to approve several documents at once.
+  const allowBatch = variant === "pending" && (table.allowReview ?? true) ? await userCanBulkApprove(session.userId) : false;
 
   const filterTitle = describeFilters(filters, documentTypes);
   const pageTitle = filters.status === "REVISION_REQUIRED" && !lockedStatus ? "Revision Required" : filters.status === "CANCELLED" && !lockedStatus ? "Rejected Documents" : filterTitle || title;
@@ -99,6 +108,7 @@ export default async function DocumentListPage({
           <div className="px-1 py-4">
             <ApproverPendingTable
               allowReview={table.allowReview ?? true}
+              allowBatch={allowBatch}
               emptyMessage={emptyMessage}
               documents={filtered.map((row) => ({
                 id: row.id,

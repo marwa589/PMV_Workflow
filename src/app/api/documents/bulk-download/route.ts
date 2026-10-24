@@ -9,6 +9,7 @@ import { PDFDocument } from 'pdf-lib';
 import { getSession } from '@/lib/auth/session';
 import { buildDocumentVisibilityWhere } from '@/lib/auth/access';
 import { resolveStoredFilePath } from '@/lib/files';
+import { recordDownloads } from '@/lib/download-tracking';
 import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
@@ -99,10 +100,8 @@ export async function GET(request: Request) {
       `Compress-Archive -Path ${quotePowerShellPath(path.join(tempDir, '*'))} -DestinationPath ${quotePowerShellPath(archivePath)} -Force`,
     ]);
     const zipBuffer = await readFile(archivePath);
-    await prisma.document.updateMany({
-      where: { id: { in: includedDocumentIds }, status: DocumentStatus.APPROVED },
-      data: { downloadedAt: new Date() },
-    });
+    // Every included document is approved (see the query above); mark them downloaded for this user.
+    await recordDownloads(session.userId, includedDocumentIds);
     return new NextResponse(new Uint8Array(zipBuffer), {
       status: 200,
       headers: {

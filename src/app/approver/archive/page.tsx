@@ -19,7 +19,8 @@ export default async function ApproverArchivePage({ searchParams }: any) {
       subtitle="Archived documents"
       emptyMessage="No archived documents found."
       lockedStatus="ARCHIVED"
-      table={{ showBulkActions: true }}
+      showDownloadFilters
+      table={{ showBulkActions: true, showDownloadTracking: true }}
     />
   );
 }

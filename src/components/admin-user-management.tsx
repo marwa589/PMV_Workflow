@@ -11,6 +11,7 @@ type UserRow = {
   name: string;
   email: string;
   isActive: boolean;
+  canBulkApprove: boolean;
   userType: UserType;
   assignmentCount: number;
   createdAt: string;
@@ -84,6 +85,15 @@ export default function AdminUserManagement() {
     await load();
   }
 
+  // Switch on: this user may select several pending documents and approve them together. Off: one document at a time.
+  async function toggleBulkApprove(user: UserRow) {
+    setError(null);
+    setNotice(null);
+    const result = await callApi("/api/admin/users", "PATCH", { id: user.id, name: user.name, email: user.email, canBulkApprove: !user.canBulkApprove });
+    if (!result.ok) return setError(result.message);
+    await load();
+  }
+
   async function remove(user: UserRow) {
     if (!window.confirm(`Delete ${user.name}? This cannot be undone.`)) return;
     setError(null);
@@ -140,6 +150,7 @@ export default function AdminUserManagement() {
                   <th className="px-3 py-2 font-semibold">Type</th>
                   <th className="px-3 py-2 font-semibold">Access</th>
                   <th className="px-3 py-2 font-semibold">Status</th>
+                  <th className="px-3 py-2 font-semibold">Approve several at once</th>
                   <th className="px-3 py-2 font-semibold">Actions</th>
                 </tr>
               </thead>
@@ -155,6 +166,19 @@ export default function AdminUserManagement() {
                       </Link>
                     </td>
                     <td className="px-3 py-3"><Pill tone={user.isActive ? "green" : "amber"}>{user.isActive ? "Active" : "Deactivated"}</Pill></td>
+                    <td className="px-3 py-3">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={user.canBulkApprove}
+                        aria-label={`Allow ${user.name} to approve several documents at once`}
+                        title={user.canBulkApprove ? "On: can approve several documents at once" : "Off: must review documents one by one"}
+                        onClick={() => toggleBulkApprove(user)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${user.canBulkApprove ? "bg-cyan-600" : "bg-slate-300"}`}
+                      >
+                        <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${user.canBulkApprove ? "translate-x-5" : "translate-x-0.5"}`} />
+                      </button>
+                    </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-2">
                         <button type="button" onClick={() => startEdit(user)} className={secondaryButton}>Edit</button>

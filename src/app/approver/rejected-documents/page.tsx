@@ -18,7 +18,8 @@ export default async function ApproverRejectedDocumentsPage({ searchParams }: an
       title="Rejected Documents"
       subtitle="Documents you rejected"
       emptyMessage="No documents rejected by you yet."
-      table={{ showBulkActions: true }}
+      showDownloadFilters
+      table={{ showBulkActions: true, showDownloadTracking: true }}
     />
   );
 }
