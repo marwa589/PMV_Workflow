@@ -256,9 +256,9 @@ export async function queuePendingApprovalReminders() {
 }
 
 /**
- * A process run is stuck when its previous step's document was approved more than 24 hours ago and the
- * current step still has no document. Admins are reminded once per approved document.
- * (Replaces the old "approved Comparison waiting for an MR" reminder.)
+ * A process run is stuck when its last approved document was approved more than 24 hours ago and nobody has
+ * uploaded the next document yet (no choice under it holds a document in progress). Admins are reminded once
+ * per approved document.
  */
 export async function queueProcessStepReminders() {
   const admins = await prisma.user.findMany({
@@ -269,28 +269,28 @@ export async function queueProcessStepReminders() {
 
   const cutoff = new Date(Date.now() - REMINDER_INTERVAL_MS);
   const runs = await prisma.processInstance.findMany({
-    where: { status: ProcessStatus.IN_PROGRESS },
+    where: { status: ProcessStatus.IN_PROGRESS, currentStepId: { not: null }, currentStep: { childSteps: { some: {} } } },
     select: {
-      currentStepNumber: true,
-      processDefinition: { select: { steps: { select: { id: true, stepNumber: true } } } },
+      currentStepId: true,
+      currentStep: { select: { childSteps: { select: { delayHours: true } } } },
       stepDocuments: {
         where: { isCurrent: true },
-        select: { processStep: { select: { stepNumber: true } }, document: { select: { id: true, status: true, approvedAt: true } } },
+        select: { processStep: { select: { id: true, parentStepId: true } }, document: { select: { id: true, status: true, approvedAt: true } } },
       },
     },
   });
 
   const stalledDocumentIds = new Set<string>();
   for (const run of runs) {
-    const hasCurrentDocument = run.stepDocuments.some((link) => link.processStep.stepNumber === run.currentStepNumber);
-    if (hasCurrentDocument) continue;
+    // The next document is already in progress.
+    if (run.stepDocuments.some((link) => link.processStep.parentStepId === run.currentStepId)) continue;
 
-    const previous = run.stepDocuments
-      .filter((link) => link.processStep.stepNumber < run.currentStepNumber)
-      .sort((a, b) => b.processStep.stepNumber - a.processStep.stepNumber)[0];
-
-    if (previous && previous.document.status === DocumentStatus.APPROVED && previous.document.approvedAt && previous.document.approvedAt <= cutoff) {
-      stalledDocumentIds.add(previous.document.id);
+    const last = run.stepDocuments.find((link) => link.processStep.id === run.currentStepId);
+    if (last && last.document.status === DocumentStatus.APPROVED && last.document.approvedAt) {
+      // The run only counts as waiting from the moment its earliest choice opened (a waiting period is not a delay).
+      const smallestDelayHours = Math.min(...(run.currentStep?.childSteps.map((child) => child.delayHours) ?? [0]));
+      const openedAt = last.document.approvedAt.getTime() + smallestDelayHours * 60 * 60 * 1000;
+      if (openedAt <= cutoff.getTime()) stalledDocumentIds.add(last.document.id);
     }
   }
 
@@ -321,8 +321,12 @@ function summaryForType(type: EmailEventType): string {
       return "approved";
     case EmailEventType.WORKFLOW_REJECTED:
       return "rejected";
+    case EmailEventType.WORKFLOW_REVISION_REQUESTED:
+      return "revision";
     case EmailEventType.PROCESS_STEP_OVERDUE:
       return "processOverdue";
+    case EmailEventType.PROCESS_UPLOAD_READY:
+      return "uploadReady";
     default:
       return "updates";
   }
@@ -344,8 +348,10 @@ function renderSummary(
   const lines = [
     counts.approved ? `<p>Approved documents: ${counts.approved}</p>` : "",
     counts.rejected ? `<p>Rejected documents: ${counts.rejected}</p>` : "",
+    counts.revision ? `<p>Documents sent back for revision: ${counts.revision}</p>` : "",
     counts.pending ? `<p>Pending documents: ${counts.pending}</p>` : "",
     counts.overdue ? `<p>Documents pending for more than 24 hours: ${counts.overdue}</p>` : "",
+    counts.uploadReady ? `<p>Process documents ready for you to upload (see My Tasks): ${counts.uploadReady}</p>` : "",
     counts.processOverdue ? `<p>Process runs waiting for their next document for more than 24 hours: ${counts.processOverdue}</p>` : "",
   ].join("");
 

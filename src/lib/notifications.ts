@@ -16,7 +16,8 @@ export type NotificationKind =
   | "DOCUMENT_REVISED"
   | "DOCUMENT_DELETED"
   | "DOCUMENT_ON_HOLD"
-  | "DOCUMENT_RESUMED";
+  | "DOCUMENT_RESUMED"
+  | "PROCESS_UPLOAD_READY";
 
 type NotificationRecord = {
   id: string;

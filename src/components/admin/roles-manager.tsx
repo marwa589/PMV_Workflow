@@ -75,6 +75,7 @@ export default function RolesManager() {
               <span>
                 <span className="font-medium text-slate-900">{permission.name}</span>
                 <span className="block text-xs text-slate-500">{permission.code}</span>
+                {permission.description ? <span className="mt-0.5 block text-xs text-slate-600">{permission.description}</span> : null}
               </span>
             </label>
           ))}

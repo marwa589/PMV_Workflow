@@ -18,7 +18,8 @@ export default async function ApproverApprovedDocumentsPage({ searchParams }: an
       title="Approved Documents"
       subtitle="Documents you approved"
       emptyMessage="No documents approved by you yet."
-      table={{ showBulkActions: true }}
+      showDownloadFilters
+      table={{ showBulkActions: true, showDownloadTracking: true }}
     />
   );
 }

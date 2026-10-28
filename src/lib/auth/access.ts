@@ -153,6 +153,27 @@ export function scopeToDocumentWhere(scope: AssignmentScope): Prisma.DocumentWhe
 }
 
 /**
+ * Which documents the user may see AS reference documents: Admin all; otherwise those inside the scope of an
+ * assignment whose role has documents.view_reference. Nothing when they hold no such assignment.
+ */
+export async function buildReferenceViewWhere(
+  user: { userId: string; userType: UserTypeCode },
+  db: Db = prisma,
+): Promise<Prisma.DocumentWhereInput> {
+  if (user.userType === USER_TYPE.ADMIN) return {};
+
+  const assignments = await db.userAssignment.findMany({
+    where: { userId: user.userId, role: { permissions: { some: { permission: { code: "documents.view_reference" } } } } },
+    select: ASSIGNMENT_SCOPE_SELECT,
+  });
+  const filters = assignments
+    .map((assignment) => scopeToDocumentWhere(assignment))
+    .filter((filter): filter is Prisma.DocumentWhereInput => filter !== null);
+  // An id that can never exist keeps the "no permission" case a valid, empty filter.
+  return filters.length > 0 ? { OR: filters } : { id: "__no_reference_access__" };
+}
+
+/**
  * Which documents a user may see (PDF "Who sees what"):
  *  - Admin: everything.
  *  - Documents they created, and documents they acted on (their own history).
@@ -221,7 +242,10 @@ export async function buildDocumentVisibilityWhere(
     if (filter) clauses.push(filter);
   }
 
-  return { OR: clauses };
+  // Reference documents are hidden from everyone without documents.view_reference, even from their creator
+  // and from approvers. They are never shown in lists, search, downloads or packages.
+  const referenceView = await buildReferenceViewWhere(user, db);
+  return { AND: [{ OR: clauses }, { OR: [{ isReference: false }, referenceView] }] };
 }
 
 /** May this user open (or download / print, via permissionCode) this one document? */
@@ -266,48 +290,14 @@ export async function userHasPermissionForDocument(
 }
 
 /**
- * Which process runs a user may see: Admin sees all; otherwise runs they started, runs holding a document they
- * can see, and runs inside the scope of an assignment whose role has processes.view (process, project, location).
+ * Which process runs a user may see. Only Admin sees process runs; everyone else only sees the documents that are
+ * linked to the one they are looking at (shown on the document page), so this matches nothing for them.
  */
 export async function buildProcessVisibilityWhere(
   user: { userId: string; userType: UserTypeCode },
-  db: Db = prisma,
 ): Promise<Prisma.ProcessInstanceWhereInput> {
   if (user.userType === USER_TYPE.ADMIN) return {};
-
-  const documentVisibility = await buildDocumentVisibilityWhere(user, db);
-  const clauses: Prisma.ProcessInstanceWhereInput[] = [
-    { startedById: user.userId },
-    { stepDocuments: { some: { document: documentVisibility } } },
-  ];
-
-  const assignments = await db.userAssignment.findMany({
-    where: { userId: user.userId, role: { permissions: { some: { permission: { code: "processes.view" } } } } },
-    select: ASSIGNMENT_SCOPE_SELECT,
-  });
-
-  for (const assignment of assignments) {
-    // Company, document type and sub type scopes cannot be matched against a process run.
-    if (assignment.companyId || assignment.documentTypeId || assignment.documentSubtypeId || (assignment.documentTypeScopes?.length ?? 0) > 0) continue;
-
-    const and: Prisma.ProcessInstanceWhereInput[] = [];
-    const processIds = [
-      ...(assignment.processDefinitionId ? [assignment.processDefinitionId] : []),
-      ...(assignment.processScopes ?? []).map((scope) => scope.processDefinitionId),
-    ];
-    const projectIds = [
-      ...(assignment.projectId ? [assignment.projectId] : []),
-      ...(assignment.projectScopes ?? []).map((scope) => scope.projectId),
-    ];
-    if (processIds.length === 1) and.push({ processDefinitionId: processIds[0] });
-    else if (processIds.length > 1) and.push({ processDefinitionId: { in: processIds } });
-    if (projectIds.length === 1) and.push({ projectId: projectIds[0] });
-    else if (projectIds.length > 1) and.push({ projectId: { in: projectIds } });
-    if (assignment.locationId) and.push({ project: { locationId: assignment.locationId } });
-    clauses.push(and.length > 0 ? { AND: and } : {});
-  }
-
-  return { OR: clauses };
+  return { id: { in: [] } };
 }
 
 /**

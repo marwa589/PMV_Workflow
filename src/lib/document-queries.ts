@@ -36,6 +36,7 @@ const documentListSelect = {
     select: {
       levelNumber: true,
       name: true,
+      signatureRequired: true,
       approvers: {
         select: {
           approverType: true,
@@ -60,17 +61,23 @@ const documentListSelect = {
       processInstance: {
         select: {
           status: true,
-          currentStepNumber: true,
+          currentStepId: true,
           processDefinition: {
             select: {
               steps: {
                 select: {
-                  stepNumber: true,
+                  id: true,
+                  parentStepId: true,
+                  delayHours: true,
                   documentType: { select: { code: true } },
                   documentSubtype: { select: { code: true } },
                 },
               },
             },
+          },
+          stepDocuments: {
+            where: { isCurrent: true },
+            select: { processStepId: true, isCurrent: true, document: { select: { status: true, approvedAt: true } } },
           },
         },
       },
@@ -92,6 +99,8 @@ export type DocumentRow = {
   currentVersion: number;
   currentWorkflowStep: number | null;
   currentLevelName: string | null;
+  // Whether the level the document waits at needs a signature to approve (flow setting).
+  signatureRequired: boolean;
   // When the current level started waiting (used for aging).
   waitingSince: Date | null;
   createdAt: Date;
@@ -144,6 +153,7 @@ export function toDocumentRow(document: RawDocument): DocumentRow {
     currentVersion: document.currentVersion,
     currentWorkflowStep: levelNumber,
     currentLevelName: currentStep?.name ?? null,
+    signatureRequired: currentStep?.signatureRequired ?? true,
     waitingSince: document.currentApproverAssignedAt,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
@@ -158,7 +168,7 @@ export function toDocumentRow(document: RawDocument): DocumentRow {
       : null,
     processStatus: processInstance?.status ?? null,
     processStatusLabel: processInstance
-      ? getProcessStatusLabel(processInstance.status, processInstance.currentStepNumber, processInstance.processDefinition.steps)
+      ? getProcessStatusLabel(processInstance, processInstance.processDefinition.steps, processInstance.stepDocuments)
       : null,
   };
 }
@@ -202,6 +212,8 @@ export async function getActionableDocuments(
     .filter((document) => {
       const level = document.currentWorkflowStep;
       if (level === null) return false;
+      // Admin users see everything waiting at any level.
+      if (user.userType === USER_TYPE.ADMIN) return true;
       if (
         document.status === DocumentStatus.PENDING &&
         document.approvals[0]?.action === ApprovalActionType.RESUBMITTED &&

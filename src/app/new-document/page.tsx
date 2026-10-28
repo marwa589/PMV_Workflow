@@ -1,14 +1,14 @@
 // src/app/new-document/page.tsx
-import { ProcessStatus } from "@prisma/client";
 import { redirect } from "next/navigation";
 import DashboardShell from "@/components/dashboard-shell";
 import NewDocumentForm, { type UploadDocumentType, type UploadProcessContext } from "@/components/new-document-form";
 import { requireAuth } from "@/lib/auth/guards";
-import { buildProcessVisibilityWhere } from "@/lib/auth/access";
 import { getDefaultRouteForRole } from "@/lib/auth/roles";
 import { optionValues } from "@/lib/document-fields";
 import { prisma } from "@/lib/prisma";
 import { canUserUploadAnything } from "@/lib/workflow/eligibility";
+import { getRootReferenceConfigs, getTaskOnlyChecker, getUploadTasks } from "@/lib/workflow/processes";
+import { resolveFlow } from "@/lib/workflow/resolve-flow";
 
 export const dynamic = "force-dynamic";
 
@@ -23,36 +23,52 @@ export default async function NewDocumentPage({ searchParams }: { searchParams?:
   const params = (await searchParams) ?? {};
   const processInstanceId = typeof params.processInstanceId === "string" ? params.processInstanceId : "";
 
-  // A running process retains its configured step even if its type, subtype, or project is later deactivated.
+  // The next document of a running process: only the choices this person may upload are offered. They come from
+  // the same list as My Tasks, so a run that is not waiting for an upload (or not for this person) shows nothing here.
   let process: UploadProcessContext | null = null;
   if (processInstanceId) {
-    const visibility = await buildProcessVisibilityWhere(session);
-    const run = await prisma.processInstance.findFirst({
-      where: { AND: [{ id: processInstanceId, status: ProcessStatus.IN_PROGRESS }, visibility] },
-      select: {
-        id: true,
-        reference: true,
-        projectId: true,
-        currentStepNumber: true,
-        processDefinition: { select: { name: true, steps: { select: { stepNumber: true, name: true, documentTypeId: true, documentSubtypeId: true } } } },
-      },
-    });
-    const step = run?.processDefinition.steps.find((candidate) => candidate.stepNumber === run.currentStepNumber);
-    if (run && step) {
-      process = {
-        instanceId: run.id,
-        label: `${run.processDefinition.name}${run.reference ? ` - ${run.reference}` : ""}`,
-        stepName: step.name,
-        documentTypeId: step.documentTypeId,
-        documentSubtypeId: step.documentSubtypeId,
-        projectId: run.projectId,
-      };
-    }
+    const tasks = await getUploadTasks(prisma, { userId: session.userId, userType: session.userType });
+    const task = tasks.find((candidate) => candidate.runId === processInstanceId);
+    if (!task) redirect("/tasks");
+    const run = await prisma.processInstance.findUnique({ where: { id: processInstanceId }, select: { projectId: true } });
+    process = {
+      instanceId: task.runId,
+      label: `${task.processName}${task.reference ? ` - ${task.reference}` : ""}`,
+      projectId: run?.projectId ?? null,
+      options: task.options,
+    };
   }
 
-  const [types, projects] = await Promise.all([
+  // Reference documents: the types a step may ask for, and whether a NEW file of that type would need approval
+  // (it cannot be uploaded as a reference then; an approved document must be picked instead).
+  const rootReferences = process ? [] : await getRootReferenceConfigs(prisma);
+  const referenceScopes = [
+    ...rootReferences.map((config) => ({ typeId: config.referenceDocumentTypeId, subtypeId: config.referenceDocumentSubtypeId })),
+    ...(process ? process.options.flatMap((option) => (option.referenceDocumentTypeId ? [{ typeId: option.referenceDocumentTypeId, subtypeId: option.referenceDocumentSubtypeId }] : [])) : []),
+  ];
+  const referenceTypeRows = referenceScopes.length > 0
+    ? await prisma.documentType.findMany({
+        where: { id: { in: [...new Set(referenceScopes.map((scope) => scope.typeId))] } },
+        select: { id: true, name: true, subtypes: { select: { id: true, name: true }, orderBy: { name: "asc" } } },
+      })
+    : [];
+  const referenceTypes = await Promise.all(
+    referenceTypeRows.map(async (type) => {
+      const probes = [null, ...type.subtypes.map((subtype) => subtype.id)];
+      let requiresApproval = false;
+      for (const subtypeId of probes) {
+        const flow = await resolveFlow(prisma, { documentTypeId: type.id, documentSubtypeId: subtypeId, projectId: process?.projectId ?? null });
+        if (flow.kind === "flow" && flow.template.steps.some((step) => step.stepNumber > 0)) requiresApproval = true;
+      }
+      return { id: type.id, name: type.name, subtypes: type.subtypes, requiresApproval };
+    }),
+  );
+
+  const optionTypeIds = process ? process.options.map((option) => option.documentTypeId) : [];
+  const [types, projects, isTaskOnly] = await Promise.all([
     prisma.documentType.findMany({
-      where: process ? { OR: [{ isActive: true }, { id: process.documentTypeId }] } : { isActive: true },
+      // A running process keeps its configured documents even if their type or sub type is later deactivated.
+      where: process ? { id: { in: optionTypeIds } } : { isActive: true },
       orderBy: { name: "asc" },
       select: {
         id: true,
@@ -76,20 +92,32 @@ export default async function NewDocumentPage({ searchParams }: { searchParams?:
       orderBy: { code: "asc" },
       select: { id: true, code: true, name: true },
     }),
+    getTaskOnlyChecker(prisma),
   ]);
 
-  const documentTypes: UploadDocumentType[] = types.map((type) => ({
-    id: type.id,
-    code: type.code,
-    name: type.name,
-    supportsLineItems: type.supportsLineItems,
-    subtypes: type.subtypes,
-    fields: type.fieldDefinitions.map((field) => ({ ...field, options: optionValues(field.options) })),
-  }));
+  // Outside a process, types / sub types that only exist as a LATER document of a process tree are not offered here:
+  // they are uploaded from My Tasks. Roots (which start a process) and documents in no tree stay available.
+  const documentTypes: UploadDocumentType[] = types.flatMap((type) => {
+    const subtypes = process
+      ? type.subtypes
+      : type.subtypes.filter((subtype) => !isTaskOnly({ documentTypeId: type.id, documentSubtypeId: subtype.id }));
+    const offered = process || (type.subtypes.length > 0 ? subtypes.length > 0 : !isTaskOnly({ documentTypeId: type.id, documentSubtypeId: null }));
+    if (!offered) return [];
+    return [
+      {
+        id: type.id,
+        code: type.code,
+        name: type.name,
+        supportsLineItems: type.supportsLineItems,
+        subtypes,
+        fields: type.fieldDefinitions.map((field) => ({ ...field, options: optionValues(field.options) })),
+      },
+    ];
+  });
 
   return (
     <DashboardShell role={session.userType} userName={session.name} title="New Document" subtitle="Upload and submit a document to start workflow">
-      <NewDocumentForm documentTypes={documentTypes} projects={projects} defaultRedirectPath={getDefaultRouteForRole(session.userType)} process={process} />
+      <NewDocumentForm documentTypes={documentTypes} projects={projects} defaultRedirectPath={getDefaultRouteForRole(session.userType)} process={process} rootReferences={rootReferences} referenceTypes={referenceTypes} />
     </DashboardShell>
   );
 }

@@ -5,6 +5,7 @@ import {
   queueProcessStepReminders,
   queuePendingApprovalReminders,
 } from "@/lib/workflow-email-batching";
+import { notifyUploadsThatJustOpened } from "@/lib/workflow/processes";
 
 export const runtime = "nodejs";
 
@@ -17,11 +18,14 @@ export async function POST(request: Request) {
   }
 
   const queuedApprovalReminders = await queuePendingApprovalReminders();
+  // A waiting period between two process documents may have ended: tell the people who can now upload.
+  const openedUploads = await notifyUploadsThatJustOpened();
   const queuedProcessReminders = await queueProcessStepReminders();
   const sentBatches = await flushWorkflowEmailBatches();
 
   return NextResponse.json({
     queuedApprovalReminders,
+    openedUploads,
     queuedProcessReminders,
     sentBatches,
   });

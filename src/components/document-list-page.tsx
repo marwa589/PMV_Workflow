@@ -2,10 +2,14 @@ import DashboardShell from "@/components/dashboard-shell";
 import DocumentListTable from "@/components/document-list-table";
 import DocumentStatusFilter from "@/components/document-status-filter";
 import PageSummaryCards from "@/components/page-summary-cards";
+import { USER_TYPE } from "@/lib/auth/roles";
 import ApproverPendingTable from "@/components/approver-pending-table";
 import type { UserTypeCode } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
-import type { DocumentRow } from "@/lib/document-queries";
+import { withDownloadTracking } from "@/lib/download-tracking";
+import { userCanBulkApprove } from "@/lib/bulk-approve";
+import { getActionableDocuments, type DocumentRow } from "@/lib/document-queries";
+import { DocumentStatus } from "@prisma/client";
 import { applyListFilters, buildSummaryCards, describeFilters, parseListFilters, toListItem, type ListSearchParams } from "@/lib/document-list";
 import type { DocumentStatusFilterValue } from "@/lib/document-status";
 
@@ -15,10 +19,11 @@ type TableOptions = {
   allowAdminDelete?: boolean;
   allowReview?: boolean;
   showDownloadTracking?: boolean;
+  allowBatchReview?: boolean;
 };
 
 type Props = {
-  session: { userType: UserTypeCode; name: string };
+  session: { userId: string; userType: UserTypeCode; name: string };
   rows: DocumentRow[];
   searchParams: ListSearchParams;
   title: string;
@@ -66,8 +71,22 @@ export default async function DocumentListPage({
   const filters = parseListFilters(searchParams);
   const { documentTypes, projects } = await loadFilterOptions();
 
-  const scoped = lockedStatus ? rows.filter((row) => row.status === lockedStatus) : rows;
+  // Download state is per user, so it is only looked up for screens that show or filter on it.
+  const needsDownloadState = showDownloadFilters || Boolean(table.showDownloadTracking);
+  const trackedRows = needsDownloadState ? await withDownloadTracking(rows, session.userId) : rows;
+
+  const scoped = lockedStatus ? trackedRows.filter((row) => row.status === lockedStatus) : trackedRows;
   const filtered = applyListFilters(scoped, filters, { ignoreStatus: Boolean(lockedStatus) });
+
+  // Tick boxes on the pending table are only for users an admin allowed to approve several documents at once.
+  const allowBatch = variant === "pending" && (table.allowReview ?? true) ? await userCanBulkApprove(session.userId) : false;
+
+  // "Review selected" on the list: only for users allowed to approve several at once. A document can be reviewed
+  // that way only while it is pending for THIS user (the same rule the review page applies).
+  const batchReview = variant === "list" && table.allowBatchReview ? await userCanBulkApprove(session.userId) : false;
+  const batchEligibleIds = batchReview
+    ? new Set((await getActionableDocuments({ userId: session.userId, userType: session.userType }, [DocumentStatus.PENDING])).map((row) => row.id))
+    : null;
 
   const filterTitle = describeFilters(filters, documentTypes);
   const pageTitle = filters.status === "REVISION_REQUIRED" && !lockedStatus ? "Revision Required" : filters.status === "CANCELLED" && !lockedStatus ? "Rejected Documents" : filterTitle || title;
@@ -89,6 +108,7 @@ export default async function DocumentListPage({
             downloadStatus={filters.downloadStatus}
             approvalFrom={filters.approvalFrom}
             approvalTo={filters.approvalTo}
+            search={filters.search}
             showDownloadFilters={showDownloadFilters}
             showStatusFilter={!lockedStatus && variant !== "pending"}
             documentTypes={documentTypes}
@@ -99,6 +119,8 @@ export default async function DocumentListPage({
           <div className="px-1 py-4">
             <ApproverPendingTable
               allowReview={table.allowReview ?? true}
+              allowBatch={allowBatch}
+              showVersion={session.userType === USER_TYPE.ADMIN}
               emptyMessage={emptyMessage}
               documents={filtered.map((row) => ({
                 id: row.id,
@@ -113,7 +135,13 @@ export default async function DocumentListPage({
             />
           </div>
         ) : (
-          <DocumentListTable documents={filtered.map(toListItem)} emptyMessage={emptyMessage} {...table} />
+          <DocumentListTable
+            documents={filtered.map((row) => ({ ...toListItem(row), batchEligible: batchEligibleIds ? batchEligibleIds.has(row.id) : false }))}
+            emptyMessage={emptyMessage}
+            {...table}
+            allowBatchReview={batchReview}
+            showAdminColumns={session.userType === USER_TYPE.ADMIN}
+          />
         )}
       </section>
     </DashboardShell>

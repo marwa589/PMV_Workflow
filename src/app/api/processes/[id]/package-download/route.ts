@@ -6,6 +6,7 @@ import { PDFDocument } from "pdf-lib";
 import { getSession } from "@/lib/auth/session";
 import { buildDocumentVisibilityWhere, buildProcessVisibilityWhere } from "@/lib/auth/access";
 import { resolveStoredFilePath } from "@/lib/files";
+import { recordDownloads } from "@/lib/download-tracking";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -51,7 +52,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ message: "No approved documents are available to download for this run." }, { status: 404 });
   }
 
-  await prisma.document.updateMany({ where: { id: { in: includedIds }, status: DocumentStatus.APPROVED }, data: { downloadedAt: new Date() } });
+  // Every included document is approved (see the query above); mark them downloaded for this user.
+  await recordDownloads(session.userId, includedIds);
 
   const safeName = `${run.processDefinition.name}${run.reference ? `-${run.reference}` : ""}`.replace(/[^A-Za-z0-9._-]+/g, "_");
   return new NextResponse(new Uint8Array(await merged.save()), {

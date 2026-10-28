@@ -7,7 +7,7 @@ import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButt
 type UserOption = { id: string; name: string; email: string; userType: { code: string; name: string } };
 type TypeOption = { id: string; code: string; name: string };
 type Entry = { approverType: "USER" | "USER_TYPE"; userId: string | null; userTypeId: string | null; userName?: string | null; userTypeName?: string | null };
-type Step = { stepNumber: number; name: string; approvers: Entry[] };
+type Step = { stepNumber: number; name: string; signatureRequired: boolean; approvers: Entry[] };
 type Flow = {
   id: string;
   code: string;
@@ -16,7 +16,7 @@ type Flow = {
   isActive: boolean;
   assignmentCount: number;
   documentCount: number;
-  steps: Array<{ id: string; stepNumber: number; name: string | null; approvers: Array<Entry & { id: string }> }>;
+  steps: Array<{ id: string; stepNumber: number; name: string | null; signatureRequired: boolean; approvers: Array<Entry & { id: string }> }>;
 };
 
 const MAX_LEVEL = 10;
@@ -29,8 +29,8 @@ function newDraft() {
     description: "",
     isActive: true,
     steps: [
-      { stepNumber: 0, name: "Uploader", approvers: [] },
-      { stepNumber: 1, name: "", approvers: [] },
+      { stepNumber: 0, name: "Uploader", signatureRequired: true, approvers: [] },
+      { stepNumber: 1, name: "", signatureRequired: true, approvers: [] },
     ] as Step[],
   };
 }
@@ -96,6 +96,7 @@ export default function FlowsManager() {
       steps: flow.steps.map((step) => ({
         stepNumber: step.stepNumber,
         name: step.name ?? "",
+        signatureRequired: step.signatureRequired,
         approvers: step.approvers.map((entry) => ({ approverType: entry.approverType, userId: entry.userId, userTypeId: entry.userTypeId, userName: entry.userName, userTypeName: entry.userTypeName })),
       })),
     });
@@ -117,6 +118,7 @@ export default function FlowsManager() {
       steps: draft.steps.map((step) => ({
         stepNumber: step.stepNumber,
         name: step.name,
+        signatureRequired: step.signatureRequired,
         approvers: step.approvers.map((entry) => ({ approverType: entry.approverType, userId: entry.userId ?? undefined, userTypeId: entry.userTypeId ?? undefined })),
       })),
     };
@@ -187,6 +189,23 @@ export default function FlowsManager() {
                   ) : null}
                 </div>
 
+                {step.stepNumber > 0 ? (
+                  <div className="mt-3 flex items-center gap-3">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={step.signatureRequired}
+                      aria-label={`Signature required at level ${step.stepNumber}`}
+                      onClick={() => updateStep(step.stepNumber, { signatureRequired: !step.signatureRequired })}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${step.signatureRequired ? "bg-cyan-600" : "bg-slate-300"}`}
+                    >
+                      <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${step.signatureRequired ? "translate-x-5" : "translate-x-0.5"}`} />
+                    </button>
+                    <span className="text-sm text-slate-700">Signature required</span>
+                    <span className="text-xs text-slate-500">{step.signatureRequired ? "The approver must place a signature to approve." : "The approver can approve without a signature."}</span>
+                  </div>
+                ) : null}
+
                 <div className="mt-3 flex flex-wrap gap-2">
                   {step.approvers.length === 0 ? <span className="text-xs text-slate-500">Nobody yet. Add at least one user or user type.</span> : null}
                   {step.approvers.map((entry, index) => (
@@ -219,7 +238,7 @@ export default function FlowsManager() {
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
-          <button type="button" disabled={lastLevel >= MAX_LEVEL} className={secondaryButton} onClick={() => setDraft({ ...draft, steps: [...draft.steps, { stepNumber: lastLevel + 1, name: "", approvers: [] }] })}>
+          <button type="button" disabled={lastLevel >= MAX_LEVEL} className={secondaryButton} onClick={() => setDraft({ ...draft, steps: [...draft.steps, { stepNumber: lastLevel + 1, name: "", signatureRequired: true, approvers: [] }] })}>
             Add level {lastLevel + 1}
           </button>
           <button type="button" className={primaryButton} disabled={saving} onClick={save}>{saving ? "Saving..." : draft.id ? "Save flow" : "Create flow"}</button>
@@ -251,6 +270,7 @@ export default function FlowsManager() {
                   <li key={step.id}>
                     <span className="font-medium text-slate-900">{step.stepNumber === 0 ? "Uploader" : `Level ${step.stepNumber}${step.name ? ` · ${step.name}` : ""}`}:</span>{" "}
                     {step.approvers.map((entry) => entryLabel(entry, users, types)).join(" or ")}
+                    {step.stepNumber > 0 && !step.signatureRequired ? <span className="ml-2 text-xs text-amber-700">no signature required</span> : null}
                   </li>
                 ))}
               </ol>

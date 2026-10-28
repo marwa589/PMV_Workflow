@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { getActionableDocuments } from "@/lib/document-queries";
 import { buildDocumentVisibilityWhere, getGlobalPermissionCodes } from "@/lib/auth/access";
 import { canUserUploadAnything } from "@/lib/workflow/eligibility";
+import { getUploadTasks } from "@/lib/workflow/processes";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,7 +26,7 @@ export async function GET() {
   const session = await getSession();
   if (!session) {
     return NextResponse.json(
-      { pendingDocuments: 0, pendingApprovals: 0, pendingByType: [], canUpload: false, documentTypes: [], manage: {} },
+      { pendingDocuments: 0, pendingApprovals: 0, tasks: { uploads: 0, reviews: 0 }, pendingByType: [], canUpload: false, documentTypes: [], manage: {} },
       { status: 401 },
     );
   }
@@ -92,16 +93,27 @@ export async function GET() {
         ? 0
         : (await getActionableDocuments(session, [DocumentStatus.PENDING])).length;
 
+  // My Tasks: documents to upload (next document of a running process) and documents to review.
+  const [uploadTasks, reviewTasks] = await Promise.all([
+    getUploadTasks(prisma, session),
+    getActionableDocuments(session, [DocumentStatus.PENDING, DocumentStatus.ON_HOLD, DocumentStatus.REVISION_REQUIRED]),
+  ]);
+
   const canUpload = await canUserUploadAnything(prisma, { id: session.userId, userType: session.userType });
 
   const permissionCodes = await getGlobalPermissionCodes(session);
   const has = (code: string) => permissionCodes.includes(code);
 
+  // Process Runs is only for admins; everyone else sees linked documents on the document page.
+  const canViewProcesses = session.userType === USER_TYPE.ADMIN;
+
   return NextResponse.json({
     pendingDocuments,
     pendingApprovals,
+    tasks: { uploads: uploadTasks.length, reviews: reviewTasks.length },
     pendingByType,
     canUpload,
+    canViewProcesses,
     documentTypes,
     manage: {
       flows: has("flows.manage"),

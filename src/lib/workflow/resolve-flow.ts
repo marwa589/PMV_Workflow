@@ -18,7 +18,7 @@ export type ResolvedFlow =
         id: string;
         code: string;
         name: string;
-        steps: Array<{ stepNumber: number; name: string | null; approvers: FlowStepEntry[] }>;
+        steps: Array<{ stepNumber: number; name: string | null; signatureRequired: boolean; approvers: FlowStepEntry[] }>;
       };
     };
 
@@ -65,6 +65,7 @@ export async function resolveFlow(
         select: {
           stepNumber: true,
           name: true,
+          signatureRequired: true,
           approvers: { select: { approverType: true, userId: true, userTypeId: true } },
         },
       },

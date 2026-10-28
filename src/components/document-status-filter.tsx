@@ -16,6 +16,15 @@ type Props = {
   approvalFrom?: string;
   approvalTo?: string;
   showDownloadFilters?: boolean;
+  // The approval date range only makes sense for approved documents; defaults to following showDownloadFilters.
+  showApprovalDateFilters?: boolean;
+  // Search box inside the filter bar (type, number, title, project, approver...). The page applies it.
+  showSearch?: boolean;
+  search?: string;
+  // When one page holds several filter bars, each bar names its fields with its own prefix (e.g. "rv_status").
+  fieldPrefix?: string;
+  // Other query parameters to keep when this bar is submitted (e.g. the other bar's filters).
+  preserve?: Record<string, string>;
   showDocumentTypeFilter?: boolean;
   showProjectFilter?: boolean;
   showStatusFilter?: boolean;
@@ -38,6 +47,11 @@ export default function DocumentStatusFilter({
   approvalFrom = "",
   approvalTo = "",
   showDownloadFilters = false,
+  showApprovalDateFilters,
+  showSearch = true,
+  search = "",
+  fieldPrefix = "",
+  preserve = {},
   showDocumentTypeFilter = true,
   showProjectFilter = true,
   showStatusFilter = true,
@@ -46,13 +60,29 @@ export default function DocumentStatusFilter({
   projects = [],
 }: Props) {
   const selectedType = documentTypes.find((type) => type.code === documentType);
+  const showDates = showApprovalDateFilters ?? showDownloadFilters;
+  const n = (name: string) => `${fieldPrefix}${name}`;
 
   return (
-    <form method="get" className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <form method="get" className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+      {Object.entries(preserve).map(([key, val]) => (val ? <input key={key} type="hidden" name={key} value={val} /> : null))}
+      {showSearch ? (
+        <div className="min-w-0 flex-1 basis-56">
+          <label htmlFor={n("search")} className={labelClass}>Search</label>
+          <input
+            id={n("search")}
+            type="search"
+            name={n("search")}
+            defaultValue={search}
+            placeholder="Number, title, project, approver..."
+            className={selectClass}
+          />
+        </div>
+      ) : null}
       {showDocumentTypeFilter ? (
         <div className="min-w-0 flex-1">
-          <label htmlFor="document-type" className={labelClass}>Document Type</label>
-          <select id="document-type" name="documentType" defaultValue={documentType} className={selectClass}>
+          <label htmlFor={n("document-type")} className={labelClass}>Document Type</label>
+          <select id={n("document-type")} name={n("documentType")} defaultValue={documentType} className={selectClass}>
             <option value="">All</option>
             {documentTypes.map((type) => (
               <option key={type.code} value={type.code}>{type.name}</option>
@@ -60,13 +90,13 @@ export default function DocumentStatusFilter({
           </select>
         </div>
       ) : documentType ? (
-        <input type="hidden" name="documentType" value={documentType} />
+        <input type="hidden" name={n("documentType")} value={documentType} />
       ) : null}
 
       {selectedType && selectedType.subtypes.length > 0 ? (
         <div className="min-w-0 flex-1">
-          <label htmlFor="document-subtype" className={labelClass}>Sub Type</label>
-          <select id="document-subtype" name="documentSubtype" defaultValue={documentSubtype} className={selectClass}>
+          <label htmlFor={n("document-subtype")} className={labelClass}>Sub Type</label>
+          <select id={n("document-subtype")} name={n("documentSubtype")} defaultValue={documentSubtype} className={selectClass}>
             <option value="">All sub types</option>
             {selectedType.subtypes.map((subtype) => (
               <option key={subtype.code} value={subtype.code}>{subtype.name}</option>
@@ -77,8 +107,8 @@ export default function DocumentStatusFilter({
 
       {showProjectFilter && projects.length > 0 ? (
         <div className="min-w-0 flex-1">
-          <label htmlFor="project" className={labelClass}>Project</label>
-          <select id="project" name="project" defaultValue={project} className={selectClass}>
+          <label htmlFor={n("project")} className={labelClass}>Project</label>
+          <select id={n("project")} name={n("project")} defaultValue={project} className={selectClass}>
             <option value="">All projects</option>
             {projects.map((item) => (
               <option key={item.id} value={item.id}>{item.code} - {item.name}</option>
@@ -88,22 +118,24 @@ export default function DocumentStatusFilter({
       ) : null}
 
       {showDownloadFilters ? (
+        <div className="min-w-0 flex-1">
+          <label htmlFor={n("download-status")} className={labelClass}>Download Status</label>
+          <select id={n("download-status")} name={n("downloadStatus")} defaultValue={downloadStatus} className={selectClass}>
+            <option value="">All</option>
+            <option value="DOWNLOADED">Downloaded</option>
+            <option value="NOT_DOWNLOADED">Not Downloaded</option>
+          </select>
+        </div>
+      ) : null}
+      {showDates ? (
         <>
           <div className="min-w-0 flex-1">
-            <label htmlFor="download-status" className={labelClass}>Download Status</label>
-            <select id="download-status" name="downloadStatus" defaultValue={downloadStatus} className={selectClass}>
-              <option value="">All</option>
-              <option value="DOWNLOADED">Downloaded</option>
-              <option value="NOT_DOWNLOADED">Not Downloaded</option>
-            </select>
+            <label htmlFor={n("approval-from")} className={labelClass}>Approval Date/Time From</label>
+            <input id={n("approval-from")} type="datetime-local" name={n("approvalFrom")} defaultValue={approvalFrom} className={selectClass} />
           </div>
           <div className="min-w-0 flex-1">
-            <label htmlFor="approval-from" className={labelClass}>Approval Date/Time From</label>
-            <input id="approval-from" type="datetime-local" name="approvalFrom" defaultValue={approvalFrom} className={selectClass} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <label htmlFor="approval-to" className={labelClass}>Approval Date/Time To</label>
-            <input id="approval-to" type="datetime-local" name="approvalTo" defaultValue={approvalTo} className={selectClass} />
+            <label htmlFor={n("approval-to")} className={labelClass}>Approval Date/Time To</label>
+            <input id={n("approval-to")} type="datetime-local" name={n("approvalTo")} defaultValue={approvalTo} className={selectClass} />
           </div>
         </>
       ) : null}
@@ -111,7 +143,7 @@ export default function DocumentStatusFilter({
       {showStatusFilter ? (
         <div className="min-w-0 flex-1">
           <label className={labelClass}>{title}</label>
-          <select name="status" defaultValue={value} className={selectClass}>
+          <select name={n("status")} defaultValue={value} className={selectClass}>
             <option value="">All</option>
             {statusFilterOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>

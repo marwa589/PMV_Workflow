@@ -3,7 +3,6 @@ import { DocumentStatus } from "@prisma/client";
 import { notFound, redirect } from "next/navigation";
 import DocumentReviewEditor from "@/components/document-review-editor";
 import { requireAuth } from "@/lib/auth/guards";
-import { userHasPermissionForDocument } from "@/lib/auth/access";
 import { USER_TYPE } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
 import { createEligibilityChecker } from "@/lib/workflow/eligibility";
@@ -31,7 +30,7 @@ export default async function ApproverDocumentReviewPage({ params }: { params: P
       project: { select: { locationId: true } },
       approvalSteps: {
         orderBy: { levelNumber: "asc" },
-        select: { levelNumber: true, name: true, approvers: { select: { approverType: true, userId: true, userTypeId: true } } },
+        select: { levelNumber: true, name: true, signatureRequired: true, approvers: { select: { approverType: true, userId: true, userTypeId: true } } },
       },
     },
   });
@@ -74,23 +73,12 @@ export default async function ApproverDocumentReviewPage({ params }: { params: P
         }));
   if (!allowed) redirect("/unauthorized");
 
-  const returnUrl = isRevision
-    ? session.userType === USER_TYPE.CLERK
-      ? "/clerk/my-documents?status=REVISION_REQUIRED"
-      : session.userType === USER_TYPE.ADMIN
-        ? "/admin/all-documents?status=REVISION_REQUIRED"
-        : "/approver/my-documents?status=REVISION_REQUIRED"
-    : session.userType === USER_TYPE.CLERK
-      ? "/clerk/my-documents"
-      : session.userType === USER_TYPE.ADMIN
-        ? "/admin/pending-approvals"
-        : "/approver/pending-approvals";
+  const returnUrl = "/tasks";
 
   const user = await prisma.user.findUnique({ where: { id: session.userId }, select: { signaturePath: true } });
 
-  // Approving without a signature is a permission (documents.approve_without_signature), scoped like any other,
-  // so it can be limited to a document type or location instead of being tied to named people.
-  const allowNoSignature = await userHasPermissionForDocument(session, "documents.approve_without_signature", document);
+  // Whether a signature is needed is a setting of the flow level this document is waiting at ("Signature required").
+  const allowNoSignature = !step.signatureRequired;
 
   // The document can go back to any earlier step, named from its own flow (level 0 is the uploader).
   const revisionTargets = document.approvalSteps

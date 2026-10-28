@@ -10,7 +10,7 @@ const roleSelect = {
   name: true,
   description: true,
   createdAt: true,
-  permissions: { select: { permission: { select: { id: true, code: true, name: true } } } },
+  permissions: { select: { permission: { select: { id: true, code: true, name: true, description: true } } } },
   _count: { select: { assignments: true } },
 } as const;
 
@@ -19,7 +19,7 @@ type RoleRow = {
   name: string;
   description: string | null;
   createdAt: Date;
-  permissions: Array<{ permission: { id: string; code: string; name: string } }>;
+  permissions: Array<{ permission: { id: string; code: string; name: string; description: string | null } }>;
   _count: { assignments: number };
 };
 

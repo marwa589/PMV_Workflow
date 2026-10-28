@@ -37,10 +37,11 @@ ALTER TABLE "DocumentApprovalStepApprover" ADD CONSTRAINT "DocumentApprovalStepA
   CHECK (("approverType" = 'USER' AND "userId" IS NOT NULL AND "userTypeId" IS NULL)
       OR ("approverType" = 'USER_TYPE' AND "userTypeId" IS NOT NULL AND "userId" IS NULL));
 
--- Level / step ranges from the PDF: level 0 = uploader, 1 to 10 = approvals; process steps 1 to 10.
+-- Level / step ranges from the PDF: level 0 = uploader, 1 to 10 = approvals; process tree nodes are numbered 1 to 100 (changed from 1 to 10 by the process_tree migration).
 ALTER TABLE "DocumentWorkflowStep" ADD CONSTRAINT "DocumentWorkflowStep_level_chk" CHECK ("stepNumber" BETWEEN 0 AND 10);
 ALTER TABLE "DocumentApprovalStep" ADD CONSTRAINT "DocumentApprovalStep_level_chk" CHECK ("levelNumber" BETWEEN 0 AND 10);
-ALTER TABLE "ProcessStep" ADD CONSTRAINT "ProcessStep_step_chk" CHECK ("stepNumber" BETWEEN 1 AND 10);
+ALTER TABLE "ProcessStep" DROP CONSTRAINT IF EXISTS "ProcessStep_step_chk";
+ALTER TABLE "ProcessStep" ADD CONSTRAINT "ProcessStep_step_chk" CHECK ("stepNumber" BETWEEN 1 AND 100);
 
 -- A delegation must hand tasks to a different user.
 ALTER TABLE "ApprovalDelegation" ADD CONSTRAINT "ApprovalDelegation_distinct_chk" CHECK ("delegatorUserId" <> "delegateUserId");

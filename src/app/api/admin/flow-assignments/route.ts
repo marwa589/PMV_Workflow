@@ -69,6 +69,24 @@ export async function POST(request: Request) {
   const checked = await validateTarget(await readJsonBody(request));
   if (checked.error || !checked.value) return NextResponse.json({ message: checked.error }, { status: 400 });
 
+  // One flow per scope: the same type + sub type + project cannot be assigned twice (not even to a different flow).
+  const existing = await prisma.documentWorkflowAssignment.findFirst({
+    where: {
+      documentTypeId: checked.value.documentTypeId,
+      documentSubtypeId: checked.value.documentSubtypeId,
+      projectId: checked.value.projectId,
+    },
+    select: { id: true, template: { select: { name: true } } },
+  });
+  if (existing) {
+    return NextResponse.json(
+      {
+        message: `This document type, sub type and project already has ${existing.template ? `the flow "${existing.template.name}"` : "an auto-approve assignment"}. Change or delete that assignment instead of adding a second one.`,
+      },
+      { status: 409 },
+    );
+  }
+
   try {
     const assignment = await prisma.documentWorkflowAssignment.create({ data: checked.value, include: assignmentInclude });
     return NextResponse.json({ assignment }, { status: 201 });

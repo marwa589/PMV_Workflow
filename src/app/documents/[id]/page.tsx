@@ -8,7 +8,7 @@ import DocumentDetailActions from "@/components/document-detail-actions";
 import StatusBadge from "@/components/status-badge";
 import WorkflowJourneyChart from "@/components/workflow-journey-chart";
 import { requireAuth } from "@/lib/auth/guards";
-import { canAccessDocument, userHasPermissionForDocument } from "@/lib/auth/access";
+import { buildDocumentVisibilityWhere, canAccessDocument, userHasPermissionForDocument } from "@/lib/auth/access";
 import { USER_TYPE } from "@/lib/auth/roles";
 import { getDocumentStatusDisplay } from "@/lib/document-status";
 import { prisma } from "@/lib/prisma";
@@ -58,13 +58,10 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
     include: {
       createdBy: { select: { name: true, email: true } },
       receivedBy: { select: { name: true } },
+      downloadRecords: { where: { userId: session.userId }, select: { downloadedAt: true }, take: 1 },
       documentType: { select: { code: true, name: true } },
       documentSubtype: { select: { code: true, name: true } },
       project: { select: { id: true, code: true, name: true, locationId: true, location: { select: { name: true } } } },
-      versions: {
-        orderBy: { versionNumber: "asc" },
-        select: { id: true, versionNumber: true, originalName: true, uploadedAt: true, uploadedBy: { select: { name: true } }, mimeType: true },
-      },
       approvals: {
         orderBy: { performedAt: "desc" },
         include: { performedBy: { select: { name: true, email: true } }, onBehalfOf: { select: { name: true } } },
@@ -81,23 +78,15 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
       },
       lineItems: { orderBy: { lineNo: "asc" }, select: { id: true, lineNo: true } },
       processLinks: {
-        orderBy: { linkedAt: "asc" },
-        include: {
-          processStep: { select: { stepNumber: true, name: true } },
+        select: {
+          processInstanceId: true,
           processInstance: {
             select: {
               id: true,
-              reference: true,
-              status: true,
-              currentStepNumber: true,
-              processDefinition: { select: { name: true } },
               stepDocuments: {
                 where: { isCurrent: true },
                 orderBy: { processStep: { stepNumber: "asc" } },
-                select: {
-                  processStep: { select: { stepNumber: true, name: true } },
-                  document: { select: { id: true, documentNumber: true, title: true, status: true, currentWorkflowStep: true, documentType: { select: { name: true } } } },
-                },
+                select: { documentId: true, processStep: { select: { name: true } } },
               },
             },
           },
@@ -110,6 +99,23 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
     notFound();
   }
 
+  // Linked documents: the other documents of the same process run(s), limited to what this person may see.
+  const linkedStepNames = new Map<string, string>();
+  for (const link of document.processLinks) {
+    for (const item of link.processInstance.stepDocuments) {
+      if (item.documentId !== document.id && !linkedStepNames.has(item.documentId)) linkedStepNames.set(item.documentId, item.processStep.name);
+    }
+  }
+  const linkedDocuments =
+    linkedStepNames.size === 0
+      ? []
+      : await prisma.document.findMany({
+          where: { AND: [{ id: { in: [...linkedStepNames.keys()] } }, await buildDocumentVisibilityWhere(session)] },
+          select: { id: true, documentNumber: true, title: true, status: true, currentWorkflowStep: true, createdAt: true, documentType: { select: { name: true } } },
+          orderBy: { createdAt: "asc" },
+        });
+  const isAdminUser = session.userType === USER_TYPE.ADMIN;
+
   // ---- What can this person do here? ----
   const currentStep = document.currentWorkflowStep === null ? null : document.approvalSteps.find((step) => step.levelNumber === document.currentWorkflowStep) ?? null;
   const actingLevel = document.status === DocumentStatus.REVISION_REQUIRED ? 0 : document.currentWorkflowStep;
@@ -119,7 +125,9 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
   let canReview = false;
   if (isActionable && actingStep) {
     const canAct = await createEligibilityChecker(prisma, session.userId);
+    // Admin users may act on any level (the review page and the workflow engine allow it), so they always get the button.
     canReview =
+      session.userType === USER_TYPE.ADMIN ||
       (document.status === DocumentStatus.REVISION_REQUIRED && document.createdById === session.userId) ||
       canAct(actingStep.approvers, {
         projectId: document.projectId,
@@ -137,6 +145,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
     ? currentStep.approvers.map((entry) => (entry.user?.name ?? entry.userType?.name ?? "")).filter(Boolean).join(", ")
     : "";
   const statusText = getDocumentStatusDisplay(document.status, { levelNumber: document.currentWorkflowStep, name: currentStep?.name });
+  const showApprovalPath = session.userType === USER_TYPE.ADMIN || session.userType === USER_TYPE.MANAGER;
   const homeHref = session.userType === USER_TYPE.ADMIN ? "/admin" : session.userType === USER_TYPE.CLERK ? "/clerk" : "/approver";
 
   const headerFields = document.fieldValues
@@ -147,7 +156,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
     .map(([label]) => label);
 
   return (
-    <DashboardShell role={session.userType} userName={session.name} title="Document Details" subtitle="Review workflow history, status, and uploaded versions">
+    <DashboardShell role={session.userType} userName={session.name} title="Document Details" subtitle="Review workflow history and status">
       <div className="flex flex-wrap items-center gap-3">
         <Link href={homeHref} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
           <ArrowLeft className="h-4 w-4" />
@@ -194,7 +203,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
               {headerFields.map((value, index) => (
                 <Row key={`${value.fieldDefinition.label}-${index}`} label={value.fieldDefinition.label} value={displayFieldValue(value)} />
               ))}
-              <Row label="Current version" value={`V${document.currentVersion}`} />
+              {isAdminUser ? <Row label="Current version" value={`V${document.currentVersion}`} /> : null}
               <Row label="Submitted by" value={document.createdBy.name} />
             </div>
           </div>
@@ -216,10 +225,12 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
           status={document.status}
           currentWorkflowStep={document.currentWorkflowStep}
           steps={document.approvalSteps.map((step) => ({ levelNumber: step.levelNumber, name: step.name, status: step.status }))}
+          downloadedAt={document.downloadRecords[0]?.downloadedAt ?? null}
         />
       </div>
 
-      {document.approvalSteps.length > 0 ? (
+      {/* The approval path (who approves at each level) is for managers and admins; clerks and engineers see the journey and history. */}
+      {showApprovalPath && document.approvalSteps.length > 0 ? (
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4">
             <h3 className="text-base font-semibold text-slate-900">Approval path</h3>
@@ -275,7 +286,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
         </section>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr,0.8fr]">
+      <div className="grid grid-cols-1 gap-6">
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4">
             <History className="h-4 w-4 text-slate-500" />
@@ -305,81 +316,35 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4">
-            <FileText className="h-4 w-4 text-slate-500" />
-            <h3 className="text-base font-semibold text-slate-900">Document versions</h3>
-          </div>
-          <div className="divide-y divide-slate-100">
-            {document.versions.length === 0 ? (
-              <div className="px-5 py-6 text-sm text-slate-500">No versions uploaded yet.</div>
-            ) : (
-              document.versions.map((version) => (
-                <div key={version.id} className="px-5 py-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">Version {version.versionNumber}</p>
-                      <p className="mt-1 text-sm text-slate-600">{version.originalName}</p>
-                    </div>
-                    {version.versionNumber === document.currentVersion ? (
-                      <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">Current</span>
-                    ) : null}
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                    <span>Uploaded by {version.uploadedBy.name}</span>
-                    <span>{formatDate(version.uploadedAt)}</span>
-                    <span>{version.mimeType}</span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
       </div>
 
-      {/* Documents that share a process run with this one replace the old "linked MR / comparison / PO" boxes. */}
-      {document.processLinks.map((link) => (
-        <section key={link.id} className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      {/* Documents that share a process run with this one. */}
+      {linkedDocuments.length > 0 ? (
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
             <div className="flex items-center gap-2">
               <Network className="h-4 w-4 text-slate-500" />
-              <div>
-                <h3 className="text-base font-semibold text-slate-900">
-                  {link.processInstance.processDefinition.name}
-                  {link.processInstance.reference ? ` - ${link.processInstance.reference}` : ""}
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Step {link.processStep.stepNumber}: {link.processStep.name} · run {link.processInstance.status.replaceAll("_", " ").toLowerCase()}
-                </p>
-              </div>
+              <h3 className="text-base font-semibold text-slate-900">Linked documents</h3>
             </div>
-            <Link href={`/processes/${link.processInstance.id}`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-              Open process run
-            </Link>
+            {isAdminUser && document.processLinks[0] ? (
+              <Link href={`/processes/${document.processLinks[0].processInstance.id}`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                Open process run
+              </Link>
+            ) : null}
           </div>
           <div className="divide-y divide-slate-100">
-            {link.processInstance.stepDocuments.map((item) => (
-              <div key={item.document.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm">
+            {linkedDocuments.map((item) => (
+              <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm">
                 <div>
-                  <p className="font-medium text-slate-900">
-                    Step {item.processStep.stepNumber}: {item.processStep.name}
-                  </p>
+                  <Link href={`/documents/${item.id}`} className="font-medium text-cyan-700 hover:underline">{item.documentNumber}</Link>
+                  <p className="text-xs text-slate-500">{item.documentType.name} · {item.title}</p>
                 </div>
-                <div className="flex items-center gap-3">
-                  <StatusBadge status={item.document.status} label={getDocumentStatusDisplay(item.document.status, { levelNumber: item.document.currentWorkflowStep })} />
-                  {item.document.id === document.id ? (
-                    <span className="text-xs text-slate-500">This document</span>
-                  ) : (
-                    <Link href={`/documents/${item.document.id}`} className="font-medium text-cyan-700 hover:underline">
-                      {item.document.documentNumber}
-                    </Link>
-                  )}
-                </div>
+                <StatusBadge status={item.status} label={getDocumentStatusDisplay(item.status, { levelNumber: item.currentWorkflowStep })} />
               </div>
             ))}
           </div>
         </section>
-      ))}
+      ) : null}
     </DashboardShell>
   );
 }

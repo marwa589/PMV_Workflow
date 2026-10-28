@@ -82,6 +82,8 @@ model User {
   signatureOriginalName String?
   signaturePath         String?
   signatureUpdatedAt    DateTime?
+  // When true, this user may select several pending documents and review/approve them together on one screen.
+  canBulkApprove        Boolean   @default(false)
 
   userType                  UserType                       @relation(fields: [userTypeId], references: [id], onDelete: Restrict)
   assignments               UserAssignment[]
@@ -107,6 +109,7 @@ model User {
   passwordResetTokens       PasswordResetToken[]
   processInstancesStarted   ProcessInstance[]              @relation("ProcessInstancesStartedBy")
   processStepLinks          ProcessStepDocument[]          @relation("ProcessStepLinkedBy")
+  documentDownloads         DocumentDownload[]
 
   @@index([userTypeId, isActive])
 }
@@ -147,6 +150,7 @@ model DocumentType {
   documents         Document[]
   flowAssignments   DocumentWorkflowAssignment[]
   processSteps      ProcessStep[]
+  referenceForSteps ProcessStep[] @relation("ProcessStepReferenceType")
   scopedAssignments UserAssignment[]
   assignmentScopes  UserAssignmentDocumentTypeScope[]
 }
@@ -166,6 +170,7 @@ model DocumentSubtype {
   documents         Document[]
   flowAssignments   DocumentWorkflowAssignment[]
   processSteps      ProcessStep[]
+  referenceForSteps ProcessStep[] @relation("ProcessStepReferenceSubtype")
   scopedAssignments UserAssignment[]
   assignmentScopes  UserAssignmentDocumentSubtypeScope[]
   counters          DocumentNumberCounter[]
@@ -369,6 +374,8 @@ model DocumentWorkflowStep {
   templateId String
   stepNumber Int
   name       String?
+  // Whether the approver must place a signature to approve at this level (on by default).
+  signatureRequired Boolean @default(true)
   createdAt  DateTime @default(now())
 
   template  DocumentWorkflowTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
@@ -439,6 +446,9 @@ model Document {
   downloadedAt              DateTime?
   lastActiveStage           DocumentStatus?
   receivedAt                DateTime?
+  // A reference document: uploaded next to a process step's document, never approved, and visible only to people
+  // holding documents.view_reference (hidden from every list, search and download for everyone else).
+  isReference               Boolean        @default(false)
   receivedById              String?
 
   createdBy        User                      @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
@@ -454,6 +464,8 @@ model Document {
   fieldValues      DocumentFieldValue[]
   deletionRequests DeletionRequest[]         @relation("DeletionRequests")
   processLinks     ProcessStepDocument[]
+  referencedBy     ProcessStepDocument[] @relation("ProcessStepReference")
+  downloadRecords  DocumentDownload[]
 
   @@index([createdById])
   @@index([workflowTemplateId])
@@ -462,6 +474,21 @@ model Document {
   @@index([status, currentWorkflowStep])
   @@index([createdAt])
   @@index([receivedById])
+}
+
+// One row per user per document: when that user last downloaded the approved document.
+// (Document.downloadedAt is the old, shared flag. It is no longer read or written.)
+model DocumentDownload {
+  id           String   @id @default(cuid())
+  documentId   String
+  userId       String
+  downloadedAt DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, userId])
+  @@index([userId, downloadedAt])
 }
 
 model DocumentLineItem {
@@ -528,6 +555,9 @@ model ProcessDefinition {
   name        String   @unique
   description String?
   isActive    Boolean  @default(true)
+  // Editing a process that already has runs creates a new version of its tree: runs keep the version they
+  // started with, new uploads use currentVersion.
+  currentVersion Int     @default(1)
   createdAt   DateTime @default(now())
 
   steps             ProcessStep[]
@@ -536,6 +566,10 @@ model ProcessDefinition {
   assignmentScopes  UserAssignmentProcessScope[]
 }
 
+// One node of a process tree. parentStepId = null marks the root (the document whose upload starts a run);
+// every other node hangs under exactly one parent. A node's children are the optional "next document" choices:
+// whichever child gets uploaded decides the path the run follows. A node with no children ends the path.
+// stepNumber is only a unique label for the node inside its process (1 = root, then depth-first order).
 model ProcessStep {
   id                  String  @id @default(cuid())
   processDefinitionId String
@@ -543,13 +577,26 @@ model ProcessStep {
   name                String
   documentTypeId      String
   documentSubtypeId   String?
+  parentStepId        String?
+  versionNumber       Int     @default(1)
+  // Optional reference document the uploader of this step may attach (a type, or a sub type of it).
+  referenceDocumentTypeId    String?
+  referenceDocumentSubtypeId String?
+  // Hours to wait after the PARENT document is finally approved before this step may be uploaded (0 = no wait).
+  delayHours          Int     @default(0)
 
   processDefinition ProcessDefinition     @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
   documentType      DocumentType          @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
   documentSubtype   DocumentSubtype?      @relation(fields: [documentSubtypeId], references: [id], onDelete: Restrict)
+  referenceDocumentType    DocumentType?    @relation("ProcessStepReferenceType", fields: [referenceDocumentTypeId], references: [id], onDelete: Restrict)
+  referenceDocumentSubtype DocumentSubtype? @relation("ProcessStepReferenceSubtype", fields: [referenceDocumentSubtypeId], references: [id], onDelete: Restrict)
+  parentStep        ProcessStep?          @relation("ProcessStepTree", fields: [parentStepId], references: [id], onDelete: Cascade)
+  childSteps        ProcessStep[]         @relation("ProcessStepTree")
   stepDocuments     ProcessStepDocument[]
+  runsAtStep        ProcessInstance[]     @relation("ProcessInstanceCurrentStep")
 
-  @@unique([processDefinitionId, stepNumber])
+  @@unique([processDefinitionId, versionNumber, stepNumber])
+  @@index([parentStepId])
 }
 
 model ProcessInstance {
@@ -559,6 +606,11 @@ model ProcessInstance {
   reference           String?
   status              ProcessStatus @default(IN_PROGRESS)
   currentStepNumber   Int           @default(1)
+  // The last node whose document was approved (null until the root document is approved). While the run is
+  // in progress, its child nodes are the choices for the next upload.
+  currentStepId       String?
+  // Which version of the process tree this run follows (fixed when the run starts).
+  stepVersion         Int           @default(1)
   startedById         String
   startedAt           DateTime      @default(now())
   completedAt         DateTime?
@@ -566,14 +618,17 @@ model ProcessInstance {
   processDefinition ProcessDefinition     @relation(fields: [processDefinitionId], references: [id], onDelete: Restrict)
   project           Project?              @relation(fields: [projectId], references: [id], onDelete: Restrict)
   startedBy         User                  @relation("ProcessInstancesStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
+  currentStep       ProcessStep?          @relation("ProcessInstanceCurrentStep", fields: [currentStepId], references: [id], onDelete: SetNull)
   stepDocuments     ProcessStepDocument[]
+  uploadNotices     ProcessUploadNotice[]
 
   @@index([processDefinitionId, status])
+  @@index([currentStepId])
   @@index([projectId])
 }
 
-// One current document fills a step of a running process; rejected ones stay as history.
-// "Only one current document per step per run" is enforced by a partial unique index in the migration.
+// The document that filled a node of a run; rejected ones stay as history (isCurrent = false).
+// "Only one current document per node per run" is enforced by a partial unique index in the migration.
 model ProcessStepDocument {
   id                String            @id @default(cuid())
   processInstanceId String
@@ -583,14 +638,32 @@ model ProcessStepDocument {
   linkedById        String
   isCurrent         Boolean           @default(true)
   linkedAt          DateTime          @default(now())
+  // Optional reference document uploaded (or picked from approved documents) together with this step's document.
+  referenceDocumentId String?
 
-  processInstance ProcessInstance @relation(fields: [processInstanceId], references: [id], onDelete: Cascade)
-  processStep     ProcessStep     @relation(fields: [processStepId], references: [id], onDelete: Restrict)
-  document        Document        @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  processInstance   ProcessInstance @relation(fields: [processInstanceId], references: [id], onDelete: Cascade)
+  processStep       ProcessStep     @relation(fields: [processStepId], references: [id], onDelete: Restrict)
+  document          Document        @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  referenceDocument Document?       @relation("ProcessStepReference", fields: [referenceDocumentId], references: [id], onDelete: SetNull)
   linkedBy        User            @relation("ProcessStepLinkedBy", fields: [linkedById], references: [id], onDelete: Restrict)
 
   @@unique([processInstanceId, processStepId, documentId])
   @@index([documentId])
+  @@index([referenceDocumentId])
+}
+
+// Remembers that people were told a delayed (or immediate) next step of a run has opened for upload,
+// so the scheduled job never tells them twice for the same approved document.
+model ProcessUploadNotice {
+  id                 String   @id @default(cuid())
+  processInstanceId  String
+  processStepId      String
+  anchorDocumentId   String
+  notifiedAt         DateTime @default(now())
+
+  processInstance ProcessInstance @relation(fields: [processInstanceId], references: [id], onDelete: Cascade)
+
+  @@unique([processInstanceId, processStepId, anchorDocumentId])
 }
 
 // ============================================================================
@@ -603,6 +676,8 @@ model DocumentApprovalStep {
   documentId  String
   levelNumber Int
   name        String?
+  // Copied from the flow when the document is uploaded.
+  signatureRequired Boolean @default(true)
   status      StepStatus @default(WAITING)
   actedById   String?
   actedAt     DateTime?
@@ -847,12 +922,15 @@ enum NotificationType {
   DOCUMENT_DELETED
   DOCUMENT_ON_HOLD
   DOCUMENT_RESUMED
+  PROCESS_UPLOAD_READY
 }
 
 enum EmailEventType {
   APPROVAL_PENDING
   WORKFLOW_APPROVED
   WORKFLOW_REJECTED
+  WORKFLOW_REVISION_REQUESTED
   APPROVAL_OVERDUE
   PROCESS_STEP_OVERDUE
+  PROCESS_UPLOAD_READY
 }
