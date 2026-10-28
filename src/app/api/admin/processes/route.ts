@@ -25,6 +25,11 @@ const processSelect = {
       versionNumber: true,
       documentTypeId: true,
       documentSubtypeId: true,
+      delayHours: true,
+      referenceDocumentTypeId: true,
+      referenceDocumentSubtypeId: true,
+      referenceDocumentType: { select: { id: true, code: true, name: true } },
+      referenceDocumentSubtype: { select: { id: true, code: true, name: true } },
       documentType: { select: { id: true, code: true, name: true } },
       documentSubtype: { select: { id: true, code: true, name: true } },
     },
@@ -38,6 +43,9 @@ type ParsedNode = {
   name: string;
   documentTypeId: string;
   documentSubtypeId: string | null;
+  referenceDocumentTypeId: string | null;
+  referenceDocumentSubtypeId: string | null;
+  delayHours: number;
 };
 
 type OrderedNode = ParsedNode & { stepNumber: number };
@@ -70,11 +78,30 @@ async function parseTree(raw: unknown): Promise<{ nodes?: OrderedNode[]; error?:
     if (documentSubtypeId && !(await prisma.documentSubtype.findFirst({ where: { id: documentSubtypeId, documentTypeId }, select: { id: true } }))) {
       return { error: `${name}: the sub type does not belong to the document type.` };
     }
-    parsed.push({ key, parentKey, name, documentTypeId, documentSubtypeId });
+
+    // Optional reference document (a type, or a sub type of it) the uploader of this step may attach.
+    const referenceDocumentTypeId = str(record.referenceDocumentTypeId) || null;
+    const referenceDocumentSubtypeId = referenceDocumentTypeId ? str(record.referenceDocumentSubtypeId) || null : null;
+    if (referenceDocumentTypeId) {
+      if (!(await prisma.documentType.findUnique({ where: { id: referenceDocumentTypeId }, select: { id: true } }))) {
+        return { error: `${name}: the reference document type does not exist.` };
+      }
+      if (referenceDocumentSubtypeId && !(await prisma.documentSubtype.findFirst({ where: { id: referenceDocumentSubtypeId, documentTypeId: referenceDocumentTypeId }, select: { id: true } }))) {
+        return { error: `${name}: the reference document sub type does not belong to its document type.` };
+      }
+    }
+
+    // Waiting period (hours) after the PARENT document is finally approved. Any whole number of hours; 0 = none.
+    const rawDelay = record.delayHours === undefined || record.delayHours === null || record.delayHours === "" ? 0 : Number(record.delayHours);
+    if (!Number.isInteger(rawDelay) || rawDelay < 0 || rawDelay > 8760) {
+      return { error: `${name}: the waiting period must be a whole number of hours between 0 and 8760.` };
+    }
+    parsed.push({ key, parentKey, name, documentTypeId, documentSubtypeId, referenceDocumentTypeId, referenceDocumentSubtypeId, delayHours: rawDelay });
   }
 
   const roots = parsed.filter((node) => node.parentKey === null);
   if (roots.length !== 1) return { error: "A process must have exactly one starting (root) document." };
+  if (roots[0].delayHours > 0) return { error: "The starting document cannot have a waiting period: there is no earlier document to wait for." };
   for (const node of parsed) {
     if (node.parentKey !== null && !keys.has(node.parentKey)) return { error: `${node.name}: its parent document does not exist.` };
     if (node.parentKey === node.key) return { error: `${node.name} cannot follow itself.` };
@@ -148,6 +175,9 @@ async function createNodes(tx: Prisma.TransactionClient, processDefinitionId: st
         name: node.name,
         documentTypeId: node.documentTypeId,
         documentSubtypeId: node.documentSubtypeId,
+        referenceDocumentTypeId: node.referenceDocumentTypeId,
+        referenceDocumentSubtypeId: node.referenceDocumentSubtypeId,
+        delayHours: node.delayHours,
         parentStepId: node.parentKey ? idByKey.get(node.parentKey) ?? null : null,
       },
       select: { id: true },

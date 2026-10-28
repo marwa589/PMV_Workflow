@@ -26,9 +26,11 @@ type Props = {
   emptyMessage?: string;
   // Shows tick boxes and "Review selected" for users who may approve several documents at once.
   allowBatch?: boolean;
+  // Admin only: show the document version.
+  showVersion?: boolean;
 };
 
-export default function ApproverPendingTable({ documents, allowReview = true, allowBatch = false, emptyMessage = "No pending approvals assigned to you." }: Props) {
+export default function ApproverPendingTable({ documents, allowReview = true, allowBatch = false, showVersion = false, emptyMessage = "No pending approvals assigned to you." }: Props) {
   const router = useRouter();
   const [visibleCount, setVisibleCount] = useState(10);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -66,7 +68,7 @@ export default function ApproverPendingTable({ documents, allowReview = true, al
             <th className="px-5 py-3 font-semibold">Title</th>
             <th className="px-5 py-3 font-semibold">Project</th>
             <th className="px-5 py-3 font-semibold">Waiting At</th>
-            <th className="px-5 py-3 font-semibold">Current Version</th>
+            {showVersion ? <th className="px-5 py-3 font-semibold">Current Version</th> : null}
             <th className="px-5 py-3 font-semibold">Date</th>
             <th className="px-5 py-3 font-semibold">Actions</th>
           </tr>
@@ -95,7 +97,7 @@ export default function ApproverPendingTable({ documents, allowReview = true, al
                 </td>
                 <td className="px-5 py-4 text-slate-700">{document.projectLabel || "—"}</td>
                 <td className="px-5 py-4 text-slate-700">{document.statusLabel || "Pending"}</td>
-                <td className="px-5 py-4 text-slate-700">V{document.currentVersion}</td>
+                {showVersion ? <td className="px-5 py-4 text-slate-700">V{document.currentVersion}</td> : null}
                 <td className="px-5 py-4 text-slate-500">{document.uploadedAt}</td>
                 <td className="px-5 py-4">
                   <div className="flex gap-2">

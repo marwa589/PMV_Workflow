@@ -272,6 +272,7 @@ export async function queueProcessStepReminders() {
     where: { status: ProcessStatus.IN_PROGRESS, currentStepId: { not: null }, currentStep: { childSteps: { some: {} } } },
     select: {
       currentStepId: true,
+      currentStep: { select: { childSteps: { select: { delayHours: true } } } },
       stepDocuments: {
         where: { isCurrent: true },
         select: { processStep: { select: { id: true, parentStepId: true } }, document: { select: { id: true, status: true, approvedAt: true } } },
@@ -285,8 +286,11 @@ export async function queueProcessStepReminders() {
     if (run.stepDocuments.some((link) => link.processStep.parentStepId === run.currentStepId)) continue;
 
     const last = run.stepDocuments.find((link) => link.processStep.id === run.currentStepId);
-    if (last && last.document.status === DocumentStatus.APPROVED && last.document.approvedAt && last.document.approvedAt <= cutoff) {
-      stalledDocumentIds.add(last.document.id);
+    if (last && last.document.status === DocumentStatus.APPROVED && last.document.approvedAt) {
+      // The run only counts as waiting from the moment its earliest choice opened (a waiting period is not a delay).
+      const smallestDelayHours = Math.min(...(run.currentStep?.childSteps.map((child) => child.delayHours) ?? [0]));
+      const openedAt = last.document.approvedAt.getTime() + smallestDelayHours * 60 * 60 * 1000;
+      if (openedAt <= cutoff.getTime()) stalledDocumentIds.add(last.document.id);
     }
   }
 

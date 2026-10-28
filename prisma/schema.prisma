@@ -150,6 +150,7 @@ model DocumentType {
   documents         Document[]
   flowAssignments   DocumentWorkflowAssignment[]
   processSteps      ProcessStep[]
+  referenceForSteps ProcessStep[] @relation("ProcessStepReferenceType")
   scopedAssignments UserAssignment[]
   assignmentScopes  UserAssignmentDocumentTypeScope[]
 }
@@ -169,6 +170,7 @@ model DocumentSubtype {
   documents         Document[]
   flowAssignments   DocumentWorkflowAssignment[]
   processSteps      ProcessStep[]
+  referenceForSteps ProcessStep[] @relation("ProcessStepReferenceSubtype")
   scopedAssignments UserAssignment[]
   assignmentScopes  UserAssignmentDocumentSubtypeScope[]
   counters          DocumentNumberCounter[]
@@ -372,6 +374,8 @@ model DocumentWorkflowStep {
   templateId String
   stepNumber Int
   name       String?
+  // Whether the approver must place a signature to approve at this level (on by default).
+  signatureRequired Boolean @default(true)
   createdAt  DateTime @default(now())
 
   template  DocumentWorkflowTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
@@ -442,6 +446,9 @@ model Document {
   downloadedAt              DateTime?
   lastActiveStage           DocumentStatus?
   receivedAt                DateTime?
+  // A reference document: uploaded next to a process step's document, never approved, and visible only to people
+  // holding documents.view_reference (hidden from every list, search and download for everyone else).
+  isReference               Boolean        @default(false)
   receivedById              String?
 
   createdBy        User                      @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
@@ -457,6 +464,7 @@ model Document {
   fieldValues      DocumentFieldValue[]
   deletionRequests DeletionRequest[]         @relation("DeletionRequests")
   processLinks     ProcessStepDocument[]
+  referencedBy     ProcessStepDocument[] @relation("ProcessStepReference")
   downloadRecords  DocumentDownload[]
 
   @@index([createdById])
@@ -571,10 +579,17 @@ model ProcessStep {
   documentSubtypeId   String?
   parentStepId        String?
   versionNumber       Int     @default(1)
+  // Optional reference document the uploader of this step may attach (a type, or a sub type of it).
+  referenceDocumentTypeId    String?
+  referenceDocumentSubtypeId String?
+  // Hours to wait after the PARENT document is finally approved before this step may be uploaded (0 = no wait).
+  delayHours          Int     @default(0)
 
   processDefinition ProcessDefinition     @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
   documentType      DocumentType          @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
   documentSubtype   DocumentSubtype?      @relation(fields: [documentSubtypeId], references: [id], onDelete: Restrict)
+  referenceDocumentType    DocumentType?    @relation("ProcessStepReferenceType", fields: [referenceDocumentTypeId], references: [id], onDelete: Restrict)
+  referenceDocumentSubtype DocumentSubtype? @relation("ProcessStepReferenceSubtype", fields: [referenceDocumentSubtypeId], references: [id], onDelete: Restrict)
   parentStep        ProcessStep?          @relation("ProcessStepTree", fields: [parentStepId], references: [id], onDelete: Cascade)
   childSteps        ProcessStep[]         @relation("ProcessStepTree")
   stepDocuments     ProcessStepDocument[]
@@ -605,6 +620,7 @@ model ProcessInstance {
   startedBy         User                  @relation("ProcessInstancesStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
   currentStep       ProcessStep?          @relation("ProcessInstanceCurrentStep", fields: [currentStepId], references: [id], onDelete: SetNull)
   stepDocuments     ProcessStepDocument[]
+  uploadNotices     ProcessUploadNotice[]
 
   @@index([processDefinitionId, status])
   @@index([currentStepId])
@@ -622,14 +638,32 @@ model ProcessStepDocument {
   linkedById        String
   isCurrent         Boolean           @default(true)
   linkedAt          DateTime          @default(now())
+  // Optional reference document uploaded (or picked from approved documents) together with this step's document.
+  referenceDocumentId String?
 
-  processInstance ProcessInstance @relation(fields: [processInstanceId], references: [id], onDelete: Cascade)
-  processStep     ProcessStep     @relation(fields: [processStepId], references: [id], onDelete: Restrict)
-  document        Document        @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  processInstance   ProcessInstance @relation(fields: [processInstanceId], references: [id], onDelete: Cascade)
+  processStep       ProcessStep     @relation(fields: [processStepId], references: [id], onDelete: Restrict)
+  document          Document        @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  referenceDocument Document?       @relation("ProcessStepReference", fields: [referenceDocumentId], references: [id], onDelete: SetNull)
   linkedBy        User            @relation("ProcessStepLinkedBy", fields: [linkedById], references: [id], onDelete: Restrict)
 
   @@unique([processInstanceId, processStepId, documentId])
   @@index([documentId])
+  @@index([referenceDocumentId])
+}
+
+// Remembers that people were told a delayed (or immediate) next step of a run has opened for upload,
+// so the scheduled job never tells them twice for the same approved document.
+model ProcessUploadNotice {
+  id                 String   @id @default(cuid())
+  processInstanceId  String
+  processStepId      String
+  anchorDocumentId   String
+  notifiedAt         DateTime @default(now())
+
+  processInstance ProcessInstance @relation(fields: [processInstanceId], references: [id], onDelete: Cascade)
+
+  @@unique([processInstanceId, processStepId, anchorDocumentId])
 }
 
 // ============================================================================
@@ -642,6 +676,8 @@ model DocumentApprovalStep {
   documentId  String
   levelNumber Int
   name        String?
+  // Copied from the flow when the document is uploaded.
+  signatureRequired Boolean @default(true)
   status      StepStatus @default(WAITING)
   actedById   String?
   actedAt     DateTime?

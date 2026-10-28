@@ -10,6 +10,8 @@ import {
   type ScopeContext,
 } from "@/lib/auth/access";
 import { USER_TYPE, type UserTypeCode } from "@/lib/auth/roles";
+const UPLOAD_PERMISSION = "documents.upload";
+
 import { resolveFlow, type FlowStepEntry } from "@/lib/workflow/resolve-flow";
 
 export type DocScope = {
@@ -160,6 +162,14 @@ export async function canUserUpload(
   if (actor.userType === USER_TYPE.ADMIN) return true;
 
   const scope = await loadDocScope(db, doc);
+
+  // The "Upload documents" permission: a role holder may upload in the scope of the assignment that carries it.
+  const uploadAssignments = await db.userAssignment.findMany({
+    where: { userId: actor.id, role: { permissions: { some: { permission: { code: UPLOAD_PERMISSION } } } } },
+    select: ASSIGNMENT_SCOPE_SELECT,
+  });
+  if (uploadAssignments.some((assignment) => assignmentMatchesScope(assignment, scope))) return true;
+
   const flow = await resolveFlow(db, doc);
 
   const uploaderEntries =
@@ -192,6 +202,11 @@ export async function canUserUploadAnything(db: Db, user: { id: string; userType
   if (!record) return false;
 
   if (user.userType === USER_TYPE.CLERK && record._count.assignments > 0) return true;
+
+  const withUploadPermission = await db.userAssignment.count({
+    where: { userId: user.id, role: { permissions: { some: { permission: { code: UPLOAD_PERMISSION } } } } },
+  });
+  if (withUploadPermission > 0) return true;
 
   const named = await db.documentWorkflowStepApprover.count({
     where: { step: { stepNumber: 0 }, OR: [{ userId: user.id }, { userTypeId: record.userTypeId }] },

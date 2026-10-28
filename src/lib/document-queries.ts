@@ -36,6 +36,7 @@ const documentListSelect = {
     select: {
       levelNumber: true,
       name: true,
+      signatureRequired: true,
       approvers: {
         select: {
           approverType: true,
@@ -67,6 +68,7 @@ const documentListSelect = {
                 select: {
                   id: true,
                   parentStepId: true,
+                  delayHours: true,
                   documentType: { select: { code: true } },
                   documentSubtype: { select: { code: true } },
                 },
@@ -75,7 +77,7 @@ const documentListSelect = {
           },
           stepDocuments: {
             where: { isCurrent: true },
-            select: { processStepId: true, isCurrent: true, document: { select: { status: true } } },
+            select: { processStepId: true, isCurrent: true, document: { select: { status: true, approvedAt: true } } },
           },
         },
       },
@@ -97,6 +99,8 @@ export type DocumentRow = {
   currentVersion: number;
   currentWorkflowStep: number | null;
   currentLevelName: string | null;
+  // Whether the level the document waits at needs a signature to approve (flow setting).
+  signatureRequired: boolean;
   // When the current level started waiting (used for aging).
   waitingSince: Date | null;
   createdAt: Date;
@@ -149,6 +153,7 @@ export function toDocumentRow(document: RawDocument): DocumentRow {
     currentVersion: document.currentVersion,
     currentWorkflowStep: levelNumber,
     currentLevelName: currentStep?.name ?? null,
+    signatureRequired: currentStep?.signatureRequired ?? true,
     waitingSince: document.currentApproverAssignedAt,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,

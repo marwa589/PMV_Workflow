@@ -96,7 +96,6 @@ export default function DocumentReviewEditor({
   const [selectedTextBoxId, setSelectedTextBoxId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [decision, setDecision] = useState<"APPROVE" | "REJECT" | "REQUEST_REVISION" | "HOLD" | "RESUME">(documentStatus === "ON_HOLD" ? "RESUME" : "APPROVE");
-  const [targetLevel, setTargetLevel] = useState<number | null>(null);
   const [replacementFile, setReplacementFile] = useState<File | null>(null);
   const [comments, setComments] = useState("");
   const [saving, setSaving] = useState(false);
@@ -335,7 +334,6 @@ export default function DocumentReviewEditor({
       const formData = new FormData();
       formData.set("decision", action);
       formData.set("comments", comments);
-      if (!revisionMode && decision === "REQUEST_REVISION" && targetLevel !== null) formData.set("targetLevel", String(targetLevel));
       if (revisionMode && decision === "REJECT") {
         formData.set("decision", "REJECT");
       } else if (revisionMode && replacementFile) {
@@ -524,15 +522,38 @@ export default function DocumentReviewEditor({
               </select>
             </div>
             {decision === "REQUEST_REVISION" ? (
-              <div className="min-w-60 flex-1">
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Send back to</label>
-                <select value={targetLevel === null ? "" : String(targetLevel)} onChange={(event) => setTargetLevel(event.target.value === "" ? null : Number(event.target.value))} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-                  <option value="">Previous level (default)</option>
-                  {revisionTargets.map((target) => (
-                    <option key={target.levelNumber} value={target.levelNumber}>{target.label}</option>
-                  ))}
-                </select>
+              <p className="min-w-60 flex-1 text-xs text-slate-500">The document goes back one level.</p>
+            ) : null}
+            <div className="min-w-72 flex-[2]">
+                  <label htmlFor="revision-comments" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Comments to reviewer</label>
+                  <input id="revision-comments" value={comments} onChange={(event) => setComments(event.target.value)} placeholder="Comments (optional)" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                </div>
+                ) : null}
+                <button type="button" onClick={submit} disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  {decision === "REJECT" ? "Reject Document" : "Resubmit to Reviewer"}
+                </button>
               </div>
+            </div>
+          ) : (
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-52 flex-1">
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Decision</label>
+              <select value={decision} onChange={(event) => setDecision(event.target.value as typeof decision)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                {documentStatus === "ON_HOLD" ? (
+                  <option value="RESUME">Resume</option>
+                ) : (
+                  <>
+                    <option value="APPROVE">Approve</option>
+                    <option value="REJECT">Reject</option>
+                    {revisionTargets.length > 0 ? <option value="REQUEST_REVISION">Revision Required</option> : null}
+                    {allowHold ? <option value="HOLD">On Hold</option> : null}
+                  </>
+                )}
+              </select>
+            </div>
+            {decision === "REQUEST_REVISION" ? (
+              <p className="min-w-60 flex-1 text-xs text-slate-500">The document goes back one level.</p>
             ) : null}
             <div className="min-w-72 flex-[2]">
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Comments</label>

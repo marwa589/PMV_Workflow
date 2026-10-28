@@ -14,6 +14,11 @@ type StepRow = {
   documentSubtypeId: string | null;
   documentType: { name: string };
   documentSubtype: { name: string } | null;
+  delayHours: number;
+  referenceDocumentTypeId: string | null;
+  referenceDocumentSubtypeId: string | null;
+  referenceDocumentType: { name: string } | null;
+  referenceDocumentSubtype: { name: string } | null;
 };
 type ProcessRow = {
   id: string;
@@ -24,7 +29,17 @@ type ProcessRow = {
   _count: { instances: number };
   steps: StepRow[];
 };
-type DraftNode = { key: string; parentKey: string | null; name: string; documentTypeId: string; documentSubtypeId: string };
+type DraftNode = {
+  key: string;
+  parentKey: string | null;
+  name: string;
+  documentTypeId: string;
+  documentSubtypeId: string;
+  referenceDocumentTypeId: string;
+  referenceDocumentSubtypeId: string;
+  // Hours as typed (empty = no waiting period).
+  delayHours: string;
+};
 
 const MAX_NODES = 100;
 
@@ -39,7 +54,7 @@ const isTree = (process: ProcessRow) => process.steps.filter((step) => step.pare
 export default function ProcessesManager() {
   const keyCounter = useRef(0);
   const newKey = () => `n${Date.now().toString(36)}${keyCounter.current++}`;
-  const blankNode = (parentKey: string | null): DraftNode => ({ key: newKey(), parentKey, name: "", documentTypeId: "", documentSubtypeId: "" });
+  const blankNode = (parentKey: string | null): DraftNode => ({ key: newKey(), parentKey, name: "", documentTypeId: "", documentSubtypeId: "", referenceDocumentTypeId: "", referenceDocumentSubtypeId: "", delayHours: "" });
 
   const [processes, setProcesses] = useState<ProcessRow[]>([]);
   const [types, setTypes] = useState<TypeOption[]>([]);
@@ -49,7 +64,7 @@ export default function ProcessesManager() {
     description: "",
     locked: false,
     hasRuns: false,
-    nodes: [{ key: "root", parentKey: null, name: "", documentTypeId: "", documentSubtypeId: "" }],
+    nodes: [{ key: "root", parentKey: null, name: "", documentTypeId: "", documentSubtypeId: "", referenceDocumentTypeId: "", referenceDocumentSubtypeId: "", delayHours: "" }],
   }));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -66,7 +81,7 @@ export default function ProcessesManager() {
   }, [load]);
 
   function reset() {
-    setDraft({ id: null, name: "", description: "", locked: false, hasRuns: false, nodes: [{ key: newKey(), parentKey: null, name: "", documentTypeId: "", documentSubtypeId: "" }] });
+    setDraft({ id: null, name: "", description: "", locked: false, hasRuns: false, nodes: [blankNode(null)] });
   }
 
   function updateNode(key: string, patch: Partial<DraftNode>) {
@@ -105,6 +120,9 @@ export default function ProcessesManager() {
       name: node.name,
       documentTypeId: node.documentTypeId,
       documentSubtypeId: node.documentSubtypeId || null,
+      referenceDocumentTypeId: node.referenceDocumentTypeId || null,
+      referenceDocumentSubtypeId: node.referenceDocumentTypeId ? node.referenceDocumentSubtypeId || null : null,
+      delayHours: node.parentKey && node.delayHours.trim() !== "" ? Number(node.delayHours) : 0,
     }));
     const result = draft.id
       ? await callApi("/api/admin/processes", "PATCH", { id: draft.id, ...base, steps })
@@ -149,6 +167,9 @@ export default function ProcessesManager() {
         name: step.name,
         documentTypeId: step.documentTypeId,
         documentSubtypeId: step.documentSubtypeId ?? "",
+        referenceDocumentTypeId: step.referenceDocumentTypeId ?? "",
+        referenceDocumentSubtypeId: step.referenceDocumentSubtypeId ?? "",
+        delayHours: step.delayHours > 0 ? String(step.delayHours) : "",
       })),
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -157,6 +178,7 @@ export default function ProcessesManager() {
   /** One node of the editor, with its choices nested below it. */
   function renderNode(node: DraftNode, depth: number): ReactNode {
     const type = types.find((candidate) => candidate.id === node.documentTypeId);
+    const referenceType = types.find((candidate) => candidate.id === node.referenceDocumentTypeId);
     const children = draft.nodes.filter((candidate) => candidate.parentKey === node.key);
     const parent = draft.nodes.find((candidate) => candidate.key === node.parentKey);
     return (
@@ -192,6 +214,47 @@ export default function ProcessesManager() {
               </select>
             </Field>
           </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <Field label="Reference document type (optional)">
+              <select
+                disabled={draft.locked}
+                value={node.referenceDocumentTypeId}
+                onChange={(e) => updateNode(node.key, { referenceDocumentTypeId: e.target.value, referenceDocumentSubtypeId: "" })}
+                className={inputClass}
+              >
+                <option value="">No reference document</option>
+                {types.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Reference sub type">
+              <select
+                disabled={draft.locked || !referenceType || referenceType.subtypes.length === 0}
+                value={node.referenceDocumentSubtypeId}
+                onChange={(e) => updateNode(node.key, { referenceDocumentSubtypeId: e.target.value })}
+                className={inputClass}
+              >
+                <option value="">Any sub type</option>
+                {referenceType?.subtypes.map((subtype) => <option key={subtype.id} value={subtype.id}>{subtype.name}</option>)}
+              </select>
+            </Field>
+            {depth > 0 ? (
+              <Field label={`Waiting period after "${parent?.name || "…"}" is approved (hours)`}>
+                <input
+                  type="number"
+                  min={0}
+                  max={8760}
+                  step={1}
+                  disabled={draft.locked}
+                  value={node.delayHours}
+                  onChange={(e) => updateNode(node.key, { delayHours: e.target.value })}
+                  className={inputClass}
+                  placeholder="0 = no waiting period (e.g. 12, 24, 48)"
+                />
+              </Field>
+            ) : null}
+          </div>
+          {node.referenceDocumentTypeId ? <p className="text-xs text-slate-500">The uploader of this document may attach a reference document of this type (optional). Only people with the &quot;View reference documents&quot; permission can see it.</p> : null}
+          {depth > 0 && Number(node.delayHours) > 0 ? <p className="text-xs text-slate-500">This document can only be uploaded {node.delayHours} hour(s) after the previous document&apos;s final approval. Admin users can override the wait.</p> : null}
           {children.length === 0 ? <p className="text-xs text-slate-500">No choices after this document: the process ends here once it is approved.</p> : null}
         </div>
         {children.length > 0 ? <div className="mt-3 space-y-3">{children.map((child) => renderNode(child, depth + 1))}</div> : null}
@@ -207,6 +270,8 @@ export default function ProcessesManager() {
         {children.map((step) => (
           <li key={step.id}>
             {step.name} <span className="text-slate-500">· {step.documentType.name}{step.documentSubtype ? ` - ${step.documentSubtype.name}` : ""}</span>
+            {step.delayHours > 0 ? <span className="ml-2 text-xs text-amber-700">waits {step.delayHours}h after approval</span> : null}
+            {step.referenceDocumentType ? <span className="ml-2 text-xs text-cyan-700">reference: {step.referenceDocumentType.name}{step.referenceDocumentSubtype ? ` - ${step.referenceDocumentSubtype.name}` : ""}</span> : null}
             {renderOutline(steps, step.id)}
           </li>
         ))}

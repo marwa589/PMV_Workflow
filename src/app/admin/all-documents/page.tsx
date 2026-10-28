@@ -19,7 +19,7 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
       subtitle="Every document in the system"
       emptyMessage="No documents available."
       showDownloadFilters
-      table={{ showBulkActions: true, allowAdminDelete: true, showDownloadTracking: true }}
+      table={{ showBulkActions: true, allowAdminDelete: true, showDownloadTracking: true, allowBatchReview: true }}
     />
   );
 }

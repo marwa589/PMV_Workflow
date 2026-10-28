@@ -23,6 +23,7 @@ const runSelect = {
         select: {
           id: true,
           parentStepId: true,
+          delayHours: true,
           documentType: { select: { code: true } },
           documentSubtype: { select: { code: true } },
         },
@@ -31,7 +32,7 @@ const runSelect = {
   },
   stepDocuments: {
     where: { isCurrent: true },
-    select: { processStepId: true, isCurrent: true, document: { select: { status: true } } },
+    select: { processStepId: true, isCurrent: true, document: { select: { status: true, approvedAt: true } } },
   },
   project: { select: { id: true, code: true, name: true } },
   startedBy: { select: { id: true, name: true } },

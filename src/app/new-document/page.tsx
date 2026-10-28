@@ -7,7 +7,8 @@ import { getDefaultRouteForRole } from "@/lib/auth/roles";
 import { optionValues } from "@/lib/document-fields";
 import { prisma } from "@/lib/prisma";
 import { canUserUploadAnything } from "@/lib/workflow/eligibility";
-import { getTaskOnlyChecker, getUploadTasks } from "@/lib/workflow/processes";
+import { getRootReferenceConfigs, getTaskOnlyChecker, getUploadTasks } from "@/lib/workflow/processes";
+import { resolveFlow } from "@/lib/workflow/resolve-flow";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,31 @@ export default async function NewDocumentPage({ searchParams }: { searchParams?:
       options: task.options,
     };
   }
+
+  // Reference documents: the types a step may ask for, and whether a NEW file of that type would need approval
+  // (it cannot be uploaded as a reference then; an approved document must be picked instead).
+  const rootReferences = process ? [] : await getRootReferenceConfigs(prisma);
+  const referenceScopes = [
+    ...rootReferences.map((config) => ({ typeId: config.referenceDocumentTypeId, subtypeId: config.referenceDocumentSubtypeId })),
+    ...(process ? process.options.flatMap((option) => (option.referenceDocumentTypeId ? [{ typeId: option.referenceDocumentTypeId, subtypeId: option.referenceDocumentSubtypeId }] : [])) : []),
+  ];
+  const referenceTypeRows = referenceScopes.length > 0
+    ? await prisma.documentType.findMany({
+        where: { id: { in: [...new Set(referenceScopes.map((scope) => scope.typeId))] } },
+        select: { id: true, name: true, subtypes: { select: { id: true, name: true }, orderBy: { name: "asc" } } },
+      })
+    : [];
+  const referenceTypes = await Promise.all(
+    referenceTypeRows.map(async (type) => {
+      const probes = [null, ...type.subtypes.map((subtype) => subtype.id)];
+      let requiresApproval = false;
+      for (const subtypeId of probes) {
+        const flow = await resolveFlow(prisma, { documentTypeId: type.id, documentSubtypeId: subtypeId, projectId: process?.projectId ?? null });
+        if (flow.kind === "flow" && flow.template.steps.some((step) => step.stepNumber > 0)) requiresApproval = true;
+      }
+      return { id: type.id, name: type.name, subtypes: type.subtypes, requiresApproval };
+    }),
+  );
 
   const optionTypeIds = process ? process.options.map((option) => option.documentTypeId) : [];
   const [types, projects, isTaskOnly] = await Promise.all([
@@ -91,7 +117,7 @@ export default async function NewDocumentPage({ searchParams }: { searchParams?:
 
   return (
     <DashboardShell role={session.userType} userName={session.name} title="New Document" subtitle="Upload and submit a document to start workflow">
-      <NewDocumentForm documentTypes={documentTypes} projects={projects} defaultRedirectPath={getDefaultRouteForRole(session.userType)} process={process} />
+      <NewDocumentForm documentTypes={documentTypes} projects={projects} defaultRedirectPath={getDefaultRouteForRole(session.userType)} process={process} rootReferences={rootReferences} referenceTypes={referenceTypes} />
     </DashboardShell>
   );
 }

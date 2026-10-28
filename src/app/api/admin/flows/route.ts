@@ -39,6 +39,7 @@ function serializeFlow(flow: FlowRow) {
       id: step.id,
       stepNumber: step.stepNumber,
       name: step.name,
+      signatureRequired: step.signatureRequired,
       approvers: step.approvers.map((entry) => ({
         id: entry.id,
         approverType: entry.approverType,
@@ -52,7 +53,7 @@ function serializeFlow(flow: FlowRow) {
   };
 }
 
-type ParsedStep = { stepNumber: number; name: string | null; approvers: Array<{ approverType: ApproverType; userId: string | null; userTypeId: string | null }> };
+type ParsedStep = { stepNumber: number; name: string | null; signatureRequired: boolean; approvers: Array<{ approverType: ApproverType; userId: string | null; userTypeId: string | null }> };
 
 /**
  * Level 0 is the uploader step (who may upload into the flow); levels 1..N are approvals, N up to 10.
@@ -93,7 +94,9 @@ function parseSteps(raw: unknown): { steps?: ParsedStep[]; error?: string } {
       }
     }
 
-    steps.push({ stepNumber, name: typeof record.name === "string" && record.name.trim() ? record.name.trim() : null, approvers });
+    // "Signature required" is on unless it is explicitly switched off. The uploader step (level 0) never approves, so it always stays on.
+    const signatureRequired = stepNumber === 0 ? true : record.signatureRequired !== false;
+    steps.push({ stepNumber, name: typeof record.name === "string" && record.name.trim() ? record.name.trim() : null, signatureRequired, approvers });
   }
 
   const numbers = steps.map((step) => step.stepNumber).sort((a, b) => a - b);
@@ -123,6 +126,7 @@ function stepCreateData(steps: ParsedStep[]) {
   return steps.map((step) => ({
     stepNumber: step.stepNumber,
     name: step.name,
+    signatureRequired: step.signatureRequired,
     approvers: { create: step.approvers },
   }));
 }

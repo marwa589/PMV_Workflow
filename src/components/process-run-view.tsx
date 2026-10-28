@@ -6,7 +6,19 @@ import { callApi } from "@/lib/admin-client";
 import StatusBadge from "@/components/status-badge";
 import { Banner, Card, Pill, dangerButton, primaryButton, secondaryButton } from "@/components/admin/admin-ui";
 
-type DocRef = { linkId: string; isCurrent: boolean; source: string; linkedAt: string; id: string; documentNumber: string; title: string; status: string; statusLabel: string };
+type DocRef = {
+  linkId: string;
+  isCurrent: boolean;
+  source: string;
+  linkedAt: string;
+  id: string;
+  documentNumber: string;
+  title: string;
+  status: string;
+  statusLabel: string;
+  // Present only when the viewer holds "View reference documents" for it.
+  referenceDocument: { id: string; documentNumber: string; title: string } | null;
+};
 type Step = {
   id: string;
   stepNumber: number;
@@ -14,6 +26,9 @@ type Step = {
   parentStepId: string | null;
   documentType: { id: string; code: string; name: string };
   documentSubtype: { id: string; code: string; name: string } | null;
+  delayHours: number;
+  referenceType: string | null;
+  opensAt: string | null;
   onPath: boolean;
   isOpenChoice: boolean;
   currentDocument: DocRef | null;
@@ -78,6 +93,7 @@ export default function ProcessRunView({ runId }: { runId: string }) {
     let note = "";
     if (!step.currentDocument) {
       if (notChosen) note = "Not chosen";
+      else if (step.isOpenChoice && step.opensAt) note = `Waiting period: opens ${new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(step.opensAt))}`;
       else if (step.isOpenChoice) note = "Open choice: waiting for an upload";
       else note = stillOpen ? "Not reached yet" : "Not reached";
     }
@@ -100,6 +116,17 @@ export default function ProcessRunView({ runId }: { runId: string }) {
               <span className="text-sm text-slate-500">{note}</span>
             )}
           </div>
+
+          {step.currentDocument?.referenceDocument ? (
+            <p className="mt-2 text-xs text-slate-600">
+              Reference document:{" "}
+              <Link href={`/documents/${step.currentDocument.referenceDocument.id}`} className="font-medium text-cyan-700 hover:underline">
+                {step.currentDocument.referenceDocument.documentNumber}
+              </Link>{" "}
+              · {step.currentDocument.referenceDocument.title}
+            </p>
+          ) : null}
+          {step.delayHours > 0 ? <p className="mt-1 text-xs text-amber-700">Waits {step.delayHours} hour(s) after the previous document is approved.</p> : null}
 
           {step.history.length > 0 ? (
             <p className="mt-2 text-xs text-slate-500">

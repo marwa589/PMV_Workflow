@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { callApi, callApiWithDeactivationConfirmation } from "@/lib/admin-client";
 import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton, secondaryButton } from "@/components/admin/admin-ui";
 
@@ -30,6 +30,7 @@ export default function AdminUserManagement() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -47,6 +48,16 @@ export default function AdminUserManagement() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Live search as you type: every word must appear in the name, email, user type or status.
+  const visibleUsers = useMemo(() => {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return users;
+    return users.filter((user) => {
+      const text = [user.name, user.email, user.userType.name, user.userType.code, user.isActive ? "active" : "deactivated inactive"].join(" ").toLowerCase();
+      return terms.every((term) => text.includes(term));
+    });
+  }, [users, query]);
 
   function startEdit(user: UserRow) {
     setEditingId(user.id);
@@ -135,11 +146,26 @@ export default function AdminUserManagement() {
         </div>
       </Card>
 
-      <Card title="Users" subtitle="Deactivate an account to block sign-in without losing its history.">
+      <Card
+        title="Users"
+        subtitle="Deactivate an account to block sign-in without losing its history."
+        actions={
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search users by name, email or type"
+            aria-label="Search users"
+            className={`${inputClass} w-72`}
+          />
+        }
+      >
         {loading ? (
           <p className="text-sm text-slate-500">Loading...</p>
         ) : users.length === 0 ? (
           <Empty>No users yet.</Empty>
+        ) : visibleUsers.length === 0 ? (
+          <Empty>No users match &quot;{query}&quot;.</Empty>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
@@ -155,7 +181,7 @@ export default function AdminUserManagement() {
                 </tr>
               </thead>
               <tbody>
-                {users.map((user) => (
+                {visibleUsers.map((user) => (
                   <tr key={user.id} className="border-t border-slate-100">
                     <td className="px-3 py-3 font-medium text-slate-900">{user.name}</td>
                     <td className="px-3 py-3 text-slate-600">{user.email}</td>

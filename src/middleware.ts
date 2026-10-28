@@ -102,6 +102,7 @@ export const config = {
     "/documents/:path*",
     "/processes/:path*",
     "/tasks/:path*",
+    "/search",
     "/api/:path*",
   ],
 };

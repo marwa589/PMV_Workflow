@@ -52,6 +52,16 @@ type DashboardShellProps = {
   children: ReactNode;
 };
 
+type GlobalSearchHit = {
+  id: string;
+  documentNumber: string;
+  title: string;
+  statusLabel: string;
+  typeName: string;
+  subtypeName: string | null;
+  projectLabel: string | null;
+};
+
 type SidebarCounts = {
   pendingDocuments: number;
   pendingApprovals: number;
@@ -498,6 +508,11 @@ export default function DashboardShell({
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [searchValue, setSearchValue] = useState("");
+  const [searchHits, setSearchHits] = useState<GlobalSearchHit[]>([]);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchBoxRef = useRef<HTMLDivElement | null>(null);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -509,39 +524,47 @@ export default function DashboardShell({
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
+  // Top-bar search: looks through every document the person may open (not just the page that is showing).
   useEffect(() => {
-    setSearchValue(searchParams?.get("search") ?? "");
-  }, [searchParams]);
+    const term = searchValue.trim();
+    if (term.length < 2) {
+      setSearchHits([]);
+      setSearchTotal(0);
+      setSearchLoading(false);
+      return;
+    }
 
-  useEffect(() => {
-    const currentSearch = searchParams?.get("search") ?? "";
-    const nextSearch = searchValue.trim();
-
-    if (nextSearch === currentSearch.trim()) return;
-
-    const timeoutId = window.setTimeout(() => {
-      const params = new URLSearchParams(
-        Array.from(searchParams?.entries() ?? []),
-      );
-
-      if (nextSearch) {
-        params.set("search", nextSearch);
-      } else {
-        params.delete("search");
+    const controller = new AbortController();
+    setSearchLoading(true);
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/search?q=${encodeURIComponent(term)}&limit=8`, { signal: controller.signal });
+        if (!response.ok) {
+          setSearchLoading(false);
+          return;
+        }
+        const data = (await response.json()) as { hits: GlobalSearchHit[]; total: number };
+        setSearchHits(data.hits);
+        setSearchTotal(data.total);
+        setSearchLoading(false);
+      } catch {
+        // Ignored: a newer search replaced this one.
       }
+    }, 300);
 
-      params.delete("page");
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
+  }, [searchValue]);
 
-      const queryString = params.toString();
-      const targetUrl = queryString
-        ? `${pathname}?${queryString}`
-        : pathname;
-
-      router.replace(targetUrl, { scroll: false });
-    }, 350);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [pathname, router, searchParams, searchValue]);
+  useEffect(() => {
+    function handleSearchPointerDown(event: MouseEvent) {
+      if (searchBoxRef.current && !searchBoxRef.current.contains(event.target as Node)) setSearchOpen(false);
+    }
+    document.addEventListener("mousedown", handleSearchPointerDown);
+    return () => document.removeEventListener("mousedown", handleSearchPointerDown);
+  }, []);
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -714,44 +737,69 @@ export default function DashboardShell({
               </div>
 
               <div className="flex items-center gap-2 sm:gap-3">
-                <form
-                  className="hidden items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-500 sm:flex"
-                  onSubmit={(event) => {
-                    event.preventDefault();
+                <div ref={searchBoxRef} className="relative hidden sm:block">
+                  <form
+                    className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-500"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const term = searchValue.trim();
+                      if (!term) return;
+                      setSearchOpen(false);
+                      router.push(`/search?q=${encodeURIComponent(term)}`);
+                    }}
+                  >
+                    <Search className="h-4 w-4" />
 
-                    const params = new URLSearchParams(
-                      Array.from(searchParams?.entries() ?? []),
-                    );
+                    <input
+                      value={searchValue}
+                      onChange={(event) => {
+                        setSearchValue(event.target.value);
+                        setSearchOpen(true);
+                      }}
+                      onFocus={() => setSearchOpen(true)}
+                      placeholder="Search all documents"
+                      aria-label="Search all documents"
+                      className="w-48 border-none bg-transparent text-sm text-slate-700 outline-none"
+                    />
+                  </form>
 
-                    const nextSearch = searchValue.trim();
-
-                    if (nextSearch) {
-                      params.set("search", nextSearch);
-                    } else {
-                      params.delete("search");
-                    }
-
-                    params.delete("page");
-
-                    const queryString = params.toString();
-
-                    router.replace(
-                      queryString
-                        ? `${pathname}?${queryString}`
-                        : pathname,
-                      { scroll: false },
-                    );
-                  }}
-                >
-                  <Search className="h-4 w-4" />
-
-                  <input
-                    value={searchValue}
-                    onChange={(event) => setSearchValue(event.target.value)}
-                    placeholder="Search documents"
-                    className="w-40 border-none bg-transparent text-sm text-slate-700 outline-none"
-                  />
-                </form>
+                  {searchOpen && searchValue.trim().length >= 2 ? (
+                    <div className="absolute right-0 z-50 mt-2 w-96 max-w-[90vw] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                      {searchLoading && searchHits.length === 0 ? (
+                        <p className="px-4 py-3 text-sm text-slate-500">Searching...</p>
+                      ) : searchHits.length === 0 ? (
+                        <p className="px-4 py-3 text-sm text-slate-500">No documents you can access match &quot;{searchValue.trim()}&quot;.</p>
+                      ) : (
+                        <ul className="max-h-96 divide-y divide-slate-100 overflow-y-auto">
+                          {searchHits.map((hit) => (
+                            <li key={hit.id}>
+                              <Link
+                                href={`/documents/${hit.id}`}
+                                onClick={() => setSearchOpen(false)}
+                                className="block px-4 py-2.5 hover:bg-slate-50"
+                              >
+                                <span className="block text-sm font-medium text-slate-900">{hit.documentNumber}</span>
+                                <span className="block truncate text-xs text-slate-600">{hit.title}</span>
+                                <span className="block truncate text-xs text-slate-500">
+                                  {hit.typeName}{hit.subtypeName ? ` - ${hit.subtypeName}` : ""}{hit.projectLabel ? ` · ${hit.projectLabel}` : ""} · {hit.statusLabel}
+                                </span>
+                              </Link>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {searchHits.length > 0 ? (
+                        <Link
+                          href={`/search?q=${encodeURIComponent(searchValue.trim())}`}
+                          onClick={() => setSearchOpen(false)}
+                          className="block border-t border-slate-200 bg-slate-50 px-4 py-2.5 text-center text-sm font-medium text-cyan-700 hover:bg-slate-100"
+                        >
+                          See all {searchTotal} result{searchTotal === 1 ? "" : "s"}
+                        </Link>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
 
                 <div className="relative">
                   <button

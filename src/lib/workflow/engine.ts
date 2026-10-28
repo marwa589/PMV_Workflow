@@ -235,6 +235,7 @@ export async function startApproval(
         documentId: document.id,
         levelNumber: step.stepNumber,
         name: step.name,
+        signatureRequired: step.signatureRequired,
         status,
         actedById: step.stepNumber === 0 ? input.actor.id : null,
         actedAt: step.stepNumber === 0 ? now : null,
@@ -446,12 +447,13 @@ export async function performWorkflowAction(
   if (input.action === "REQUEST_REVISION") {
     const comment = input.comment?.trim();
     if (!comment) throw new WorkflowError("A comment is required when requesting a revision.", 400);
-    const target = input.targetLevel ?? [...document.approvalSteps]
+    // A revision always goes exactly one level back (any targetLevel sent by a client is ignored).
+    const target = [...document.approvalSteps]
       .filter((candidate) => candidate.levelNumber < level)
       .sort((left, right) => right.levelNumber - left.levelNumber)[0]?.levelNumber;
     const targetStep = document.approvalSteps.find((candidate) => candidate.levelNumber === target);
     if (target === undefined || !targetStep || target >= level) {
-      throw new WorkflowError("Choose an earlier step to send the document back to.", 400);
+      throw new WorkflowError("There is no earlier step to send the document back to.", 400);
     }
 
     await tx.documentApprovalStep.update({

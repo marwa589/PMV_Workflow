@@ -3,7 +3,6 @@ import { DocumentStatus } from "@prisma/client";
 import { redirect } from "next/navigation";
 import BatchDocumentReview from "@/components/batch-document-review";
 import { requireAuth } from "@/lib/auth/guards";
-import { userHasPermissionForDocument } from "@/lib/auth/access";
 import { BULK_APPROVE_MAX } from "@/lib/bulk-approve-config";
 import { userCanBulkApprove } from "@/lib/bulk-approve";
 import { getActionableDocuments } from "@/lib/document-queries";
@@ -28,20 +27,15 @@ export default async function ReviewBatchPage({ searchParams }: { searchParams: 
 
   const user = await prisma.user.findUnique({ where: { id: session.userId }, select: { signaturePath: true } });
 
-  const items = await Promise.all(
-    rows.map(async (row) => ({
+  const items = rows.map((row) => ({
       id: row.id,
       documentNumber: row.documentNumber,
       title: row.title,
       downloadUrl: `/api/documents/${row.id}/download?version=${row.currentVersion}`,
       actionUrl: `/api/documents/${row.id}/actions`,
-      allowNoSignature: await userHasPermissionForDocument(session, "documents.approve_without_signature", {
-        projectId: row.project?.id ?? null,
-        documentTypeId: row.documentType.id,
-        documentSubtypeId: row.documentSubtype?.id ?? null,
-      }),
-    })),
-  );
+      // The flow level this document waits at decides whether a signature is needed.
+      allowNoSignature: !row.signatureRequired,
+    }));
 
   return <BatchDocumentReview items={items} hasSignature={Boolean(user?.signaturePath)} returnUrl="/tasks" />;
 }

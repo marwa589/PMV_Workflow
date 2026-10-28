@@ -3,7 +3,7 @@ import ApproverPendingTable from "@/components/approver-pending-table";
 import DashboardShell from "@/components/dashboard-shell";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireUserType } from "@/lib/auth/guards";
-import { APPROVER_USER_TYPES, roleLabel } from "@/lib/auth/roles";
+import { APPROVER_USER_TYPES, roleLabel, USER_TYPE } from "@/lib/auth/roles";
 import { getDocumentsForApprover } from "@/lib/document-queries";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +43,7 @@ export default async function ApproverDashboardPage() {
         </div>
         <div className="px-1 py-4">
           <ApproverPendingTable
+            showVersion={session.userType === USER_TYPE.ADMIN}
             documents={data.pendingDocuments.map((row) => ({
               id: row.id,
               documentNumber: row.documentNumber,

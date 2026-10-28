@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { BULK_APPROVE_MAX } from "@/lib/bulk-approve-config";
 // import { DocumentStatus } from "@prisma/client";
 import StatusBadge from "@/components/status-badge";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
@@ -26,6 +27,8 @@ export type DocumentListItem = {
   processStatus?: string | null;
   processStatusLabel?: string | null;
   canReview?: boolean;
+  // True when the document is pending and waiting for THIS user (it can be reviewed together with others).
+  batchEligible?: boolean;
   rejectionComments?: string | null;
   dateLabel: string;
   downloadedAt?: Date | null;
@@ -44,9 +47,14 @@ type Props = {
   allowAdminDelete?: boolean;
   allowReview?: boolean;
   showDownloadTracking?: boolean;
+  // Admin-only columns: process status and document version.
+  showAdminColumns?: boolean;
+  // Adds "Review selected" (several pending documents approved together). Only for users an admin allowed to do so.
+  allowBatchReview?: boolean;
 };
 
-export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false, allowAdminDelete = false, allowReview = false, showDownloadTracking = false }: Props) {
+export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false, allowAdminDelete = false, allowReview = false, showDownloadTracking = false, allowBatchReview = false, showAdminColumns = false }: Props) {
+  const router = useRouter();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [visibleCount, setVisibleCount] = useState(10);
   const searchParams = useSearchParams();
@@ -56,7 +64,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
   const pagedDocuments = visibleDocuments.slice(0, visibleCount);
   const approvedDocuments = useMemo(() => visibleDocuments.filter((doc) => doc.status === "APPROVED"), [visibleDocuments]);
   const selectedDocuments = useMemo(() => visibleDocuments.filter((doc) => selectedIds.includes(doc.id)), [selectedIds, visibleDocuments]);
-  const columnCount = (showBulkActions ? 1 : 0) + (showDownloadTracking ? 12 : 9);
+  const columnCount = (showBulkActions ? 1 : 0) + (showDownloadTracking ? 12 : 9) - (showAdminColumns ? 0 : 2);
 
   function toggleSelection(id: string) {
     setSelectedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
@@ -72,6 +80,23 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
 
   function selectApprovedOnly() {
     setSelectedIds(approvedDocuments.map((doc) => doc.id));
+  }
+
+  // Every selected document must be pending for this user (and no more than the batch limit).
+  const notReviewable = selectedDocuments.filter((doc) => !doc.batchEligible);
+  const canReviewSelected = selectedDocuments.length > 0 && notReviewable.length === 0 && selectedDocuments.length <= BULK_APPROVE_MAX;
+  const reviewHint =
+    selectedDocuments.length === 0
+      ? ""
+      : notReviewable.length > 0
+        ? `${notReviewable.length} selected document(s) are not pending for you`
+        : selectedDocuments.length > BULK_APPROVE_MAX
+          ? `Select at most ${BULK_APPROVE_MAX} documents`
+          : "";
+
+  function handleReviewSelected() {
+    if (!canReviewSelected) return;
+    router.push(`/approver/review-batch?ids=${selectedDocuments.map((doc) => doc.id).join(",")}`);
   }
 
   function handleBulkDownload(target: "selected") {
@@ -169,6 +194,20 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
           <button type="button" onClick={() => handleBulkDownload("selected")} disabled={selectedDocuments.length === 0} className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
             Download selected
           </button>
+          {allowBatchReview ? (
+            <>
+              <button
+                type="button"
+                onClick={handleReviewSelected}
+                disabled={!canReviewSelected}
+                title={reviewHint || "Review and approve the selected documents together"}
+                className="rounded-lg bg-cyan-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Review selected
+              </button>
+              {reviewHint ? <span className="text-xs text-amber-700">{reviewHint}</span> : null}
+            </>
+          ) : null}
           {allowBulkDelete ? (
             <button type="button" onClick={handleBulkDelete} disabled={selectedDocuments.length === 0} className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50">
               Request deletion
@@ -189,10 +228,10 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
             <th className="px-5 py-3 font-semibold">Document Number</th>
             <th className="px-5 py-3 font-semibold">Title</th>
             <th className="px-5 py-3 font-semibold">Status</th>
-            <th className="px-5 py-3 font-semibold">Process Status</th>
+            {showAdminColumns ? <th className="px-5 py-3 font-semibold">Process Status</th> : null}
             <th className="px-5 py-3 font-semibold">Project</th>
             {showDownloadTracking ? <><th className="px-5 py-3 font-semibold">Download Status</th><th className="px-5 py-3 font-semibold">Download Timestamp</th><th className="px-5 py-3 font-semibold">Approval Date/Time</th></> : null}
-            <th className="px-5 py-3 font-semibold">Version</th>
+            {showAdminColumns ? <th className="px-5 py-3 font-semibold">Version</th> : null}
             <th className="px-5 py-3 font-semibold">Current Approver</th>
             <th className="px-5 py-3 font-semibold">Last Updated</th>
             <th className="px-5 py-3 font-semibold">Actions</th>
@@ -243,9 +282,11 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                   <td className="px-5 py-4">
                     <StatusBadge status={doc.status} label={doc.statusLabel} />
                   </td>
-                  <td className="px-5 py-4">
-                    <StatusBadge status={doc.processStatus || "NONE"} label={doc.processStatusLabel || "No Process"} />
-                  </td>
+                  {showAdminColumns ? (
+                    <td className="px-5 py-4">
+                      <StatusBadge status={doc.processStatus || "NONE"} label={doc.processStatusLabel || "No Process"} />
+                    </td>
+                  ) : null}
                   <td className="px-5 py-4 text-slate-700">{doc.projectLabel || "—"}</td>
                   {showDownloadTracking ? (
                     <>
@@ -256,7 +297,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                       <td className="px-5 py-4 text-slate-500">{formatDateTime(doc.approvalDate)}</td>
                     </>
                   ) : null}
-                  <td className="px-5 py-4 text-slate-700">V{doc.currentVersion}</td>
+                  {showAdminColumns ? <td className="px-5 py-4 text-slate-700">V{doc.currentVersion}</td> : null}
                   <td className="px-5 py-4 text-slate-700">{getCurrentApproverDisplay(doc)}</td>
                   <td className="px-5 py-4 text-slate-500">{doc.dateLabel}</td>
                   <td className="px-5 py-4">

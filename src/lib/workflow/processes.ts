@@ -12,6 +12,9 @@ import { USER_TYPE, type UserTypeCode } from "@/lib/auth/roles";
 import { canUserUpload } from "@/lib/workflow/eligibility";
 import { WorkflowError } from "@/lib/workflow/errors";
 import type { WorkflowEffects } from "@/lib/workflow/engine";
+import { prisma } from "@/lib/prisma";
+import { dispatchWorkflowEffects } from "@/lib/workflow/effects";
+import { stepOpensAt } from "@/lib/process-status";
 
 /**
  * A process is a tree of document nodes (ProcessStep rows linked by parentStepId):
@@ -99,6 +102,37 @@ export async function classifyUpload(db: Db, doc: Scope): Promise<UploadKind> {
   return classify(await loadActiveNodes(db), doc);
 }
 
+export type RootReferenceConfig = {
+  documentTypeId: string;
+  documentSubtypeId: string | null;
+  referenceDocumentTypeId: string;
+  referenceDocumentSubtypeId: string | null;
+};
+
+/** Reference document settings of the START documents of active processes (used by the New Document form). */
+export async function getRootReferenceConfigs(db: Db): Promise<RootReferenceConfig[]> {
+  const definitions = await db.processDefinition.findMany({
+    where: { isActive: true },
+    select: {
+      currentVersion: true,
+      steps: {
+        where: { parentStepId: null, referenceDocumentTypeId: { not: null } },
+        select: { versionNumber: true, documentTypeId: true, documentSubtypeId: true, referenceDocumentTypeId: true, referenceDocumentSubtypeId: true },
+      },
+    },
+  });
+  return definitions.flatMap((definition) =>
+    definition.steps
+      .filter((step) => step.versionNumber === definition.currentVersion && step.referenceDocumentTypeId)
+      .map((step) => ({
+        documentTypeId: step.documentTypeId,
+        documentSubtypeId: step.documentSubtypeId,
+        referenceDocumentTypeId: step.referenceDocumentTypeId as string,
+        referenceDocumentSubtypeId: step.referenceDocumentSubtypeId,
+      })),
+  );
+}
+
 /** For the New Document form: hides the types / sub types that may only be uploaded as a later step of a running process. */
 export async function getTaskOnlyChecker(db: Db): Promise<(doc: Scope) => boolean> {
   const nodes = await loadActiveNodes(db);
@@ -134,6 +168,10 @@ async function lockRun(tx: Prisma.TransactionClient, processInstanceId: string) 
   await tx.$queryRaw`SELECT 1 FROM "ProcessInstance" WHERE "id" = ${processInstanceId} FOR UPDATE`;
 }
 
+export function formatOpensAt(date: Date): string {
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
 /**
  * Put an uploaded document into a node of a run.
  *  - first document of a run: the node must be the root;
@@ -143,7 +181,17 @@ async function lockRun(tx: Prisma.TransactionClient, processInstanceId: string) 
  */
 export async function linkDocumentToStep(
   tx: Prisma.TransactionClient,
-  input: { processInstanceId: string; stepId: string; documentId: string; source: ProcessStepSource; linkedById: string },
+  input: {
+    processInstanceId: string;
+    stepId: string;
+    documentId: string;
+    source: ProcessStepSource;
+    linkedById: string;
+    /** Optional reference document (uploaded with this document, or an approved one picked by the uploader). */
+    referenceDocumentId?: string | null;
+    /** Admin users may upload before the waiting period of the step is over. */
+    overrideDelay?: boolean;
+  },
   effects?: WorkflowEffects,
 ) {
   await lockRun(tx, input.processInstanceId);
@@ -156,7 +204,7 @@ export async function linkDocumentToStep(
 
   const step = await tx.processStep.findFirst({
     where: { id: input.stepId, processDefinitionId: instance.processDefinitionId },
-    select: { id: true, parentStepId: true, versionNumber: true, documentTypeId: true, documentSubtypeId: true },
+    select: { id: true, parentStepId: true, versionNumber: true, documentTypeId: true, documentSubtypeId: true, delayHours: true },
   });
   if (!step || step.versionNumber !== instance.stepVersion) throw new WorkflowError("Process step not found.", 404);
 
@@ -175,6 +223,18 @@ export async function linkDocumentToStep(
   // The node must be the root of a fresh run, or one of the choices under the last approved node.
   if (step.parentStepId !== instance.currentStepId) {
     throw new WorkflowError("This document is not one of the options for the next step of this process.", 400);
+  }
+
+  // The waiting period after the parent document's final approval must be over (admins may override it).
+  if (step.parentStepId && step.delayHours > 0 && !input.overrideDelay) {
+    const parentLink = await tx.processStepDocument.findFirst({
+      where: { processInstanceId: instance.id, processStepId: step.parentStepId, isCurrent: true },
+      select: { document: { select: { approvedAt: true } } },
+    });
+    const opensAt = stepOpensAt(parentLink?.document.approvedAt ?? null, step.delayHours);
+    if (opensAt && opensAt.getTime() > Date.now()) {
+      throw new WorkflowError(`This document opens for upload on ${formatOpensAt(opensAt)} (waiting period of ${step.delayHours} hour(s) after the previous approval).`, 409);
+    }
   }
 
   const inProgress = await tx.processStepDocument.findFirst({
@@ -198,6 +258,7 @@ export async function linkDocumentToStep(
       source: input.source,
       linkedById: input.linkedById,
       isCurrent: true,
+      referenceDocumentId: input.referenceDocumentId ?? null,
     },
   });
 
@@ -260,17 +321,26 @@ export async function handleProcessDocumentRejected(tx: Prisma.TransactionClient
     } else {
       await tx.processStepDocument.update({ where: { id: link.id }, data: { isCurrent: false } });
       // The choice is open again: tell the people who may upload.
-      if (effects) await collectUploadReadyEffects(tx, link.processInstanceId, effects);
+      if (effects) await collectUploadReadyEffects(tx, link.processInstanceId, effects, { dedupe: false });
     }
   }
 }
 
 /**
- * The run is waiting for its next document: tell everyone who may upload at least one of the choices
- * (in-app notification now, email through the normal batching). Admin users are never notified, like approvals.
+ * The run is waiting for its next document: tell everyone who may upload at least one of the choices that is OPEN
+ * (in-app notification now, email through the normal batching). A choice with a waiting period is not open until
+ * the period after the parent's final approval is over. Admin users are never notified, like approvals.
  * Same rule as My Tasks: canUserUpload for the choice's type, sub type and the run's project.
+ *
+ * dedupe = true (the scheduled job and approvals): each choice is announced once per approved parent document
+ * (remembered in ProcessUploadNotice). dedupe = false (a rejected choice re-opens the decision): announce again.
  */
-async function collectUploadReadyEffects(tx: Prisma.TransactionClient, processInstanceId: string, effects: WorkflowEffects) {
+async function collectUploadReadyEffects(
+  tx: Prisma.TransactionClient,
+  processInstanceId: string,
+  effects: WorkflowEffects,
+  options: { dedupe?: boolean } = { dedupe: true },
+) {
   const run = await tx.processInstance.findUnique({
     where: { id: processInstanceId },
     select: {
@@ -279,15 +349,40 @@ async function collectUploadReadyEffects(tx: Prisma.TransactionClient, processIn
       projectId: true,
       currentStepId: true,
       processDefinition: { select: { name: true } },
-      currentStep: { select: { name: true, childSteps: { select: { documentTypeId: true, documentSubtypeId: true } } } },
-      stepDocuments: { where: { isCurrent: true }, select: { documentId: true, processStep: { select: { id: true, parentStepId: true } } } },
+      currentStep: { select: { name: true, childSteps: { select: { id: true, documentTypeId: true, documentSubtypeId: true, delayHours: true } } } },
+      stepDocuments: { where: { isCurrent: true }, select: { documentId: true, document: { select: { approvedAt: true } }, processStep: { select: { id: true, parentStepId: true } } } },
     },
   });
   if (!run || run.status !== ProcessStatus.IN_PROGRESS || !run.currentStep || run.currentStep.childSteps.length === 0) return;
   // A choice already holds a document in progress: nothing to upload yet.
   if (run.stepDocuments.some((link) => link.processStep.parentStepId === run.currentStepId)) return;
-  const anchorDocumentId = run.stepDocuments.find((link) => link.processStep.id === run.currentStepId)?.documentId;
-  if (!anchorDocumentId) return;
+  const anchor = run.stepDocuments.find((link) => link.processStep.id === run.currentStepId);
+  if (!anchor) return;
+  const anchorDocumentId = anchor.documentId;
+
+  // Choices whose waiting period is over.
+  const now = Date.now();
+  let openChildren = run.currentStep.childSteps.filter((child) => {
+    const opensAt = stepOpensAt(anchor.document.approvedAt, child.delayHours);
+    return !opensAt || opensAt.getTime() <= now;
+  });
+  if (openChildren.length === 0) return;
+
+  // Remember which choices have been announced for this approved document.
+  const already = await tx.processUploadNotice.findMany({
+    where: { processInstanceId, anchorDocumentId, processStepId: { in: openChildren.map((child) => child.id) } },
+    select: { processStepId: true },
+  });
+  const announced = new Set(already.map((row) => row.processStepId));
+  const fresh = openChildren.filter((child) => !announced.has(child.id));
+  if (options.dedupe !== false) openChildren = fresh;
+  if (openChildren.length === 0) return;
+  if (fresh.length > 0) {
+    await tx.processUploadNotice.createMany({
+      data: fresh.map((child) => ({ processInstanceId, processStepId: child.id, anchorDocumentId })),
+      skipDuplicates: true,
+    });
+  }
 
   // Only people who could possibly upload are checked: users with an assignment, or named by an uploader step.
   const uploaderTypes = await tx.documentWorkflowStepApprover.findMany({
@@ -312,7 +407,7 @@ async function collectUploadReadyEffects(tx: Prisma.TransactionClient, processIn
   for (const candidate of candidates) {
     const actor = { id: candidate.id, userType: candidate.userType.code as UserTypeCode };
     let allowed = false;
-    for (const child of run.currentStep.childSteps) {
+    for (const child of openChildren) {
       if (await canUserUpload(tx, actor, { documentTypeId: child.documentTypeId, documentSubtypeId: child.documentSubtypeId, projectId: run.projectId })) {
         allowed = true;
         break;
@@ -328,6 +423,34 @@ async function collectUploadReadyEffects(tx: Prisma.TransactionClient, processIn
     });
     effects.emailEvents.push({ recipientId: candidate.id, type: EmailEventType.PROCESS_UPLOAD_READY, documentId: anchorDocumentId });
   }
+}
+
+/**
+ * Scheduled job: a waiting period between two documents has ended, so the next choice just opened. Tells the people
+ * who may upload it (each choice once per approved document). Safe to run as often as the cron job runs.
+ */
+export async function notifyUploadsThatJustOpened(): Promise<number> {
+  const runs = await prisma.processInstance.findMany({
+    where: {
+      status: ProcessStatus.IN_PROGRESS,
+      currentStepId: { not: null },
+      currentStep: { childSteps: { some: { delayHours: { gt: 0 } } } },
+    },
+    select: { id: true },
+  });
+  let notified = 0;
+  for (const run of runs) {
+    const effects: WorkflowEffects = { notifications: [], emailEvents: [] };
+    await prisma.$transaction(async (tx) => {
+      await lockRun(tx, run.id);
+      await collectUploadReadyEffects(tx, run.id, effects, { dedupe: true });
+    });
+    if (effects.notifications.length > 0 || effects.emailEvents.length > 0) {
+      await dispatchWorkflowEffects(effects);
+      notified += 1;
+    }
+  }
+  return notified;
 }
 
 /** A document is being deleted for good: if it was the root of a run, the run has nothing left to stand on. */
@@ -362,6 +485,14 @@ export type UploadTaskOption = {
   documentSubtypeId: string | null;
   typeName: string;
   subtypeName: string | null;
+  typeCode: string;
+  subtypeCode: string | null;
+  /** Optional reference document this step lets the uploader attach (type, and sub type when set). */
+  referenceDocumentTypeId: string | null;
+  referenceDocumentSubtypeId: string | null;
+  referenceTypeName: string | null;
+  /** Set only for Admin users, who see a choice during its waiting period and may override it. */
+  waitingUntil: Date | null;
 };
 
 export type UploadTask = {
@@ -372,6 +503,8 @@ export type UploadTask = {
   afterStepName: string;
   lastDocument: { id: string; documentNumber: string; title: string; approvedAt: Date | null } | null;
   options: UploadTaskOption[];
+  /** For Admin users: when the earliest waiting choice opens, if every choice they see is still waiting. */
+  opensAt: Date | null;
 };
 
 /**
@@ -400,8 +533,13 @@ export async function getUploadTasks(db: Db, user: { userId: string; userType: U
               name: true,
               documentTypeId: true,
               documentSubtypeId: true,
-              documentType: { select: { name: true } },
-              documentSubtype: { select: { name: true } },
+              delayHours: true,
+              referenceDocumentTypeId: true,
+              referenceDocumentSubtypeId: true,
+              referenceDocumentType: { select: { name: true } },
+              referenceDocumentSubtype: { select: { name: true } },
+              documentType: { select: { name: true, code: true } },
+              documentSubtype: { select: { name: true, code: true } },
             },
           },
         },
@@ -434,16 +572,28 @@ export async function getUploadTasks(db: Db, user: { userId: string; userType: U
     // A choice was already made and its document is in progress: nothing to upload until it is approved or rejected.
     if (run.stepDocuments.some((link) => link.processStep.parentStepId === run.currentStepId)) continue;
 
+    const lastLink = run.stepDocuments.find((link) => link.processStep.id === run.currentStepId);
+    const last = lastLink?.document ?? null;
+    const isAdmin = user.userType === USER_TYPE.ADMIN;
+
     const options: UploadTaskOption[] = [];
+    let earliestOpen: Date | null = null;
     for (const child of run.currentStep.childSteps) {
+      // A choice with a waiting period stays hidden until the period after the parent's final approval is over.
+      // Admin users still see it, marked as waiting, and may upload anyway.
+      const opensAt = stepOpensAt(last?.approvedAt ?? null, child.delayHours);
+      const waiting = opensAt !== null && opensAt.getTime() > Date.now();
+      if (waiting && !isAdmin) continue;
+
       const allowed =
-        user.userType === USER_TYPE.ADMIN ||
+        isAdmin ||
         (await mayUpload({
           documentTypeId: child.documentTypeId,
           documentSubtypeId: child.documentSubtypeId,
           projectId: run.projectId,
         }));
       if (allowed) {
+        if (waiting && opensAt && (!earliestOpen || opensAt < earliestOpen)) earliestOpen = opensAt;
         options.push({
           stepId: child.id,
           name: child.name,
@@ -451,12 +601,19 @@ export async function getUploadTasks(db: Db, user: { userId: string; userType: U
           documentSubtypeId: child.documentSubtypeId,
           typeName: child.documentType.name,
           subtypeName: child.documentSubtype?.name ?? null,
+          typeCode: child.documentType.code,
+          subtypeCode: child.documentSubtype?.code ?? null,
+          referenceDocumentTypeId: child.referenceDocumentTypeId,
+          referenceDocumentSubtypeId: child.referenceDocumentSubtypeId,
+          referenceTypeName: child.referenceDocumentType
+            ? `${child.referenceDocumentType.name}${child.referenceDocumentSubtype ? ` - ${child.referenceDocumentSubtype.name}` : ""}`
+            : null,
+          waitingUntil: waiting ? opensAt : null,
         });
       }
     }
     if (options.length === 0) continue;
 
-    const last = run.stepDocuments.find((link) => link.processStep.id === run.currentStepId)?.document ?? null;
     tasks.push({
       runId: run.id,
       processName: run.processDefinition.name,
@@ -465,6 +622,7 @@ export async function getUploadTasks(db: Db, user: { userId: string; userType: U
       afterStepName: run.currentStep.name,
       lastDocument: last,
       options,
+      opensAt: options.every((option) => option.waitingUntil) ? earliestOpen : null,
     });
   }
 

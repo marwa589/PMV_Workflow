@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search, X } from "lucide-react";
 import { callApi } from "@/lib/admin-client";
 import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton } from "@/components/admin/admin-ui";
@@ -182,6 +182,7 @@ export default function AssignmentsManager({ initialUserId = "" }: { initialUser
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [lookups, setLookups] = useState<Lookups | null>(null);
   const [filterUserId, setFilterUserId] = useState(initialUserId);
+  const [assignmentQuery, setAssignmentQuery] = useState("");
   const [form, setForm] = useState<FormState>(() => blank(initialUserId));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -257,6 +258,18 @@ export default function AssignmentsManager({ initialUserId = "" }: { initialUser
     ].filter(Boolean) as string[];
     return parts.length ? parts : ["Everything (no restriction)"];
   };
+
+  // Live search as you type: every word must appear in the user, email, role or scope (project, type, process...).
+  const visibleAssignments = useMemo(() => {
+    const terms = assignmentQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return assignments;
+    return assignments.filter((item) => {
+      const text = [item.user.name, item.user.email, item.role.name, ...scopeText(item)].join(" ").toLowerCase();
+      return terms.every((term) => text.includes(term));
+    });
+    // scopeText only reads the item it is given.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignments, assignmentQuery]);
 
   return (
     <div className="space-y-6">
@@ -405,16 +418,27 @@ export default function AssignmentsManager({ initialUserId = "" }: { initialUser
         title="Assignments"
         actions={
           lookups ? (
-            <select value={filterUserId} onChange={(event) => setFilterUserId(event.target.value)} className={`${inputClass} w-64`}>
-              <option value="">All users</option>
-              {lookups.users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-            </select>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="search"
+                value={assignmentQuery}
+                onChange={(event) => setAssignmentQuery(event.target.value)}
+                placeholder="Search by user, role or scope"
+                aria-label="Search assignments"
+                className={`${inputClass} w-64`}
+              />
+              <select value={filterUserId} onChange={(event) => setFilterUserId(event.target.value)} className={`${inputClass} w-64`}>
+                <option value="">All users</option>
+                {lookups.users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+              </select>
+            </div>
           ) : null
         }
       >
         {assignments.length === 0 ? <Empty>No assignments.</Empty> : null}
+        {assignments.length > 0 && visibleAssignments.length === 0 ? <Empty>No assignments match &quot;{assignmentQuery}&quot;.</Empty> : null}
         <div className="space-y-2">
-          {assignments.map((item) => (
+          {visibleAssignments.map((item) => (
             <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm">
               <div className="space-y-1">
                 <p><span className="font-medium text-slate-900">{item.user.name}</span> <span className="text-slate-500">holds</span> <Pill>{item.role.name}</Pill></p>

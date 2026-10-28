@@ -1,7 +1,9 @@
 // src/app/api/processes/[id]/route.ts
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { buildProcessVisibilityWhere, userHasPermission } from "@/lib/auth/access";
+import { buildDocumentVisibilityWhere, buildProcessVisibilityWhere, buildReferenceViewWhere, userHasPermission } from "@/lib/auth/access";
+import { stepOpensAt } from "@/lib/process-status";
+import { USER_TYPE } from "@/lib/auth/roles";
 import { validateCsrf } from "@/lib/csrf";
 import { prisma } from "@/lib/prisma";
 import { getDocumentStatusDisplay } from "@/lib/document-status";
@@ -43,6 +45,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
               name: true,
               parentStepId: true,
               versionNumber: true,
+              delayHours: true,
+              referenceDocumentType: { select: { id: true, code: true, name: true } },
+              referenceDocumentSubtype: { select: { id: true, code: true, name: true } },
               documentType: { select: { id: true, code: true, name: true } },
               documentSubtype: { select: { id: true, code: true, name: true } },
             },
@@ -57,7 +62,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
           isCurrent: true,
           source: true,
           linkedAt: true,
-          document: { select: { id: true, documentNumber: true, title: true, status: true, currentWorkflowStep: true } },
+          referenceDocumentId: true,
+          document: { select: { id: true, documentNumber: true, title: true, status: true, approvedAt: true, currentWorkflowStep: true } },
         },
       },
     },
@@ -87,13 +93,30 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   let canUpload = false;
   if (awaitingUpload) {
     const actor = { id: session.userId, userType: session.userType };
+    const approvedAtForDelay = run.stepDocuments.find((link) => link.isCurrent && link.processStepId === run.currentStepId)?.document.approvedAt ?? null;
     for (const step of definitionSteps.filter((candidate) => candidate.parentStepId === run.currentStepId)) {
+      // A choice in its waiting period cannot be uploaded (Admin users may override it).
+      const opensAt = stepOpensAt(approvedAtForDelay, step.delayHours);
+      if (opensAt && opensAt.getTime() > Date.now() && session.userType !== USER_TYPE.ADMIN) continue;
       if (await canUserUpload(prisma, actor, { documentTypeId: step.documentType.id, documentSubtypeId: step.documentSubtype?.id ?? null, projectId: run.project?.id ?? null })) {
         canUpload = true;
         break;
       }
     }
   }
+
+  // Reference documents are shown only to people who hold "View reference documents" for them (and can see the document).
+  const referenceIds = [...new Set(run.stepDocuments.flatMap((link) => (link.referenceDocumentId ? [link.referenceDocumentId] : [])))];
+  let visibleReferences = new Map<string, { id: string; documentNumber: string; title: string }>();
+  if (referenceIds.length > 0) {
+    const [visibility, referenceView] = await Promise.all([buildDocumentVisibilityWhere(session), buildReferenceViewWhere(session)]);
+    const rows = await prisma.document.findMany({
+      where: { AND: [{ id: { in: referenceIds } }, visibility, referenceView] },
+      select: { id: true, documentNumber: true, title: true },
+    });
+    visibleReferences = new Map(rows.map((row) => [row.id, row]));
+  }
+  const lastApprovedAt = run.stepDocuments.find((link) => link.isCurrent && link.processStepId === run.currentStepId)?.document.approvedAt ?? null;
   const canCancel = run.status === "IN_PROGRESS" && (run.startedBy.id === session.userId || (await userHasPermission(session, "processes.manage")));
 
   return NextResponse.json({
@@ -125,6 +148,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
             title: link.document.title,
             status: link.document.status,
             statusLabel: getDocumentStatusDisplay(link.document.status, { levelNumber: link.document.currentWorkflowStep }),
+            referenceDocument: link.referenceDocumentId ? visibleReferences.get(link.referenceDocumentId) ?? null : null,
           }));
         return {
           id: step.id,
@@ -133,6 +157,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
           parentStepId: step.parentStepId,
           documentType: step.documentType,
           documentSubtype: step.documentSubtype,
+          delayHours: step.delayHours,
+          // Whether this step takes a reference document is configuration; only the document itself is permission-gated.
+          referenceType: step.referenceDocumentType
+            ? `${step.referenceDocumentType.name}${step.referenceDocumentSubtype ? ` - ${step.referenceDocumentSubtype.name}` : ""}`
+            : null,
+          // When the waiting period after the previous approval ends (null = no wait, or already over).
+          opensAt: (() => {
+            const opens = step.parentStepId === run.currentStepId ? stepOpensAt(lastApprovedAt, step.delayHours) : null;
+            return opens && opens.getTime() > Date.now() ? opens.toISOString() : null;
+          })(),
           onPath: pathIds.has(step.id),
           // An open choice: a child of the last approved node while the run waits for the next upload.
           isOpenChoice:
