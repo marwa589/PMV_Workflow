@@ -7,6 +7,7 @@ import ApproverPendingTable from "@/components/approver-pending-table";
 import type { UserTypeCode } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
 import { withDownloadTracking } from "@/lib/download-tracking";
+import { getReceiptConfirmableIds } from "@/lib/auth/access";
 import { userCanBulkApprove } from "@/lib/bulk-approve";
 import { getActionableDocuments, type DocumentRow } from "@/lib/document-queries";
 import { DocumentStatus } from "@prisma/client";
@@ -38,17 +39,18 @@ type Props = {
   table?: TableOptions;
 };
 
-/** Document types (with sub types) and projects for the filter bar: always read from the database. */
+/** Document types (with sub types), projects and locations for the filter bar: always read from the database. */
 export async function loadFilterOptions() {
-  const [documentTypes, projects] = await Promise.all([
+  const [documentTypes, projects, locations] = await Promise.all([
     prisma.documentType.findMany({
       where: { isActive: true },
       select: { code: true, name: true, subtypes: { where: { isActive: true }, select: { code: true, name: true }, orderBy: { name: "asc" } } },
       orderBy: { name: "asc" },
     }),
     prisma.project.findMany({ where: { isActive: true }, select: { id: true, code: true, name: true }, orderBy: { code: "asc" } }),
+    prisma.location.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
-  return { documentTypes, projects };
+  return { documentTypes, projects, locations };
 }
 
 /**
@@ -69,11 +71,11 @@ export default async function DocumentListPage({
   table = {},
 }: Props) {
   const filters = parseListFilters(searchParams);
-  const { documentTypes, projects } = await loadFilterOptions();
+  const { documentTypes, projects, locations } = await loadFilterOptions();
 
   // Download state is per user, so it is only looked up for screens that show or filter on it.
-  const needsDownloadState = showDownloadFilters || Boolean(table.showDownloadTracking);
-  const trackedRows = needsDownloadState ? await withDownloadTracking(rows, session.userId) : rows;
+  // The colour code also needs it: an approved document is green once THIS user has downloaded it.
+  const trackedRows = await withDownloadTracking(rows, session.userId);
 
   const scoped = lockedStatus ? trackedRows.filter((row) => row.status === lockedStatus) : trackedRows;
   const filtered = applyListFilters(scoped, filters, { ignoreStatus: Boolean(lockedStatus) });
@@ -88,8 +90,13 @@ export default async function DocumentListPage({
     ? new Set((await getActionableDocuments({ userId: session.userId, userType: session.userType }, [DocumentStatus.PENDING])).map((row) => row.id))
     : null;
 
+  // "Received" button on the list: only for approved, not yet received documents the user may confirm.
+  const receivableIds = variant === "list"
+    ? await getReceiptConfirmableIds(session, filtered.filter((row) => row.status === DocumentStatus.APPROVED && !row.receivedAt).map((row) => row.id))
+    : new Set<string>();
+
   const filterTitle = describeFilters(filters, documentTypes);
-  const pageTitle = filters.status === "REVISION_REQUIRED" && !lockedStatus ? "Revision Required" : filters.status === "CANCELLED" && !lockedStatus ? "Rejected Documents" : filterTitle || title;
+  const pageTitle = filters.status.length === 1 && filters.status[0] === "REVISION_REQUIRED" && !lockedStatus ? "Revision Required" : filters.status.length === 1 && filters.status[0] === "CANCELLED" && !lockedStatus ? "Rejected Documents" : filterTitle || title;
   const cards = buildSummaryCards(filtered, summaryMode);
 
   return (
@@ -105,6 +112,7 @@ export default async function DocumentListPage({
             documentType={filters.documentType}
             documentSubtype={filters.documentSubtype}
             project={filters.project}
+            location={filters.location}
             downloadStatus={filters.downloadStatus}
             approvalFrom={filters.approvalFrom}
             approvalTo={filters.approvalTo}
@@ -113,6 +121,7 @@ export default async function DocumentListPage({
             showStatusFilter={!lockedStatus && variant !== "pending"}
             documentTypes={documentTypes}
             projects={projects}
+            locations={locations}
           />
         </div>
         {variant === "pending" ? (
@@ -136,7 +145,7 @@ export default async function DocumentListPage({
           </div>
         ) : (
           <DocumentListTable
-            documents={filtered.map((row) => ({ ...toListItem(row), batchEligible: batchEligibleIds ? batchEligibleIds.has(row.id) : false }))}
+            documents={filtered.map((row) => ({ ...toListItem(row), batchEligible: batchEligibleIds ? batchEligibleIds.has(row.id) : false, canConfirmReceipt: receivableIds.has(row.id) }))}
             emptyMessage={emptyMessage}
             {...table}
             allowBatchReview={batchReview}

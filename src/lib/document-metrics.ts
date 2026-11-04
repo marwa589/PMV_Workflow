@@ -1,3 +1,4 @@
+import { statusToneClasses } from "@/lib/status-colors";
 import { DocumentStatus } from "@prisma/client";
 
 export type AgeBucket = "UNDER_3_HOURS" | "BETWEEN_3_AND_24_HOURS" | "OVER_24_HOURS";
@@ -24,19 +25,6 @@ export function getWaitingHours(assignedAt: Date | null): number {
   return diffMs / (1000 * 60 * 60);
 }
 
-export function getStatusColor(status: DocumentStatus): string {
-  switch (status) {
-    case DocumentStatus.PENDING:
-      return "bg-yellow-100 text-yellow-900 ring-1 ring-yellow-200";
-    case DocumentStatus.ON_HOLD:
-      return "bg-orange-100 text-orange-900 ring-1 ring-orange-200";
-    case DocumentStatus.REVISION_REQUIRED:
-      return "bg-sky-100 text-sky-900 ring-1 ring-sky-200";
-    case DocumentStatus.APPROVED:
-      return "bg-emerald-100 text-emerald-900 ring-1 ring-emerald-200";
-    case DocumentStatus.CANCELLED:
-      return "bg-rose-100 text-rose-900 ring-1 ring-rose-200";
-    default:
-      return "bg-slate-100 text-slate-900 ring-1 ring-slate-200";
-  }
+export function getStatusColor(status: DocumentStatus, downloaded = false): string {
+  return statusToneClasses(status, downloaded);
 }

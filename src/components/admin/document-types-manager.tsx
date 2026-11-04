@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { callApi, callApiWithDeactivationConfirmation } from "@/lib/admin-client";
 import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton, secondaryButton } from "@/components/admin/admin-ui";
 
-type Subtype = { id: string; code: string; numberingCode: string; name: string; isActive: boolean };
+type Subtype = { id: string; code: string; numberingCode: string; name: string; receiptConfirmationRequired: boolean | null; isActive: boolean };
 type DocType = {
   id: string;
   code: string;
@@ -13,6 +13,7 @@ type DocType = {
   description: string | null;
   namingPattern: string;
   supportsLineItems: boolean;
+  receiptConfirmationRequired: boolean;
   isActive: boolean;
   subtypes: Subtype[];
   _count: { fieldDefinitions: number; documents: number };
@@ -42,7 +43,7 @@ const DATA_TYPES = [
 ] as const;
 
 const DEFAULT_PATTERN = "{TYPE}-{PROJECT}-{YYYY}-{SEQ:4}";
-const blankType = { code: "", numberingCode: "", name: "", description: "", namingPattern: DEFAULT_PATTERN, supportsLineItems: false };
+const blankType = { code: "", numberingCode: "", name: "", description: "", namingPattern: DEFAULT_PATTERN, supportsLineItems: false, receiptConfirmationRequired: true };
 const blankField = { documentSubtypeId: "", fieldGroup: "HEADER", fieldKey: "", label: "", dataType: "TEXT", isRequired: false, options: "", sortOrder: 0 };
 
 function optionsText(options: unknown): string {
@@ -58,7 +59,8 @@ export default function DocumentTypesManager() {
   const [typeForm, setTypeForm] = useState(blankType);
   const [typeEditId, setTypeEditId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [subtypeForm, setSubtypeForm] = useState({ code: "", numberingCode: "", name: "" });
+  const blankSubtype = { code: "", numberingCode: "", name: "", receiptConfirmationRequired: null as boolean | null };
+  const [subtypeForm, setSubtypeForm] = useState(blankSubtype);
   const [subtypeEditId, setSubtypeEditId] = useState<string | null>(null);
   const [fieldForm, setFieldForm] = useState(blankField);
   const [fieldEditId, setFieldEditId] = useState<string | null>(null);
@@ -108,6 +110,10 @@ export default function DocumentTypesManager() {
           <Field label="Naming pattern"><input value={typeForm.namingPattern} onChange={(e) => setTypeForm({ ...typeForm, namingPattern: e.target.value })} className={inputClass} /></Field>
           <Field label="Description"><input value={typeForm.description} onChange={(e) => setTypeForm({ ...typeForm, description: e.target.value })} className={inputClass} /></Field>
           <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={typeForm.receiptConfirmationRequired} onChange={(e) => setTypeForm({ ...typeForm, receiptConfirmationRequired: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
+            Require receipt confirmation after approval (default for sub types)
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={typeForm.supportsLineItems} onChange={(e) => setTypeForm({ ...typeForm, supportsLineItems: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
             This type carries a table of items (line items)
           </label>
@@ -145,7 +151,7 @@ export default function DocumentTypesManager() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" className={secondaryButton} onClick={() => setOpenId(openId === type.id ? null : type.id)}>{openId === type.id ? "Close" : "Sub types & fields"}</button>
-                  <button type="button" className={secondaryButton} onClick={() => { setTypeEditId(type.id); setTypeForm({ code: type.code, numberingCode: type.numberingCode, name: type.name, description: type.description ?? "", namingPattern: type.namingPattern, supportsLineItems: type.supportsLineItems }); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Edit</button>
+                  <button type="button" className={secondaryButton} onClick={() => { setTypeEditId(type.id); setTypeForm({ code: type.code, numberingCode: type.numberingCode, name: type.name, description: type.description ?? "", namingPattern: type.namingPattern, supportsLineItems: type.supportsLineItems, receiptConfirmationRequired: type.receiptConfirmationRequired }); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Edit</button>
                   <button type="button" className={secondaryButton} onClick={() => run(type.isActive
                     ? callApiWithDeactivationConfirmation("/api/admin/document-types", { id: type.id, code: type.code, name: type.name, description: type.description ?? "", isActive: false })
                     : callApi("/api/admin/document-types", "PATCH", { id: type.id, code: type.code, name: type.name, description: type.description ?? "", isActive: true }), "Document type updated.")}>{type.isActive ? "Deactivate" : "Activate"}</button>
@@ -163,6 +169,7 @@ export default function DocumentTypesManager() {
                       <Field label="Code"><input value={subtypeForm.code} onChange={(e) => setSubtypeForm({ ...subtypeForm, code: e.target.value })} className={inputClass} placeholder="CASH" /></Field>
                       <Field label="Numbering code"><input value={subtypeForm.numberingCode} onChange={(e) => setSubtypeForm({ ...subtypeForm, numberingCode: e.target.value })} className={inputClass} placeholder="CH" /></Field>
                       <Field label="Name"><input value={subtypeForm.name} onChange={(e) => setSubtypeForm({ ...subtypeForm, name: e.target.value })} className={inputClass} placeholder="Cash" /></Field>
+                      <Field label="Receipt confirmation"><select value={subtypeForm.receiptConfirmationRequired === null ? "INHERIT" : subtypeForm.receiptConfirmationRequired ? "YES" : "NO"} onChange={(e) => setSubtypeForm({ ...subtypeForm, receiptConfirmationRequired: e.target.value === "INHERIT" ? null : e.target.value === "YES" })} className={inputClass}><option value="INHERIT">Inherit from document type</option><option value="YES">Required</option><option value="NO">Not required</option></select></Field>
                       <button
                         type="button"
                         className={primaryButton}
@@ -170,24 +177,24 @@ export default function DocumentTypesManager() {
                           run(
                             subtypeEditId ? callApi("/api/admin/document-subtypes", "PATCH", { id: subtypeEditId, ...subtypeForm }) : callApi("/api/admin/document-subtypes", "POST", { documentTypeId: type.id, ...subtypeForm }),
                             subtypeEditId ? "Sub type updated." : "Sub type added.",
-                            () => { setSubtypeForm({ code: "", numberingCode: "", name: "" }); setSubtypeEditId(null); },
+                            () => { setSubtypeForm(blankSubtype); setSubtypeEditId(null); },
                           )
                         }
                       >
                         {subtypeEditId ? "Save" : "Add sub type"}
                       </button>
-                      {subtypeEditId ? <button type="button" className={secondaryButton} onClick={() => { setSubtypeEditId(null); setSubtypeForm({ code: "", numberingCode: "", name: "" }); }}>Cancel</button> : null}
+                      {subtypeEditId ? <button type="button" className={secondaryButton} onClick={() => { setSubtypeEditId(null); setSubtypeForm(blankSubtype); }}>Cancel</button> : null}
                     </div>
                     <div className="mt-3 space-y-2">
                       {type.subtypes.length === 0 ? <p className="text-xs text-slate-500">No sub types. Documents of this type are uploaded without one.</p> : null}
                       {type.subtypes.map((subtype) => (
                         <div key={subtype.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
-                          <span><Pill>{subtype.code}</Pill> <span className="ml-2 font-medium text-slate-900">{subtype.name}</span> <span className="ml-2 text-xs text-slate-500">Number: {subtype.numberingCode}</span> {subtype.isActive ? null : <Pill tone="amber">Inactive</Pill>}</span>
+                          <span><Pill>{subtype.code}</Pill> <span className="ml-2 font-medium text-slate-900">{subtype.name}</span> <span className="ml-2 text-xs text-slate-500">Number: {subtype.numberingCode}</span> {subtype.receiptConfirmationRequired === null ? <Pill>Receipt: inherited</Pill> : <Pill tone={subtype.receiptConfirmationRequired ? "green" : "amber"}>Receipt: {subtype.receiptConfirmationRequired ? "required" : "off"}</Pill>} {subtype.isActive ? null : <Pill tone="amber">Inactive</Pill>}</span>
                           <div className="flex gap-2">
-                            <button type="button" className={secondaryButton} onClick={() => { setSubtypeEditId(subtype.id); setSubtypeForm({ code: subtype.code, numberingCode: subtype.numberingCode, name: subtype.name }); }}>Edit</button>
+                            <button type="button" className={secondaryButton} onClick={() => { setSubtypeEditId(subtype.id); setSubtypeForm({ code: subtype.code, numberingCode: subtype.numberingCode, name: subtype.name, receiptConfirmationRequired: subtype.receiptConfirmationRequired }); }}>Edit</button>
                             <button type="button" className={secondaryButton} onClick={() => run(subtype.isActive
-                              ? callApiWithDeactivationConfirmation("/api/admin/document-subtypes", { id: subtype.id, code: subtype.code, numberingCode: subtype.numberingCode, name: subtype.name, isActive: false })
-                              : callApi("/api/admin/document-subtypes", "PATCH", { id: subtype.id, code: subtype.code, numberingCode: subtype.numberingCode, name: subtype.name, isActive: true }), "Sub type updated.")}>{subtype.isActive ? "Deactivate" : "Activate"}</button>
+                              ? callApiWithDeactivationConfirmation("/api/admin/document-subtypes", { id: subtype.id, code: subtype.code, numberingCode: subtype.numberingCode, name: subtype.name, receiptConfirmationRequired: subtype.receiptConfirmationRequired, isActive: false })
+                              : callApi("/api/admin/document-subtypes", "PATCH", { id: subtype.id, code: subtype.code, numberingCode: subtype.numberingCode, name: subtype.name, receiptConfirmationRequired: subtype.receiptConfirmationRequired, isActive: true }), "Sub type updated.")}>{subtype.isActive ? "Deactivate" : "Activate"}</button>
                             <button type="button" className={dangerButton} onClick={() => window.confirm(`Delete ${subtype.name}?`) && run(callApi("/api/admin/document-subtypes", "DELETE", { id: subtype.id }), "Sub type deleted.")}>Delete</button>
                           </div>
                         </div>

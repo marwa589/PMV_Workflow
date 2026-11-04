@@ -16,9 +16,10 @@ const typeSelect = {
   description: true,
   namingPattern: true,
   supportsLineItems: true,
+  receiptConfirmationRequired: true,
   isActive: true,
   createdAt: true,
-  subtypes: { select: { id: true, code: true, numberingCode: true, name: true, isActive: true }, orderBy: { name: "asc" } },
+  subtypes: { select: { id: true, code: true, numberingCode: true, name: true, receiptConfirmationRequired: true, isActive: true }, orderBy: { name: "asc" } },
   _count: { select: { fieldDefinitions: true, documents: true, flowAssignments: true, processSteps: true, scopedAssignments: true, assignmentScopes: true } },
 } as const;
 
@@ -60,6 +61,7 @@ export async function POST(request: Request) {
         description: str(body?.description) || null,
         namingPattern,
         supportsLineItems: body?.supportsLineItems === true,
+        receiptConfirmationRequired: body?.receiptConfirmationRequired !== false,
         isActive: body?.isActive === undefined ? true : Boolean(body.isActive),
       },
       select: typeSelect,
@@ -119,6 +121,7 @@ export async function PATCH(request: Request) {
           description: str(body?.description) || null,
           ...(namingPattern ? { namingPattern } : {}),
           ...(typeof body?.supportsLineItems === "boolean" ? { supportsLineItems: body.supportsLineItems } : {}),
+          ...(typeof body?.receiptConfirmationRequired === "boolean" ? { receiptConfirmationRequired: body.receiptConfirmationRequired } : {}),
           ...(typeof body?.isActive === "boolean" ? { isActive: body.isActive } : {}),
         },
         select: typeSelect,

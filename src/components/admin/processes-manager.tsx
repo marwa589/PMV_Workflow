@@ -15,6 +15,7 @@ type StepRow = {
   documentType: { name: string };
   documentSubtype: { name: string } | null;
   delayHours: number;
+  allowMultipleUploads: boolean;
   referenceDocumentTypeId: string | null;
   referenceDocumentSubtypeId: string | null;
   referenceDocumentType: { name: string } | null;
@@ -39,6 +40,8 @@ type DraftNode = {
   referenceDocumentSubtypeId: string;
   // Hours as typed (empty = no waiting period).
   delayHours: string;
+  // Several documents may be uploaded together for this step; each starts its own linked run.
+  allowMultipleUploads: boolean;
 };
 
 const MAX_NODES = 100;
@@ -54,7 +57,7 @@ const isTree = (process: ProcessRow) => process.steps.filter((step) => step.pare
 export default function ProcessesManager() {
   const keyCounter = useRef(0);
   const newKey = () => `n${Date.now().toString(36)}${keyCounter.current++}`;
-  const blankNode = (parentKey: string | null): DraftNode => ({ key: newKey(), parentKey, name: "", documentTypeId: "", documentSubtypeId: "", referenceDocumentTypeId: "", referenceDocumentSubtypeId: "", delayHours: "" });
+  const blankNode = (parentKey: string | null): DraftNode => ({ key: newKey(), parentKey, name: "", documentTypeId: "", documentSubtypeId: "", referenceDocumentTypeId: "", referenceDocumentSubtypeId: "", delayHours: "", allowMultipleUploads: false });
 
   const [processes, setProcesses] = useState<ProcessRow[]>([]);
   const [types, setTypes] = useState<TypeOption[]>([]);
@@ -64,7 +67,7 @@ export default function ProcessesManager() {
     description: "",
     locked: false,
     hasRuns: false,
-    nodes: [{ key: "root", parentKey: null, name: "", documentTypeId: "", documentSubtypeId: "", referenceDocumentTypeId: "", referenceDocumentSubtypeId: "", delayHours: "" }],
+    nodes: [{ key: "root", parentKey: null, name: "", documentTypeId: "", documentSubtypeId: "", referenceDocumentTypeId: "", referenceDocumentSubtypeId: "", delayHours: "", allowMultipleUploads: false }],
   }));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -123,6 +126,7 @@ export default function ProcessesManager() {
       referenceDocumentTypeId: node.referenceDocumentTypeId || null,
       referenceDocumentSubtypeId: node.referenceDocumentTypeId ? node.referenceDocumentSubtypeId || null : null,
       delayHours: node.parentKey && node.delayHours.trim() !== "" ? Number(node.delayHours) : 0,
+      allowMultipleUploads: Boolean(node.parentKey) && node.allowMultipleUploads,
     }));
     const result = draft.id
       ? await callApi("/api/admin/processes", "PATCH", { id: draft.id, ...base, steps })
@@ -170,6 +174,7 @@ export default function ProcessesManager() {
         referenceDocumentTypeId: step.referenceDocumentTypeId ?? "",
         referenceDocumentSubtypeId: step.referenceDocumentSubtypeId ?? "",
         delayHours: step.delayHours > 0 ? String(step.delayHours) : "",
+        allowMultipleUploads: step.allowMultipleUploads,
       })),
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -253,6 +258,27 @@ export default function ProcessesManager() {
               </Field>
             ) : null}
           </div>
+          {depth > 0 ? (
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-200 bg-white p-3">
+              <div>
+                <p id={`multi-${node.key}`} className="text-sm font-medium text-slate-900">Allow multiple uploads</p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Off: one document per run. On: the uploader can add several documents at once for this step, and each one starts its own process run, linked to the run and the approved document it follows.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={node.allowMultipleUploads}
+                aria-labelledby={`multi-${node.key}`}
+                disabled={draft.locked}
+                onClick={() => updateNode(node.key, { allowMultipleUploads: !node.allowMultipleUploads })}
+                className={`relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 ${node.allowMultipleUploads ? "bg-cyan-600" : "bg-slate-300"}`}
+              >
+                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${node.allowMultipleUploads ? "translate-x-5" : "translate-x-0.5"}`} />
+              </button>
+            </div>
+          ) : null}
           {node.referenceDocumentTypeId ? <p className="text-xs text-slate-500">The uploader of this document may attach a reference document of this type (optional). Only people with the &quot;View reference documents&quot; permission can see it.</p> : null}
           {depth > 0 && Number(node.delayHours) > 0 ? <p className="text-xs text-slate-500">This document can only be uploaded {node.delayHours} hour(s) after the previous document&apos;s final approval. Admin users can override the wait.</p> : null}
           {children.length === 0 ? <p className="text-xs text-slate-500">No choices after this document: the process ends here once it is approved.</p> : null}
@@ -271,6 +297,7 @@ export default function ProcessesManager() {
           <li key={step.id}>
             {step.name} <span className="text-slate-500">· {step.documentType.name}{step.documentSubtype ? ` - ${step.documentSubtype.name}` : ""}</span>
             {step.delayHours > 0 ? <span className="ml-2 text-xs text-amber-700">waits {step.delayHours}h after approval</span> : null}
+            {step.allowMultipleUploads ? <span className="ml-2 text-xs text-emerald-700">multiple uploads</span> : null}
             {step.referenceDocumentType ? <span className="ml-2 text-xs text-cyan-700">reference: {step.referenceDocumentType.name}{step.referenceDocumentSubtype ? ` - ${step.referenceDocumentSubtype.name}` : ""}</span> : null}
             {renderOutline(steps, step.id)}
           </li>

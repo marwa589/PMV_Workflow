@@ -28,8 +28,8 @@ const documentListSelect = {
   documentTypeId: true,
   documentSubtypeId: true,
   createdBy: { select: { name: true } },
-  documentType: { select: { id: true, code: true, name: true } },
-  documentSubtype: { select: { id: true, code: true, name: true } },
+  documentType: { select: { id: true, code: true, name: true, receiptConfirmationRequired: true } },
+  documentSubtype: { select: { id: true, code: true, name: true, receiptConfirmationRequired: true } },
   project: { select: { id: true, code: true, name: true, locationId: true, location: { select: { name: true } } } },
   approvalSteps: {
     orderBy: { levelNumber: "asc" },
@@ -54,12 +54,15 @@ const documentListSelect = {
     take: 30,
     select: { action: true, comments: true, levelNumber: true, performedById: true, performedBy: { select: { name: true } } },
   },
+  // A few, newest first: a document that other runs follow (a comparison sheet followed by MRs) is also linked into
+  // those follow-up runs, which must not decide its own status; see processInstance below.
   processLinks: {
     orderBy: { linkedAt: "desc" },
-    take: 1,
+    take: 10,
     select: {
       processInstance: {
         select: {
+          followedDocumentId: true,
           status: true,
           currentStepId: true,
           processDefinition: {
@@ -95,7 +98,8 @@ export type DocumentRow = {
   statusLabel: string;
   documentType: { id: string; code: string; name: string };
   documentSubtype: { id: string; code: string; name: string } | null;
-  project: { id: string; code: string; name: string; locationName: string | null } | null;
+  receiptConfirmationRequired: boolean;
+  project: { id: string; code: string; name: string; locationId: string | null; locationName: string | null } | null;
   currentVersion: number;
   currentWorkflowStep: number | null;
   currentLevelName: string | null;
@@ -132,7 +136,7 @@ export function toDocumentRow(document: RawDocument): DocumentRow {
 
   const rejection = document.approvals.find((entry) => entry.action === ApprovalActionType.REJECTED);
   const latestComment = document.approvals.find((entry) => entry.comments)?.comments ?? null;
-  const processInstance = document.processLinks[0]?.processInstance ?? null;
+  const processInstance = document.processLinks.find((link) => link.processInstance.followedDocumentId !== document.id)?.processInstance ?? null;
 
   return {
     id: document.id,
@@ -142,11 +146,13 @@ export function toDocumentRow(document: RawDocument): DocumentRow {
     statusLabel: getDocumentStatusDisplay(document.status, { levelNumber, name: currentStep?.name }),
     documentType: document.documentType,
     documentSubtype: document.documentSubtype,
+    receiptConfirmationRequired: document.documentSubtype?.receiptConfirmationRequired ?? document.documentType.receiptConfirmationRequired,
     project: document.project
       ? {
           id: document.project.id,
           code: document.project.code,
           name: document.project.name,
+          locationId: document.project.locationId,
           locationName: document.project.location?.name ?? null,
         }
       : null,

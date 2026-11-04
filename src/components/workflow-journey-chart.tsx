@@ -45,9 +45,9 @@ export default function WorkflowJourneyChart({ status, currentWorkflowStep, step
   const circleClass = (state: string) => {
     switch (state) {
       case "APPROVED":
-        return "border-cyan-600 bg-cyan-600 text-white";
+        return "border-blue-600 bg-blue-600 text-white";
       case "REJECTED":
-        return "border-rose-600 bg-rose-600 text-white";
+        return "border-red-600 bg-red-600 text-white";
       case "PENDING":
       case "ON_HOLD":
       case "REVISION":
@@ -64,7 +64,7 @@ export default function WorkflowJourneyChart({ status, currentWorkflowStep, step
           <p className="text-sm font-semibold text-slate-900">Workflow journey</p>
           <p className="text-sm text-slate-600">A quick view of where this document is in the approval path.</p>
         </div>
-        <div className={`rounded-full px-3 py-1 text-sm font-medium ${status === "CANCELLED" ? "bg-rose-50 text-rose-700" : "bg-cyan-50 text-cyan-700"}`}>
+        <div className={`rounded-full px-3 py-1 text-sm font-medium ${status === "CANCELLED" ? "bg-red-50 text-red-700" : "bg-cyan-50 text-cyan-700"}`}>
           {headline}
         </div>
       </div>

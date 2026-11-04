@@ -139,6 +139,66 @@ export async function getTaskOnlyChecker(db: Db): Promise<(doc: Scope) => boolea
   return (doc) => classify(nodes, doc).kind === "task-only";
 }
 
+export type StartableProcess = {
+  id: string;
+  name: string;
+  description: string | null;
+  rootStepId: string;
+  rootName: string;
+  documentTypeId: string;
+  documentSubtypeId: string | null;
+  typeName: string;
+  subtypeName: string | null;
+};
+
+/**
+ * Active processes that are a proper tree (exactly one root in the current version) and can therefore be started.
+ * Used by the admin "Start a process" screen: starting means uploading the root document.
+ */
+export async function getStartableProcesses(db: Db): Promise<StartableProcess[]> {
+  const definitions = await db.processDefinition.findMany({
+    where: { isActive: true },
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      currentVersion: true,
+      steps: {
+        select: {
+          id: true,
+          name: true,
+          parentStepId: true,
+          versionNumber: true,
+          documentTypeId: true,
+          documentSubtypeId: true,
+          documentType: { select: { name: true } },
+          documentSubtype: { select: { name: true } },
+        },
+      },
+    },
+  });
+
+  return definitions.flatMap((definition) => {
+    const roots = definition.steps.filter((step) => step.versionNumber === definition.currentVersion && step.parentStepId === null);
+    if (roots.length !== 1) return [];
+    const root = roots[0];
+    return [
+      {
+        id: definition.id,
+        name: definition.name,
+        description: definition.description,
+        rootStepId: root.id,
+        rootName: root.name,
+        documentTypeId: root.documentTypeId,
+        documentSubtypeId: root.documentSubtypeId,
+        typeName: root.documentType.name,
+        subtypeName: root.documentSubtype?.name ?? null,
+      },
+    ];
+  });
+}
+
 /** Start a run for a root document. The document itself is linked afterwards with linkDocumentToStep. */
 export async function startProcessRun(
   tx: Prisma.TransactionClient,
@@ -161,6 +221,77 @@ export async function startProcessRun(
       currentStepId: null,
     },
   });
+}
+
+/**
+ * "Allow multiple uploads": start a follow-up run for ONE document of a batch uploaded as the next step of a run.
+ *
+ * The follow-up run is a run of the same process (same version of the tree, same project) that picks up exactly where
+ * the parent run stands: the approved document the parent is waiting after (e.g. the comparison sheet) is linked into
+ * it, so the follow-up's own document (e.g. an MR) fills one of that node's child steps like any ordinary next
+ * upload. Waiting periods, upload notices and approvals therefore work unchanged. The parent run stays as it is, so
+ * it can still take more follow-ups later. The follow-up remembers its parent run and the document it follows.
+ *
+ * Call linkDocumentToStep on the returned run afterwards, with the follow-up document.
+ */
+export async function startFollowUpRun(
+  tx: Prisma.TransactionClient,
+  input: { parentInstanceId: string; stepId: string; reference: string | null; startedById: string },
+) {
+  await lockRun(tx, input.parentInstanceId);
+  const parent = await tx.processInstance.findUnique({
+    where: { id: input.parentInstanceId },
+    select: { id: true, status: true, processDefinitionId: true, projectId: true, currentStepId: true, currentStepNumber: true, stepVersion: true },
+  });
+  if (!parent) throw new WorkflowError("Process run not found.", 404);
+  if (parent.status !== ProcessStatus.IN_PROGRESS) throw new WorkflowError("This process run is not in progress.", 409);
+  if (!parent.currentStepId) throw new WorkflowError("This process is still waiting for its first document to be approved.", 409);
+
+  const step = await tx.processStep.findFirst({
+    where: { id: input.stepId, processDefinitionId: parent.processDefinitionId, versionNumber: parent.stepVersion, parentStepId: parent.currentStepId },
+    select: { id: true },
+  });
+  if (!step) throw new WorkflowError("That is not one of the options for the next step of this process.", 400);
+
+  // The approved document the parent is waiting after: every follow-up links back to it.
+  const anchor = await tx.processStepDocument.findFirst({
+    where: { processInstanceId: parent.id, processStepId: parent.currentStepId, isCurrent: true },
+    select: { documentId: true, references: { select: { documentId: true } } },
+  });
+  if (!anchor) throw new WorkflowError("The document this process is waiting after was not found.", 409);
+
+  // A choice already made in the parent (a single upload in progress) means the parent is not open for the next step.
+  const chosen = await tx.processStepDocument.findFirst({
+    where: { processInstanceId: parent.id, isCurrent: true, processStep: { parentStepId: parent.currentStepId } },
+    select: { documentId: true },
+  });
+  if (chosen) throw new WorkflowError("This step already has a document in progress.", 409);
+
+  const followUp = await tx.processInstance.create({
+    data: {
+      processDefinitionId: parent.processDefinitionId,
+      projectId: parent.projectId,
+      reference: input.reference,
+      startedById: input.startedById,
+      currentStepNumber: parent.currentStepNumber,
+      currentStepId: parent.currentStepId,
+      stepVersion: parent.stepVersion,
+      parentInstanceId: parent.id,
+      followedDocumentId: anchor.documentId,
+    },
+  });
+  await tx.processStepDocument.create({
+    data: {
+      processInstanceId: followUp.id,
+      processStepId: parent.currentStepId,
+      documentId: anchor.documentId,
+      source: ProcessStepSource.EXISTING,
+      linkedById: input.startedById,
+      isCurrent: true,
+      references: { create: anchor.references.map((reference) => ({ documentId: reference.documentId })) },
+    },
+  });
+  return followUp;
 }
 
 /** Serialises changes to one run (two people choosing different branches at once, or an approval racing an upload). */
@@ -187,8 +318,8 @@ export async function linkDocumentToStep(
     documentId: string;
     source: ProcessStepSource;
     linkedById: string;
-    /** Optional reference document (uploaded with this document, or an approved one picked by the uploader). */
-    referenceDocumentId?: string | null;
+    /** Optional reference documents (uploaded with this document, or approved ones picked by the uploader). */
+    referenceDocumentIds?: string[];
     /** Admin users may upload before the waiting period of the step is over. */
     overrideDelay?: boolean;
   },
@@ -258,7 +389,7 @@ export async function linkDocumentToStep(
       source: input.source,
       linkedById: input.linkedById,
       isCurrent: true,
-      referenceDocumentId: input.referenceDocumentId ?? null,
+      references: { create: [...new Set(input.referenceDocumentIds ?? [])].map((documentId) => ({ documentId })) },
     },
   });
 
@@ -491,6 +622,8 @@ export type UploadTaskOption = {
   referenceDocumentTypeId: string | null;
   referenceDocumentSubtypeId: string | null;
   referenceTypeName: string | null;
+  /** The process setup allows several documents for this step: each becomes its own linked run. */
+  allowMultipleUploads: boolean;
   /** Set only for Admin users, who see a choice during its waiting period and may override it. */
   waitingUntil: Date | null;
 };
@@ -499,7 +632,7 @@ export type UploadTask = {
   runId: string;
   processName: string;
   reference: string | null;
-  project: { id: string; code: string; name: string } | null;
+  project: { id: string; code: string; name: string; locationId: string | null } | null;
   afterStepName: string;
   lastDocument: { id: string; documentNumber: string; title: string; approvedAt: Date | null } | null;
   options: UploadTaskOption[];
@@ -521,7 +654,7 @@ export async function getUploadTasks(db: Db, user: { userId: string; userType: U
       reference: true,
       projectId: true,
       currentStepId: true,
-      project: { select: { id: true, code: true, name: true } },
+      project: { select: { id: true, code: true, name: true, locationId: true } },
       processDefinition: { select: { name: true } },
       currentStep: {
         select: {
@@ -534,6 +667,7 @@ export async function getUploadTasks(db: Db, user: { userId: string; userType: U
               documentTypeId: true,
               documentSubtypeId: true,
               delayHours: true,
+              allowMultipleUploads: true,
               referenceDocumentTypeId: true,
               referenceDocumentSubtypeId: true,
               referenceDocumentType: { select: { name: true } },
@@ -608,6 +742,7 @@ export async function getUploadTasks(db: Db, user: { userId: string; userType: U
           referenceTypeName: child.referenceDocumentType
             ? `${child.referenceDocumentType.name}${child.referenceDocumentSubtype ? ` - ${child.referenceDocumentSubtype.name}` : ""}`
             : null,
+          allowMultipleUploads: child.allowMultipleUploads,
           waitingUntil: waiting ? opensAt : null,
         });
       }

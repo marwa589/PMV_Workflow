@@ -32,6 +32,10 @@ export type DocumentListItem = {
   rejectionComments?: string | null;
   dateLabel: string;
   downloadedAt?: Date | null;
+  receivedAt?: Date | null;
+  receiptConfirmationRequired?: boolean;
+  // True when the viewer holds documents.confirm_receipt for this approved document and it is not received yet.
+  canConfirmReceipt?: boolean;
   approvalDate?: Date | null;
 };
 
@@ -64,7 +68,30 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
   const pagedDocuments = visibleDocuments.slice(0, visibleCount);
   const approvedDocuments = useMemo(() => visibleDocuments.filter((doc) => doc.status === "APPROVED"), [visibleDocuments]);
   const selectedDocuments = useMemo(() => visibleDocuments.filter((doc) => selectedIds.includes(doc.id)), [selectedIds, visibleDocuments]);
-  const columnCount = (showBulkActions ? 1 : 0) + (showDownloadTracking ? 12 : 9) - (showAdminColumns ? 0 : 2);
+  const showReceivedColumn = documents.some((doc) => doc.receiptConfirmationRequired && (doc.canConfirmReceipt || doc.receivedAt));
+  const [receivedOverrides, setReceivedOverrides] = useState<Record<string, string>>({});
+  const [receiptBusyId, setReceiptBusyId] = useState<string | null>(null);
+  const columnCount = (showReceivedColumn ? 1 : 0) + (showBulkActions ? 1 : 0) + (showDownloadTracking ? 12 : 9) - (showAdminColumns ? 0 : 2);
+
+  async function confirmReceived(id: string) {
+    setReceiptBusyId(id);
+    try {
+      const response = await fetch(`/api/documents/${id}/received`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-csrf-token": getCsrfTokenFromBrowser() },
+      });
+      const result = (await response.json()) as { message?: string; receivedAt?: string };
+      if (!response.ok || !result.receivedAt) {
+        window.alert(result.message || "Failed to confirm receipt.");
+        return;
+      }
+      setReceivedOverrides((current) => ({ ...current, [id]: result.receivedAt as string }));
+    } catch {
+      window.alert("Unexpected error while confirming receipt.");
+    } finally {
+      setReceiptBusyId(null);
+    }
+  }
 
   function toggleSelection(id: string) {
     setSelectedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
@@ -234,6 +261,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
             {showAdminColumns ? <th className="px-5 py-3 font-semibold">Version</th> : null}
             <th className="px-5 py-3 font-semibold">Current Approver</th>
             <th className="px-5 py-3 font-semibold">Last Updated</th>
+            {showReceivedColumn ? <th className="px-5 py-3 font-semibold">Received</th> : null}
             <th className="px-5 py-3 font-semibold">Actions</th>
           </tr>
         </thead>
@@ -280,7 +308,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                     ) : null}
                   </td>
                   <td className="px-5 py-4">
-                    <StatusBadge status={doc.status} label={doc.statusLabel} />
+                    <StatusBadge status={doc.status} label={doc.statusLabel} downloaded={Boolean(doc.downloadedAt)} />
                   </td>
                   {showAdminColumns ? (
                     <td className="px-5 py-4">
@@ -300,6 +328,24 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                   {showAdminColumns ? <td className="px-5 py-4 text-slate-700">V{doc.currentVersion}</td> : null}
                   <td className="px-5 py-4 text-slate-700">{getCurrentApproverDisplay(doc)}</td>
                   <td className="px-5 py-4 text-slate-500">{doc.dateLabel}</td>
+                  {showReceivedColumn ? (
+                    <td className="px-5 py-4 text-slate-700">
+                      {!doc.receiptConfirmationRequired ? <span className="text-xs text-slate-400">Not required</span> : doc.receivedAt || receivedOverrides[doc.id] ? (
+                        <span className="text-xs font-medium text-green-700">Received {formatDateTime(new Date(receivedOverrides[doc.id] ?? (doc.receivedAt as Date)))}</span>
+                      ) : doc.canConfirmReceipt ? (
+                        <button
+                          type="button"
+                          disabled={receiptBusyId === doc.id}
+                          onClick={() => confirmReceived(doc.id)}
+                          className="inline-flex rounded-lg border border-green-300 bg-green-50 px-3 py-1.5 text-xs font-medium text-green-800 hover:bg-green-100 disabled:opacity-50"
+                        >
+                          {receiptBusyId === doc.id ? "Saving..." : "Confirm received"}
+                        </button>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  ) : null}
                   <td className="px-5 py-4">
                     <div className="flex gap-2">
                       <a

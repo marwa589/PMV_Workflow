@@ -8,11 +8,12 @@ import { USER_TYPE } from "@/lib/auth/roles";
 import { resolveFlow } from "@/lib/workflow/resolve-flow";
 import { prisma } from "@/lib/prisma";
 import { documentStorageFolder } from "@/lib/storage-layout";
-import { loadFieldDefinitions, normalizeFieldValues, parseFieldInputs, saveFieldValues } from "@/lib/document-fields";
+import { loadFieldDefinitions, normalizeFieldValues, parseFieldInputs, saveFieldValues, type NormalizedFields } from "@/lib/document-fields";
 import { canUserUpload } from "@/lib/workflow/eligibility";
 import { generateDocumentNumber } from "@/lib/workflow/numbering";
-import { startApproval, type WorkflowEffects } from "@/lib/workflow/engine";
-import { classifyUpload, linkDocumentToStep, nodeMatches, startProcessRun } from "@/lib/workflow/processes";
+import { registerApprovedDocument, startApproval, type WorkflowEffects } from "@/lib/workflow/engine";
+import { writeAuditLog } from "@/lib/audit";
+import { classifyUpload, linkDocumentToStep, nodeMatches, startFollowUpRun, startProcessRun } from "@/lib/workflow/processes";
 import { dispatchWorkflowEffects } from "@/lib/workflow/effects";
 import { WorkflowError } from "@/lib/workflow/errors";
 
@@ -38,6 +39,13 @@ export async function POST(request: Request) {
     const projectId = text(formData, "projectId") || null;
     const processInstanceId = text(formData, "processInstanceId") || null;
     const submissionKey = text(formData, "submissionKey") || null;
+    // Admin only: the document is already approved (no approval flow), optionally with the date it was approved on;
+    // `notify` tells the people who may upload the next process document; `startProcessDefinitionId` names the
+    // process the admin is starting on purpose with this (root) document.
+    const alreadyApproved = text(formData, "alreadyApproved") === "true";
+    const approvedAtInput = text(formData, "approvedAt");
+    const notifyNext = text(formData, "notify") === "true";
+    const startProcessDefinitionId = text(formData, "startProcessDefinitionId") || null;
     const fileTitles = formData.getAll("fileTitles").map((value) => String(value || "").trim());
     const files = formData.getAll("files").filter((value): value is File => value instanceof File);
 
@@ -47,7 +55,7 @@ export async function POST(request: Request) {
     // ---- Uploading the next document of a running process: the person chose one of the open child nodes ----
     // (The first document of a process, its root, needs no run: the run starts by itself further down.)
     let processRun: { id: string; projectId: string | null; currentStepId: string | null } | null = null;
-    let processStep: { id: string; documentTypeId: string; documentSubtypeId: string | null } | null = null;
+    let processStep: { id: string; documentTypeId: string; documentSubtypeId: string | null; allowMultipleUploads: boolean } | null = null;
     if (processInstanceId) {
       const run = await prisma.processInstance.findUnique({
         where: { id: processInstanceId },
@@ -61,7 +69,7 @@ export async function POST(request: Request) {
       if (!processStepId) throw new WorkflowError("Choose which document to upload next.", 400);
       processStep = await prisma.processStep.findFirst({
         where: { id: processStepId, processDefinitionId: run.processDefinitionId, parentStepId: run.currentStepId },
-        select: { id: true, documentTypeId: true, documentSubtypeId: true },
+        select: { id: true, documentTypeId: true, documentSubtypeId: true, allowMultipleUploads: true },
       });
       if (!processStep) throw new WorkflowError("That is not one of the options for the next step of this process.", 400);
       if (!nodeMatches(processStep, { documentTypeId, documentSubtypeId })) {
@@ -71,6 +79,9 @@ export async function POST(request: Request) {
       processRun = run;
     }
     const continuingExistingProcess = Boolean(processStep);
+    // "Allow multiple uploads" is set up on the process step (off by default). When it is on, every file becomes its
+    // own follow-up run, linked to the run and the approved document it follows. Open to everyone who may upload.
+    const allowMultiple = Boolean(processStep?.allowMultipleUploads);
 
     // ---- Type, sub type and project come from the database, not from code ----
     const documentType = await prisma.documentType.findFirst({
@@ -108,6 +119,28 @@ export async function POST(request: Request) {
       );
     }
 
+    // ---- Admin only: already approved documents, and starting a process on purpose ----
+    const isAdmin = session.userType === USER_TYPE.ADMIN;
+    if ((alreadyApproved || startProcessDefinitionId) && !isAdmin) {
+      throw new WorkflowError("Only an Admin user can upload an already approved document or start a process by hand.", 403);
+    }
+    let approvedAt: Date | null = null;
+    if (alreadyApproved && approvedAtInput) {
+      const today = new Date().toISOString().slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(approvedAtInput) || Number.isNaN(new Date(`${approvedAtInput}T12:00:00Z`).getTime())) {
+        throw new WorkflowError("The approval date is not a valid date.", 400);
+      }
+      if (approvedAtInput > today) throw new WorkflowError("The approval date cannot be in the future.", 400);
+      // Noon UTC keeps the calendar day the same in every time zone; today's date means "now".
+      approvedAt = approvedAtInput === today ? new Date() : new Date(`${approvedAtInput}T12:00:00Z`);
+    }
+    if (startProcessDefinitionId) {
+      if (processStep) throw new WorkflowError("A process that is already running cannot be started again.", 400);
+      if (upload?.kind !== "root" || upload.processDefinitionId !== startProcessDefinitionId) {
+        throw new WorkflowError("This document is not the starting document of the chosen process.", 400);
+      }
+    }
+
     // ---- Who may upload: the flow's uploader step (level 0), or any Clerk assigned to the project when there is no flow ----
     const actor = { id: session.userId, userType: session.userType };
     const allowed = await canUserUpload(prisma, actor, { documentTypeId, documentSubtypeId, projectId });
@@ -115,17 +148,17 @@ export async function POST(request: Request) {
       throw new WorkflowError("You are not allowed to upload this type of document for this project.", 403);
     }
 
-    // ---- A process step holds one document ----
-    if (processInstanceId && files.length !== 1) {
-      throw new WorkflowError("Upload one document at a time when adding to a process step.", 400);
+    // ---- A process step holds one document, unless "allow multiple uploads" gives each file its own follow-up run ----
+    if (processInstanceId && !allowMultiple && files.length !== 1) {
+      throw new WorkflowError("Upload one document at a time when adding to this process step.", 400);
     }
 
     // ---- Optional reference document (only the uploader of a step can attach one, and only now) ----
     // It is either a new file of the step's reference type (that type must need no approval), or an already
     // approved document the uploader picks. It is never approved and only people with "View reference documents" see it.
-    // Each uploaded file may carry its own reference document. Fields are numbered by the file's position
-    // (referenceFile_0, referenceTitle_0, referenceDocumentId_0, referenceSubtypeId_0, ...); the unnumbered names
-    // still work for a single file.
+    // Each uploaded file may carry any number of reference documents (no setting needed: they are not part of the
+    // run). Fields are numbered by the file's position and the reference's position: referenceCount_0 and then
+    // referenceFile_0_0, referenceTitle_0_0, referenceDocumentId_0_1, referenceSubtypeId_0_1, ...
     type ReferenceInput = {
       existingDocumentId: string | null;
       file: File | null;
@@ -133,13 +166,20 @@ export async function POST(request: Request) {
       type: { id: string; code: string };
       subtype: { id: string; code: string } | null;
     };
-    const references: Array<ReferenceInput | null> = files.map(() => null);
+    const references: ReferenceInput[][] = files.map(() => []);
 
-    const field = (name: string, index: number) => (index === 0 ? formData.get(`${name}_${index}`) ?? formData.get(name) : formData.get(`${name}_${index}`));
-    const wantsReference = files.some((_file, index) => {
-      const candidate = field("referenceFile", index);
-      return (candidate instanceof File && candidate.size > 0) || String(field("referenceDocumentId", index) || "").trim() !== "";
-    });
+    const MAX_REFERENCES_PER_FILE = 20;
+    const referenceCount = (index: number) => {
+      const count = Number(formData.get(`referenceCount_${index}`) || 0);
+      return Number.isInteger(count) && count > 0 ? Math.min(count, MAX_REFERENCES_PER_FILE) : 0;
+    };
+    const field = (name: string, index: number, position: number) => formData.get(`${name}_${index}_${position}`);
+    const wantsReference = files.some((_file, index) =>
+      Array.from({ length: referenceCount(index) }, (_unused, position) => position).some((position) => {
+        const candidate = field("referenceFile", index, position);
+        return (candidate instanceof File && candidate.size > 0) || String(field("referenceDocumentId", index, position) || "").trim() !== "";
+      }),
+    );
 
     if (wantsReference) {
       const stepId = processStep?.id ?? (upload?.kind === "root" ? upload.rootStepId : null);
@@ -171,16 +211,17 @@ export async function POST(request: Request) {
       };
 
       for (const [index, file] of files.entries()) {
+       for (let position = 0; position < referenceCount(index); position += 1) {
         const label = files.length > 1 ? ` (file ${index + 1}: ${file.name})` : "";
-        const rawFile = field("referenceFile", index);
+        const rawFile = field("referenceFile", index, position);
         const referenceUpload = rawFile instanceof File && rawFile.size > 0 ? rawFile : null;
-        const referenceDocumentId = String(field("referenceDocumentId", index) || "").trim() || null;
+        const referenceDocumentId = String(field("referenceDocumentId", index, position) || "").trim() || null;
         if (!referenceUpload && !referenceDocumentId) continue;
         if (referenceUpload && referenceDocumentId) {
           throw new WorkflowError(`Attach either a new reference file or an existing approved document, not both${label}.`, 400);
         }
 
-        const refSubtypeId = stepConfig.referenceDocumentSubtypeId ?? (String(field("referenceSubtypeId", index) || "").trim() || null);
+        const refSubtypeId = stepConfig.referenceDocumentSubtypeId ?? (String(field("referenceSubtypeId", index, position) || "").trim() || null);
         const refSubtype = refSubtypeId ? refType.subtypes.find((candidate) => candidate.id === refSubtypeId) ?? null : null;
         if (refSubtypeId && !refSubtype) throw new WorkflowError(`The reference sub type does not belong to the reference document type${label}.`, 400);
         if (!refSubtype && refType.subtypes.length > 0 && !referenceDocumentId) {
@@ -199,26 +240,48 @@ export async function POST(request: Request) {
           if (!nodeMatches({ documentTypeId: stepConfig.referenceDocumentTypeId!, documentSubtypeId: stepConfig.referenceDocumentSubtypeId }, existingRef)) {
             throw new WorkflowError(`That document is not the type this step asks for as a reference${label}.`, 400);
           }
-          references[index] = { existingDocumentId: existingRef.id, file: null, title: "", type: refType, subtype: refSubtype };
+          if (references[index].some((item) => item.existingDocumentId === existingRef.id)) continue;
+          references[index].push({ existingDocumentId: existingRef.id, file: null, title: "", type: refType, subtype: refSubtype });
         } else {
           if (await needsApprovalFor(refSubtype?.id ?? null)) {
             throw new WorkflowError("This reference document type goes through approval, so a new file cannot be uploaded as a reference. Pick an already approved document instead.", 400);
           }
-          references[index] = {
+          references[index].push({
             existingDocumentId: null,
             file: referenceUpload,
-            title: String(field("referenceTitle", index) || "").trim(),
+            title: String(field("referenceTitle", index, position) || "").trim(),
             type: refType,
             subtype: refSubtype,
-          };
+          });
         }
+       }
       }
     }
 
     // ---- Custom fields ----
     const definitions = await loadFieldDefinitions(prisma, documentTypeId, documentSubtypeId);
-    const inputs = parseFieldInputs(formData.get("fieldValues"), formData.get("lineItems"));
-    const fields = normalizeFieldValues(definitions, inputs.header, inputs.lineItems, documentType.supportsLineItems);
+    // Every file is its own document. A file may carry its own values (fieldValues_0, lineItems_0, ... by position,
+    // sent when the uploader confirmed values read from that file); a file without them gets the shared values.
+    let sharedFields: NormalizedFields | null = null;
+    const getSharedFields = () => {
+      if (!sharedFields) {
+        const inputs = parseFieldInputs(formData.get("fieldValues"), formData.get("lineItems"));
+        sharedFields = normalizeFieldValues(definitions, inputs.header, inputs.lineItems, documentType.supportsLineItems);
+      }
+      return sharedFields;
+    };
+    const fieldsPerFile: NormalizedFields[] = files.map((file, index) => {
+      const ownHeader = formData.get(`fieldValues_${index}`);
+      const ownLines = formData.get(`lineItems_${index}`);
+      if (ownHeader === null && ownLines === null) return getSharedFields();
+      try {
+        const own = parseFieldInputs(ownHeader, ownLines);
+        return normalizeFieldValues(definitions, own.header, own.lineItems, documentType.supportsLineItems);
+      } catch (error) {
+        if (error instanceof WorkflowError && files.length > 1) throw new WorkflowError(`${file.name}: ${error.message}`, error.status);
+        throw error;
+      }
+    });
 
     // ---- Repeat of an earlier submit (double click, retry): return what already exists ----
     const keys = submissionKey ? files.map((_file, index) => `${submissionKey}:${index}`) : [];
@@ -240,6 +303,10 @@ export async function POST(request: Request) {
     });
 
     const effects: WorkflowEffects = { notifications: [], emailEvents: [] };
+    // An already approved admin upload does not announce "next document ready" unless the admin asked for it.
+    const linkEffects: WorkflowEffects = alreadyApproved && !notifyNext ? { notifications: [], emailEvents: [] } : effects;
+    let processRunId: string | null = processRun?.id ?? null;
+    const followUpRunIds: string[] = [];
 
     const created = await prisma.$transaction(
       async (tx) => {
@@ -287,75 +354,86 @@ export async function POST(request: Request) {
             },
           });
 
-          await saveFieldValues(tx, document.id, fields);
+          await saveFieldValues(tx, document.id, fieldsPerFile[index]);
 
           // Copies the flow onto the document and starts level 1 (or approves it at once when no flow applies).
-          const result = await startApproval(tx, { documentId: document.id, actor, versionId: version.id });
+          // An Admin user may instead register the document as already approved.
+          const result = alreadyApproved
+            ? await registerApprovedDocument(tx, { documentId: document.id, actor, versionId: version.id, approvedAt })
+            : await startApproval(tx, { documentId: document.id, actor, versionId: version.id });
           effects.notifications.push(...result.effects.notifications);
           effects.emailEvents.push(...result.effects.emailEvents);
 
           // The optional reference document: stored, never approved, hidden from people without the permission.
-          const reference = references[index] ?? null;
-          let referenceDocumentLinkId: string | null = reference?.existingDocumentId ?? null;
-          if (reference && reference.file) {
-            const refNumber = await generateDocumentNumber(tx, { documentTypeId: reference.type.id, documentSubtypeId: reference.subtype?.id ?? null, projectId });
-            const refTitle = reference.title || reference.file.name.replace(/\.[^.]+$/, "") || "Reference document";
-            const refDocument = await tx.document.create({
-              data: {
-                documentNumber: refNumber,
-                title: refTitle,
-                description: `Reference document for ${documentNumber}`,
-                status: DocumentStatus.PENDING,
-                currentVersion: 0,
-                createdById: session.userId,
-                documentTypeId: reference.type.id,
-                documentSubtypeId: reference.subtype?.id ?? null,
-                projectId,
-                isReference: true,
-              },
-            });
-            const refSaved = await saveDocumentVersionFile({
-              documentId: refDocument.id,
-              versionNumber: 0,
-              file: reference.file,
-              documentNumber: refNumber,
-              storageFolder: documentStorageFolder({
-                locationName: project?.location?.name ?? null,
-                projectCode: project?.code ?? null,
-                documentTypeCode: reference.type.code,
-                documentSubtypeCode: reference.subtype?.code ?? null,
-              }),
-            });
-            savedPaths.push(refSaved.relativePath);
-            const refVersion = await tx.documentVersion.create({
-              data: {
+          const referenceIds: string[] = [];
+          for (const reference of references[index] ?? []) {
+            let referenceDocumentLinkId: string | null = reference.existingDocumentId;
+            if (reference.file) {
+              const refNumber = await generateDocumentNumber(tx, { documentTypeId: reference.type.id, documentSubtypeId: reference.subtype?.id ?? null, projectId });
+              const refTitle = reference.title || reference.file.name.replace(/\.[^.]+$/, "") || "Reference document";
+              const refDocument = await tx.document.create({
+                data: {
+                  documentNumber: refNumber,
+                  title: refTitle,
+                  description: `Reference document for ${documentNumber}`,
+                  status: DocumentStatus.PENDING,
+                  currentVersion: 0,
+                  createdById: session.userId,
+                  documentTypeId: reference.type.id,
+                  documentSubtypeId: reference.subtype?.id ?? null,
+                  projectId,
+                  isReference: true,
+                },
+              });
+              const refSaved = await saveDocumentVersionFile({
                 documentId: refDocument.id,
                 versionNumber: 0,
-                filePath: refSaved.relativePath,
-                storageFolder: refSaved.storageFolder,
-                originalName: reference.file.name,
-                extension: refSaved.extension,
-                mimeType: reference.file.type || "application/octet-stream",
-                fileSize: reference.file.size,
-                uploadedById: session.userId,
-              },
-            });
-            // No approval flow applies (checked above), so this approves it at once without telling anyone.
-            await startApproval(tx, { documentId: refDocument.id, actor, versionId: refVersion.id });
-            referenceDocumentLinkId = refDocument.id;
+                file: reference.file,
+                documentNumber: refNumber,
+                storageFolder: documentStorageFolder({
+                  locationName: project?.location?.name ?? null,
+                  projectCode: project?.code ?? null,
+                  documentTypeCode: reference.type.code,
+                  documentSubtypeCode: reference.subtype?.code ?? null,
+                }),
+              });
+              savedPaths.push(refSaved.relativePath);
+              const refVersion = await tx.documentVersion.create({
+                data: {
+                  documentId: refDocument.id,
+                  versionNumber: 0,
+                  filePath: refSaved.relativePath,
+                  storageFolder: refSaved.storageFolder,
+                  originalName: reference.file.name,
+                  extension: refSaved.extension,
+                  mimeType: reference.file.type || "application/octet-stream",
+                  fileSize: reference.file.size,
+                  uploadedById: session.userId,
+                },
+              });
+              // No approval flow applies (checked above), so this approves it at once without telling anyone.
+              await startApproval(tx, { documentId: refDocument.id, actor, versionId: refVersion.id });
+              referenceDocumentLinkId = refDocument.id;
+            }
+            if (referenceDocumentLinkId) referenceIds.push(referenceDocumentLinkId);
           }
 
           if (processRun && processStep) {
             // Next document of a running process: it fills the child node the uploader chose.
+            // With multiple uploads it gets a run of its own, linked to the run (and approved document) it follows.
+            const targetRunId = allowMultiple
+              ? (await startFollowUpRun(tx, { parentInstanceId: processRun.id, stepId: processStep.id, reference: documentNumber, startedById: session.userId })).id
+              : processRun.id;
+            if (allowMultiple) followUpRunIds.push(targetRunId);
             await linkDocumentToStep(tx, {
-              processInstanceId: processRun.id,
+              processInstanceId: targetRunId,
               stepId: processStep.id,
               documentId: document.id,
               source: ProcessStepSource.UPLOADED,
               linkedById: session.userId,
-              referenceDocumentId: referenceDocumentLinkId,
+              referenceDocumentIds: referenceIds,
               overrideDelay: session.userType === USER_TYPE.ADMIN,
-            }, effects);
+            }, linkEffects);
           } else if (upload?.kind === "root") {
             // A root document starts its process by itself; the run is named after the document number.
             const run = await startProcessRun(tx, {
@@ -365,14 +443,15 @@ export async function POST(request: Request) {
               reference: documentNumber,
               startedById: session.userId,
             });
+            processRunId = run.id;
             await linkDocumentToStep(tx, {
               processInstanceId: run.id,
               stepId: upload.rootStepId,
               documentId: document.id,
               source: ProcessStepSource.UPLOADED,
               linkedById: session.userId,
-              referenceDocumentId: referenceDocumentLinkId,
-            }, effects);
+              referenceDocumentIds: referenceIds,
+            }, linkEffects);
           }
 
           results.push({ id: document.id, documentNumber, title: perFileTitle, status: result.status });
@@ -385,7 +464,18 @@ export async function POST(request: Request) {
 
     await dispatchWorkflowEffects(effects);
 
-    return NextResponse.json({ message: "Document submitted.", documents: created }, { status: 201 });
+    if (alreadyApproved) {
+      for (const document of created) {
+        await writeAuditLog({
+          documentId: document.id,
+          performedById: session.userId,
+          action: "DOCUMENT_UPLOADED_APPROVED",
+          details: `${document.documentNumber} uploaded as already approved${approvedAt ? ` (approval date ${approvedAt.toISOString().slice(0, 10)})` : ""}${processRunId ? " into a process run" : ""}.`,
+        }).catch(() => undefined);
+      }
+    }
+
+    return NextResponse.json({ message: "Document submitted.", documents: created, processRunId, followUpRunIds }, { status: 201 });
   } catch (error) {
     // Do not leave files behind when the database work was rolled back.
     if (savedPaths.length > 0) {

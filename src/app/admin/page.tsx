@@ -9,6 +9,7 @@ import { USER_TYPE } from "@/lib/auth/roles";
 import { formatWaitingTime, getAgeBucket, getWaitingHours } from "@/lib/document-metrics";
 import { getDocumentRows } from "@/lib/document-queries";
 import { prisma } from "@/lib/prisma";
+import { TONE_CLASSES } from "@/lib/status-colors";
 
 export const dynamic = "force-dynamic";
 
@@ -139,9 +140,9 @@ export default async function AdminDashboardPage() {
             <PageSummaryCards
               cards={[
                 { label: "Total Documents", value: String(totalDocuments), tone: "bg-slate-100 text-slate-900 ring-1 ring-slate-300" },
-                { label: "Pending", value: String(pendingApprovals), tone: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200" },
-                { label: "Approved", value: String(approvedDocuments), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
-                { label: "Rejected", value: String(rejectedDocuments), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
+                { label: "Pending", value: String(pendingApprovals), tone: TONE_CLASSES.yellow },
+                { label: "Approved", value: String(approvedDocuments), tone: TONE_CLASSES.blue },
+                { label: "Rejected", value: String(rejectedDocuments), tone: TONE_CLASSES.red },
               ]}
             />
           </div>

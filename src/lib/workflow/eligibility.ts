@@ -152,7 +152,8 @@ export async function getEligibleRecipients(
  * May this person upload a document of this type / sub type / project?
  *  - Admin: any flow.
  *  - A flow exists: they must be named by its uploader step (level 0), by name or by user type + matching assignment.
- *  - No flow (auto-approve): any Clerk with an assignment covering the document.
+ *  - No flow (auto-approve): only people whose role carries "Upload documents" for that scope (checked first, above).
+ *    A Clerk who merely holds some other assignment (for example a view-only role) can NOT upload.
  */
 export async function canUserUpload(
   db: Db,
@@ -182,14 +183,12 @@ export async function canUserUpload(
     return result.allowed;
   }
 
-  if (actor.userType !== USER_TYPE.CLERK) return false;
-
-  const candidate = await loadCandidate(db, actor.id);
-  return !!candidate && candidate.assignments.some((assignment) => assignmentMatchesScope(assignment, scope));
+  // No flow, or a flow without an uploader step: the "Upload documents" permission above is the only way in.
+  return false;
 }
 
 /**
- * Should this person see "New document" at all? Admin always. Otherwise: a Clerk with at least one assignment,
+ * Should this person see "New document" at all? Admin always. Otherwise: anyone holding a role with "Upload documents",
  * or anyone a flow names at its uploader step (by name or by their user type).
  */
 export async function canUserUploadAnything(db: Db, user: { id: string; userType: UserTypeCode }): Promise<boolean> {
@@ -200,8 +199,6 @@ export async function canUserUploadAnything(db: Db, user: { id: string; userType
     select: { userTypeId: true, _count: { select: { assignments: true } } },
   });
   if (!record) return false;
-
-  if (user.userType === USER_TYPE.CLERK && record._count.assignments > 0) return true;
 
   const withUploadPermission = await db.userAssignment.count({
     where: { userId: user.id, role: { permissions: { some: { permission: { code: UPLOAD_PERMISSION } } } } },

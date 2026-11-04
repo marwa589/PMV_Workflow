@@ -103,6 +103,7 @@ export const config = {
     "/processes/:path*",
     "/tasks/:path*",
     "/search",
+    "/maintenance",
     "/api/:path*",
   ],
 };

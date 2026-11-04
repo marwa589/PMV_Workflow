@@ -273,6 +273,43 @@ export async function startApproval(
   return { documentId: document.id, status: DocumentStatus.PENDING, currentWorkflowStep: firstLevel, effects };
 }
 
+/**
+ * An Admin user uploads a document that is ALREADY approved (it was approved outside the system, or before the
+ * system was in use). No approval levels are copied and nobody is asked to approve: the document is approved on
+ * the spot and the history says who registered it. Linking it to a process step afterwards moves the run on.
+ * Called right after the document row (and its first file version) is created, instead of startApproval().
+ */
+export async function registerApprovedDocument(
+  tx: Tx,
+  input: { documentId: string; actor: WorkflowActor; versionId?: string | null; approvedAt?: Date | null; comments?: string | null },
+): Promise<WorkflowResult> {
+  if (input.actor.userType !== USER_TYPE.ADMIN) {
+    throw new WorkflowError("Only an Admin user can upload an already approved document.", 403);
+  }
+  const document = await loadDocument(tx, input.documentId);
+  const effects = emptyEffects();
+
+  await saveDocument(tx, document, {
+    status: DocumentStatus.APPROVED,
+    approvedAt: input.approvedAt ?? new Date(),
+    currentWorkflowStep: null,
+    currentApproverAssignedAt: null,
+  });
+  await addHistory(tx, {
+    documentId: document.id,
+    action: ApprovalActionType.AUTO_APPROVED,
+    actorId: input.actor.id,
+    levelNumber: 0,
+    fromStatus: document.status,
+    toStatus: DocumentStatus.APPROVED,
+    comments: input.comments ?? "Uploaded by an Admin user as an already approved document.",
+    versionId: input.versionId,
+    revisionNumber: document.revisionNumber,
+  });
+
+  return { documentId: document.id, status: DocumentStatus.APPROVED, currentWorkflowStep: null, effects };
+}
+
 function requireCurrentStep(document: LoadedDocument) {
   if (document.currentWorkflowStep === null) throw new WorkflowError("This document is not waiting at any level.", 409);
   const step = document.approvalSteps.find((candidate) => candidate.levelNumber === document.currentWorkflowStep);

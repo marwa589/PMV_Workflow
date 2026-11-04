@@ -1,0 +1,443 @@
+{
+ "_comment": "Generated from the OLD system's prisma/schema.prisma (main branch). Used by audit-old-db.mjs to detect drift between the real database and the schema.",
+ "enums": {
+  "UserRole": [
+   "CLERK",
+   "APPROVER_1",
+   "APPROVER_2",
+   "APPROVER_3",
+   "ADMIN",
+   "ERR_USER",
+   "KSA_VIEWER"
+  ],
+  "UserLocation": [
+   "AVR",
+   "AVK",
+   "KUWAIT"
+  ],
+  "DocumentStatus": [
+   "PENDING_APPROVER_1",
+   "PENDING_APPROVER_2",
+   "PENDING_APPROVER_3",
+   "APPROVED",
+   "REJECTED",
+   "REVISION_REQUIRED",
+   "ARCHIVED"
+  ],
+  "ApprovalActionType": [
+   "SUBMITTED",
+   "APPROVED",
+   "REJECTED",
+   "REQUESTED_REVISION"
+  ],
+  "DeletionRequestStatus": [
+   "PENDING",
+   "APPROVED",
+   "REJECTED"
+  ],
+  "DocumentType": [
+   "COMPARISON",
+   "MATERIAL_REQUISITION",
+   "CUSTODY"
+  ],
+  "ComparisonType": [
+   "SPARE_PARTS",
+   "OTHER"
+  ],
+  "MrType": [
+   "CASH",
+   "CREDIT"
+  ],
+  "NotificationType": [
+   "PENDING_APPROVAL",
+   "DOCUMENT_APPROVED",
+   "DOCUMENT_REJECTED",
+   "DOCUMENT_REVISED",
+   "DOCUMENT_DELETED"
+  ],
+  "EmailEventType": [
+   "APPROVAL_PENDING",
+   "WORKFLOW_APPROVED",
+   "WORKFLOW_REJECTED",
+   "APPROVAL_OVERDUE",
+   "COMPARISON_MR_OVERDUE",
+   "PURCHASE_ORDER_AVAILABLE",
+   "ERR_WORKFLOW_UPDATE"
+  ],
+  "ErrType": [
+   "RENTAL_ACTC",
+   "RENTAL_EXTERNAL",
+   "RENEWAL",
+   "PURCHASE"
+  ],
+  "ErrStatus": [
+   "PENDING",
+   "ON_HOLD",
+   "REVISION_REQUIRED",
+   "REJECTED",
+   "APPROVED"
+  ],
+  "ErrStage": [
+   "PROJECT_DIRECTOR",
+   "PMV_MANAGER",
+   "ACTING_CEO",
+   "CEO"
+  ],
+  "ErrApprovalPath": [
+   "FINALIZE",
+   "ACTING_CEO",
+   "ACTING_CEO_THEN_CEO",
+   "CEO"
+  ],
+  "ErrFileKind": [
+   "ERR_PDF",
+   "QUOTATION",
+   "ATTACHMENT",
+   "RELEASE_VOUCHER",
+   "RECEIPT_VOUCHER"
+  ],
+  "ErrAction": [
+   "SUBMITTED",
+   "APPROVED",
+   "FINALIZED_APPROVAL",
+   "ESCALATED_TO_ACTING_CEO",
+   "ESCALATED_TO_CEO",
+   "REJECTED",
+   "REQUESTED_REVISION",
+   "PUT_ON_HOLD",
+   "RESUMED",
+   "RESUBMITTED",
+   "COMMENTED",
+   "RELEASE_VOUCHER_ADDED",
+   "RECEIPT_VOUCHER_ADDED"
+  ],
+  "ErrAccessRole": [
+   "UPLOADER",
+   "PROJECT_DIRECTOR",
+   "PROJECT_MANAGER",
+   "ACTING_CEO",
+   "CEO",
+   "VIEWER"
+  ],
+  "ErrProjectCountry": [
+   "KSA",
+   "KUWAIT"
+  ],
+  "ErrNotificationType": [
+   "APPROVAL_PENDING",
+   "APPROVED",
+   "REJECTED",
+   "REVISION_REQUIRED",
+   "ON_HOLD",
+   "RESUMED"
+  ]
+ },
+ "tables": {
+  "User": [
+   "id",
+   "name",
+   "email",
+   "passwordHash",
+   "role",
+   "location",
+   "projectName",
+   "createdAt",
+   "updatedAt",
+   "sessionVersion",
+   "signatureFileSize",
+   "signatureMimeType",
+   "signatureOriginalName",
+   "signaturePath",
+   "signatureUpdatedAt",
+   "preferredSignatureWidth"
+  ],
+  "UserRoleAssignment": [
+   "id",
+   "userId",
+   "role",
+   "createdAt"
+  ],
+  "PasswordResetToken": [
+   "id",
+   "userId",
+   "tokenHash",
+   "expiresAt",
+   "usedAt",
+   "createdAt"
+  ],
+  "Document": [
+   "id",
+   "documentNumber",
+   "title",
+   "description",
+   "status",
+   "currentVersion",
+   "createdAt",
+   "updatedAt",
+   "createdById",
+   "currentApproverId",
+   "uploaderLocation",
+   "projectName",
+   "workflowTemplateId",
+   "currentWorkflowStep",
+   "documentType",
+   "documentSubtype",
+   "comparisonType",
+   "mrType",
+   "currentApproverAssignedAt",
+   "downloadedAt",
+   "mrNumber",
+   "relatedComparisonId",
+   "lastActiveStage"
+  ],
+  "DocumentDownload": [
+   "id",
+   "documentId",
+   "userId",
+   "downloadedAt"
+  ],
+  "DocumentWorkflowTemplate": [
+   "id",
+   "name",
+   "location",
+   "documentType",
+   "documentSubtype",
+   "projectName",
+   "isActive",
+   "createdAt",
+   "updatedAt"
+  ],
+  "DocumentWorkflowStep": [
+   "id",
+   "templateId",
+   "stepNumber",
+   "role",
+   "approverUserId",
+   "isRequired",
+   "createdAt"
+  ],
+  "DocumentVersion": [
+   "id",
+   "documentId",
+   "versionNumber",
+   "filePath",
+   "storageFolder",
+   "originalName",
+   "extension",
+   "mimeType",
+   "fileSize",
+   "uploadedAt",
+   "uploadedById"
+  ],
+  "PurchaseOrderSequence": [
+   "id",
+   "nextNumber",
+   "updatedAt"
+  ],
+  "DocumentNumberSequence": [
+   "id",
+   "lastNumber",
+   "updatedAt"
+  ],
+  "CustodyFileSequence": [
+   "id",
+   "nextNumber",
+   "updatedAt"
+  ],
+  "PurchaseOrder": [
+   "id",
+   "poNumber",
+   "originalName",
+   "description",
+   "filePath",
+   "mimeType",
+   "fileSize",
+   "uploadedAt",
+   "uploadedById",
+   "receivedAt",
+   "receivedById"
+  ],
+  "PurchaseOrderInvoice": [
+   "id",
+   "purchaseOrderId",
+   "documentId",
+   "originalName",
+   "filePath",
+   "mimeType",
+   "fileSize",
+   "uploadedAt",
+   "uploadedById"
+  ],
+  "PurchaseOrderMrLink": [
+   "id",
+   "purchaseOrderId",
+   "documentId",
+   "createdAt",
+   "createdById"
+  ],
+  "ApprovalHistory": [
+   "id",
+   "documentId",
+   "action",
+   "comments",
+   "performedAt",
+   "performedById",
+   "versionId"
+  ],
+  "DeletionRequest": [
+   "id",
+   "documentId",
+   "requestedById",
+   "approver3Id",
+   "status",
+   "reason",
+   "createdAt",
+   "reviewedAt",
+   "adminReviewerId"
+  ],
+  "Notification": [
+   "id",
+   "userId",
+   "type",
+   "title",
+   "message",
+   "documentId",
+   "isRead",
+   "createdAt"
+  ],
+  "EmailNotificationEvent": [
+   "id",
+   "recipientId",
+   "type",
+   "documentId",
+   "createdAt",
+   "emailDueAt",
+   "emailSent",
+   "claimedAt"
+  ],
+  "AuditLog": [
+   "id",
+   "documentId",
+   "performedById",
+   "action",
+   "details",
+   "createdAt"
+  ],
+  "TrustedDevice": [
+   "id",
+   "userId",
+   "tokenHash",
+   "createdAt",
+   "lastUsedAt",
+   "expiresAt",
+   "revokedAt"
+  ],
+  "OtpChallenge": [
+   "id",
+   "userId",
+   "challengeTokenHash",
+   "codeHash",
+   "attempts",
+   "lockedUntil",
+   "expiresAt",
+   "verifiedAt",
+   "consumedAt",
+   "createdAt"
+  ],
+  "Err": [
+   "id",
+   "documentNumber",
+   "submissionKey",
+   "title",
+   "description",
+   "type",
+   "status",
+   "currentStage",
+   "nextApprovalPath",
+   "createdById",
+   "projectDirectorId",
+   "currentApproverId",
+   "currentApproverAssignedAt",
+   "revisionNumber",
+   "lockVersion",
+   "createdAt",
+   "updatedAt",
+   "approvedAt",
+   "downloadedAt",
+   "projectId",
+   "projectNameSnapshot"
+  ],
+  "ErrDownload": [
+   "id",
+   "errId",
+   "userId",
+   "downloadedAt"
+  ],
+  "ErrSequence": [
+   "id",
+   "nextNumber",
+   "updatedAt"
+  ],
+  "ErrFile": [
+   "id",
+   "errId",
+   "kind",
+   "versionNumber",
+   "revisionNumber",
+   "filePath",
+   "storageFolder",
+   "originalName",
+   "mimeType",
+   "fileSize",
+   "uploadedById",
+   "createdAt"
+  ],
+  "ErrApprovalHistory": [
+   "id",
+   "errId",
+   "performedById",
+   "action",
+   "stage",
+   "comments",
+   "revisionNumber",
+   "inputFileId",
+   "outputFileId",
+   "performedAt"
+  ],
+  "ErrUserAccess": [
+   "id",
+   "userId",
+   "role",
+   "projectId",
+   "isActive",
+   "createdAt",
+   "updatedAt"
+  ],
+  "ErrNotification": [
+   "id",
+   "errId",
+   "recipientId",
+   "type",
+   "eventKey",
+   "title",
+   "message",
+   "createdAt",
+   "readAt",
+   "emailEnabled",
+   "emailSentAt",
+   "emailAttempts",
+   "nextEmailAt",
+   "emailClaimedAt",
+   "lastEmailError"
+  ],
+  "ErrProject": [
+   "id",
+   "name",
+   "country",
+   "directorId",
+   "isActive",
+   "createdAt",
+   "updatedAt"
+  ]
+ }
+}

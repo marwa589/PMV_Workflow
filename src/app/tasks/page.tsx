@@ -29,21 +29,21 @@ const REVIEW_STATUS_OPTIONS = [
   { value: "REVISION_REQUIRED", label: "Revision Required" },
 ];
 
-function withoutPrefix(params: NonNullable<ListSearchParams>, prefix: string): Record<string, string> {
-  const result: Record<string, string> = {};
+// Filters can hold several values (?rv_documentType=MR&rv_documentType=PO), so values stay lists.
+function withoutPrefix(params: NonNullable<ListSearchParams>, prefix: string): NonNullable<ListSearchParams> {
+  const result: NonNullable<ListSearchParams> = {};
   for (const [key, value] of Object.entries(params)) {
     if (!key.startsWith(prefix)) continue;
-    const text = Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
-    result[key.slice(prefix.length)] = text;
+    result[key.slice(prefix.length)] = value;
   }
   return result;
 }
 
-function onlyPrefix(params: NonNullable<ListSearchParams>, prefix: string): Record<string, string> {
-  const result: Record<string, string> = {};
+function onlyPrefix(params: NonNullable<ListSearchParams>, prefix: string): Record<string, string | string[]> {
+  const result: Record<string, string | string[]> = {};
   for (const [key, value] of Object.entries(params)) {
-    if (!key.startsWith(prefix)) continue;
-    result[key] = Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+    if (!key.startsWith(prefix) || value === undefined) continue;
+    result[key] = value;
   }
   return result;
 }
@@ -61,7 +61,7 @@ export default async function MyTasksPage({ searchParams }: { searchParams?: Pro
   const reviewFilters = parseListFilters(withoutPrefix(params, REVIEW_PREFIX));
   const uploadFilters = parseListFilters(withoutPrefix(params, UPLOAD_PREFIX));
 
-  const [allUploadTasks, allReviewDocuments, canBulkApprove, { documentTypes, projects }] = await Promise.all([
+  const [allUploadTasks, allReviewDocuments, canBulkApprove, { documentTypes, projects, locations }] = await Promise.all([
     getUploadTasks(prisma, user),
     getActionableDocuments(user, [DocumentStatus.PENDING, DocumentStatus.ON_HOLD, DocumentStatus.REVISION_REQUIRED]),
     userCanBulkApprove(session.userId),
@@ -72,9 +72,10 @@ export default async function MyTasksPage({ searchParams }: { searchParams?: Pro
   const trackedReview = await withDownloadTracking(allReviewDocuments, session.userId);
   const reviewDocuments = applyListFilters(trackedReview, reviewFilters);
   const uploadTasks = allUploadTasks.filter((task) => {
-    if (uploadFilters.documentType && !task.options.some((option) => option.typeCode === uploadFilters.documentType)) return false;
-    if (uploadFilters.documentSubtype && !task.options.some((option) => option.subtypeCode === uploadFilters.documentSubtype)) return false;
-    if (uploadFilters.project && task.project?.id !== uploadFilters.project) return false;
+    if (uploadFilters.documentType.length > 0 && !task.options.some((option) => uploadFilters.documentType.includes(option.typeCode))) return false;
+    if (uploadFilters.documentSubtype.length > 0 && !task.options.some((option) => option.subtypeCode !== null && uploadFilters.documentSubtype.includes(option.subtypeCode))) return false;
+    if (uploadFilters.project.length > 0 && !(task.project && uploadFilters.project.includes(task.project.id))) return false;
+    if (uploadFilters.location.length > 0 && !(task.project?.locationId && uploadFilters.location.includes(task.project.locationId))) return false;
     return matchesDocumentSearch(
       {
         documentNumber: task.lastDocument?.documentNumber,
@@ -113,10 +114,12 @@ export default async function MyTasksPage({ searchParams }: { searchParams?: Pro
             documentType={uploadFilters.documentType}
             documentSubtype={uploadFilters.documentSubtype}
             project={uploadFilters.project}
+            location={uploadFilters.location}
             search={uploadFilters.search}
             showStatusFilter={false}
             documentTypes={documentTypes}
             projects={projects}
+            locations={locations}
           />
         </div>
 
@@ -196,6 +199,7 @@ export default async function MyTasksPage({ searchParams }: { searchParams?: Pro
             documentType={reviewFilters.documentType}
             documentSubtype={reviewFilters.documentSubtype}
             project={reviewFilters.project}
+            location={reviewFilters.location}
             downloadStatus={reviewFilters.downloadStatus}
             search={reviewFilters.search}
             showDownloadFilters
@@ -203,6 +207,7 @@ export default async function MyTasksPage({ searchParams }: { searchParams?: Pro
             statusFilterOptions={REVIEW_STATUS_OPTIONS}
             documentTypes={documentTypes}
             projects={projects}
+            locations={locations}
           />
         </div>
         <div className="px-1 py-4">

@@ -1,0 +1,12 @@
+{
+  "_note": "Owner decisions for the document migration. Edit only after the owner has confirmed.",
+  "exclude": {
+    "DOC-0682": "Not an MR - the wrong file was uploaded (owner decision 2026-10-31)",
+    "DOC-1324": "MR 210311, rejected; owner said drop both copies (owner decision 2026-11-01)",
+    "DOC-3187": "MR 210311, rejected; owner said drop both copies (owner decision 2026-11-01)"
+  },
+  "mrNumbers": {
+    "DOC-1867": "211113",
+    "DOC-0885": "209709 + 209710 + 209711"
+  }
+}

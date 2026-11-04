@@ -8,6 +8,7 @@ import { getActionableDocuments } from "@/lib/document-queries";
 import { buildDocumentVisibilityWhere, getGlobalPermissionCodes } from "@/lib/auth/access";
 import { canUserUploadAnything } from "@/lib/workflow/eligibility";
 import { getUploadTasks } from "@/lib/workflow/processes";
+import { userHasMaintenanceAccess } from "@/lib/maintenance/access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -103,6 +104,7 @@ export async function GET() {
 
   const permissionCodes = await getGlobalPermissionCodes(session);
   const has = (code: string) => permissionCodes.includes(code);
+  const maintenanceAccess = await userHasMaintenanceAccess(session);
 
   // Process Runs is only for admins; everyone else sees linked documents on the document page.
   const canViewProcesses = session.userType === USER_TYPE.ADMIN;
@@ -114,6 +116,7 @@ export async function GET() {
     pendingByType,
     canUpload,
     canViewProcesses,
+    canUseMaintenance: maintenanceAccess,
     documentTypes,
     manage: {
       flows: has("flows.manage"),
@@ -124,6 +127,7 @@ export async function GET() {
       delegations: has("delegations.manage"),
       projects: has("projects.manage"),
       deletionReview: has("documents.delete_review"),
+      maintenance: session.userType === USER_TYPE.ADMIN || has("maintenance.manage"),
     },
   });
 }

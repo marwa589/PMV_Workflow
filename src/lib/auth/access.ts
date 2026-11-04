@@ -260,6 +260,44 @@ export async function canAccessDocument(
   return count > 0;
 }
 
+/**
+ * Of the given approved, not yet received documents: the ids this user may confirm receipt for
+ * (documents.confirm_receipt in scope of the document's project, location, type and sub type). One query for the whole list.
+ */
+export async function getReceiptConfirmableIds(
+  user: { userId: string; userType: UserTypeCode },
+  documentIds: string[],
+  db: Db = prisma,
+): Promise<Set<string>> {
+  if (documentIds.length === 0) return new Set();
+  const isAdmin = user.userType === USER_TYPE.ADMIN;
+
+  const assignments = await db.userAssignment.findMany({
+    where: { userId: user.userId, role: { permissions: { some: { permission: { code: "documents.confirm_receipt" } } } } },
+    select: ASSIGNMENT_SCOPE_SELECT,
+  });
+  const filters = assignments
+    .map((assignment) => scopeToDocumentWhere(assignment))
+    .filter((filter): filter is Prisma.DocumentWhereInput => filter !== null);
+  if (!isAdmin && filters.length === 0) return new Set();
+
+  const rows = await db.document.findMany({
+    where: {
+      id: { in: documentIds },
+      AND: [
+        ...(isAdmin ? [] : [{ OR: filters }]),
+        { OR: [
+          { documentSubtype: { is: { receiptConfirmationRequired: true } } },
+          { documentSubtype: { is: { receiptConfirmationRequired: null } }, documentType: { is: { receiptConfirmationRequired: true } } },
+          { documentSubtypeId: null, documentType: { is: { receiptConfirmationRequired: true } } },
+        ] },
+      ],
+    },
+    select: { id: true },
+  });
+  return new Set(rows.map((row) => row.id));
+}
+
 /** Permission check scoped to one document (its project, the project's location, type and sub type). */
 export async function userHasPermissionForDocument(
   user: { userId: string; userType: UserTypeCode },

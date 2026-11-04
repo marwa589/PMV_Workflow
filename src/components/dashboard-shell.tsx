@@ -10,6 +10,7 @@ import {
   Building2,
   UserCheck,
   Workflow,
+  Wrench,
   Bell,
   CheckCircle2,
   ChevronRight,
@@ -69,9 +70,10 @@ type SidebarCounts = {
   pendingByType: Array<{ documentTypeId: string; code: string; name: string; count: number }>;
   canUpload: boolean;
   canViewProcesses?: boolean;
+  canUseMaintenance?: boolean;
   documentTypes: Array<{ id: string; code: string; name: string }>;
   manage: Partial<Record<
-    "flows" | "types" | "processes" | "users" | "assignments" | "delegations" | "projects" | "deletionReview",
+    "flows" | "types" | "processes" | "users" | "assignments" | "delegations" | "projects" | "deletionReview" | "maintenance",
     boolean
   >>;
 };
@@ -141,6 +143,10 @@ function getVisibleNavItems(role: AppRole, counts: SidebarCounts): { workItems: 
     workItems.push({ label: "Process Runs", href: "/processes", icon: Workflow });
   }
 
+  if (counts.canUseMaintenance) {
+    workItems.push({ label: "Maintenance Requests", href: "/maintenance", icon: Wrench });
+  }
+
   const documentItems: NavItem[] = [
     {
       label: role === "admin" ? "All Documents" : "My Documents",
@@ -200,6 +206,7 @@ function Sidebar({
         ...(manage.flows ? [{ label: "Approval Flows", href: "/admin/flows", icon: GitBranch }] : []),
         ...(manage.flows ? [{ label: "Flow Assignments", href: "/admin/flow-assignments", icon: ClipboardCheck }] : []),
         ...(manage.processes ? [{ label: "Process Setup", href: "/admin/processes", icon: Network }] : []),
+        ...(manage.maintenance ? [{ label: "Maintenance Setup", href: "/admin/maintenance", icon: Wrench }] : []),
       ],
     },
     {

@@ -2,6 +2,7 @@
 import Link from "next/link";
 import DashboardShell from "@/components/dashboard-shell";
 import StatusBadge from "@/components/status-badge";
+import { getDownloadedAtMap } from "@/lib/download-tracking";
 import { requireAuth } from "@/lib/auth/guards";
 import { SEARCH_MIN_LENGTH, searchDocuments } from "@/lib/global-search";
 
@@ -17,6 +18,7 @@ export default async function SearchPage({ searchParams }: { searchParams?: Prom
   const raw = params.q;
   const query = (Array.isArray(raw) ? raw[0] : raw)?.trim().slice(0, 100) ?? "";
   const { hits, total } = await searchDocuments(session, query, MAX_RESULTS);
+  const downloadedByMe = await getDownloadedAtMap(session.userId, hits.map((hit) => hit.id));
 
   return (
     <DashboardShell
@@ -67,7 +69,7 @@ export default async function SearchPage({ searchParams }: { searchParams?: Prom
                     <td className="px-5 py-3 text-slate-800">{hit.title}</td>
                     <td className="px-5 py-3 text-slate-600">{hit.typeName}{hit.subtypeName ? ` - ${hit.subtypeName}` : ""}</td>
                     <td className="px-5 py-3 text-slate-600">{hit.projectLabel ?? "—"}</td>
-                    <td className="px-5 py-3"><StatusBadge status={hit.status} label={hit.statusLabel} /></td>
+                    <td className="px-5 py-3"><StatusBadge status={hit.status} label={hit.statusLabel} downloaded={downloadedByMe.has(hit.id)} /></td>
                     <td className="px-5 py-3 text-slate-500">{dateFormat.format(new Date(hit.createdAt))}</td>
                   </tr>
                 ))}

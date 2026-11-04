@@ -6,7 +6,7 @@ import { renumberSubtypeDocuments } from "@/lib/workflow/numbering";
 
 export const runtime = "nodejs";
 
-const subtypeSelect = { id: true, documentTypeId: true, code: true, numberingCode: true, name: true, isActive: true, createdAt: true } as const;
+const subtypeSelect = { id: true, documentTypeId: true, code: true, numberingCode: true, name: true, receiptConfirmationRequired: true, isActive: true, createdAt: true } as const;
 
 function validCode(code: string): boolean {
   return /^[A-Za-z0-9_-]{1,30}$/.test(code);
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
 
   try {
     const documentSubtype = await prisma.documentSubtype.create({
-      data: { documentTypeId, code, numberingCode, name, isActive: body?.isActive === undefined ? true : Boolean(body.isActive) },
+      data: { documentTypeId, code, numberingCode, name, receiptConfirmationRequired: typeof body?.receiptConfirmationRequired === "boolean" ? body.receiptConfirmationRequired : null, isActive: body?.isActive === undefined ? true : Boolean(body.isActive) },
       select: subtypeSelect,
     });
     return NextResponse.json({ documentSubtype }, { status: 201 });
@@ -76,7 +76,7 @@ export async function PATCH(request: Request) {
       const numberingCode = requestedNumberingCode ?? (previous.numberingCode || previous.code);
       const updated = await tx.documentSubtype.update({
         where: { id },
-        data: { code, numberingCode, name, ...(typeof body?.isActive === "boolean" ? { isActive: body.isActive } : {}) },
+        data: { code, numberingCode, name, ...(body?.receiptConfirmationRequired === null || typeof body?.receiptConfirmationRequired === "boolean" ? { receiptConfirmationRequired: body.receiptConfirmationRequired as boolean | null } : {}), ...(typeof body?.isActive === "boolean" ? { isActive: body.isActive } : {}) },
         select: subtypeSelect,
       });
       if (previous.numberingCode !== numberingCode) {

@@ -26,6 +26,7 @@ const processSelect = {
       documentTypeId: true,
       documentSubtypeId: true,
       delayHours: true,
+      allowMultipleUploads: true,
       referenceDocumentTypeId: true,
       referenceDocumentSubtypeId: true,
       referenceDocumentType: { select: { id: true, code: true, name: true } },
@@ -46,6 +47,7 @@ type ParsedNode = {
   referenceDocumentTypeId: string | null;
   referenceDocumentSubtypeId: string | null;
   delayHours: number;
+  allowMultipleUploads: boolean;
 };
 
 type OrderedNode = ParsedNode & { stepNumber: number };
@@ -96,7 +98,9 @@ async function parseTree(raw: unknown): Promise<{ nodes?: OrderedNode[]; error?:
     if (!Number.isInteger(rawDelay) || rawDelay < 0 || rawDelay > 8760) {
       return { error: `${name}: the waiting period must be a whole number of hours between 0 and 8760.` };
     }
-    parsed.push({ key, parentKey, name, documentTypeId, documentSubtypeId, referenceDocumentTypeId, referenceDocumentSubtypeId, delayHours: rawDelay });
+    // "Allow multiple uploads": only for later documents (several root documents already each start their own run).
+    const allowMultipleUploads = parentKey !== null && record.allowMultipleUploads === true;
+    parsed.push({ key, parentKey, name, documentTypeId, documentSubtypeId, referenceDocumentTypeId, referenceDocumentSubtypeId, delayHours: rawDelay, allowMultipleUploads });
   }
 
   const roots = parsed.filter((node) => node.parentKey === null);
@@ -178,6 +182,7 @@ async function createNodes(tx: Prisma.TransactionClient, processDefinitionId: st
         referenceDocumentTypeId: node.referenceDocumentTypeId,
         referenceDocumentSubtypeId: node.referenceDocumentSubtypeId,
         delayHours: node.delayHours,
+        allowMultipleUploads: node.allowMultipleUploads,
         parentStepId: node.parentKey ? idByKey.get(node.parentKey) ?? null : null,
       },
       select: { id: true },

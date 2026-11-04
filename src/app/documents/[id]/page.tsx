@@ -6,6 +6,7 @@ import { ArrowLeft, Download, FileCheck, FileText, History, Network } from "luci
 import DashboardShell from "@/components/dashboard-shell";
 import DocumentDetailActions from "@/components/document-detail-actions";
 import StatusBadge from "@/components/status-badge";
+import { getDownloadedAtMap } from "@/lib/download-tracking";
 import WorkflowJourneyChart from "@/components/workflow-journey-chart";
 import { requireAuth } from "@/lib/auth/guards";
 import { buildDocumentVisibilityWhere, canAccessDocument, userHasPermissionForDocument } from "@/lib/auth/access";
@@ -59,8 +60,8 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
       createdBy: { select: { name: true, email: true } },
       receivedBy: { select: { name: true } },
       downloadRecords: { where: { userId: session.userId }, select: { downloadedAt: true }, take: 1 },
-      documentType: { select: { code: true, name: true } },
-      documentSubtype: { select: { code: true, name: true } },
+      documentType: { select: { code: true, name: true, receiptConfirmationRequired: true } },
+      documentSubtype: { select: { code: true, name: true, receiptConfirmationRequired: true } },
       project: { select: { id: true, code: true, name: true, locationId: true, location: { select: { name: true } } } },
       approvals: {
         orderBy: { performedAt: "desc" },
@@ -83,6 +84,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
           processInstance: {
             select: {
               id: true,
+              followedDocumentId: true,
               stepDocuments: {
                 where: { isCurrent: true },
                 orderBy: { processStep: { stepNumber: "asc" } },
@@ -115,6 +117,8 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
           orderBy: { createdAt: "asc" },
         });
   const isAdminUser = session.userType === USER_TYPE.ADMIN;
+  // The run this document belongs to; runs that merely follow it (multiple uploads) are listed on that run's page.
+  const ownProcessLink = document.processLinks.find((link) => link.processInstance.followedDocumentId !== document.id) ?? null;
 
   // ---- What can this person do here? ----
   const currentStep = document.currentWorkflowStep === null ? null : document.approvalSteps.find((step) => step.levelNumber === document.currentWorkflowStep) ?? null;
@@ -138,7 +142,10 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
   }
 
   const permissionScope = { projectId: document.projectId, documentTypeId: document.documentTypeId, documentSubtypeId: document.documentSubtypeId, project: document.project ? { locationId: document.project.locationId } : null };
-  const canConfirmReceipt = document.status === DocumentStatus.APPROVED && !document.receivedAt && (await userHasPermissionForDocument(session, "documents.confirm_receipt", permissionScope));
+  const receiptConfirmationRequired = document.documentSubtype?.receiptConfirmationRequired ?? document.documentType.receiptConfirmationRequired;
+  const canConfirmReceipt = receiptConfirmationRequired && document.status === DocumentStatus.APPROVED && !document.receivedAt && (await userHasPermissionForDocument(session, "documents.confirm_receipt", permissionScope));
+  const downloadedByMe = await getDownloadedAtMap(session.userId, [document.id, ...linkedDocuments.map((item) => item.id)]);
+  const viewerDownloaded = downloadedByMe.has(document.id);
   const canArchive = await userHasPermissionForDocument(session, "documents.archive", permissionScope);
 
   const waitingFor = currentStep
@@ -192,7 +199,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
             <h2 className="mt-2 text-2xl font-semibold text-slate-900">{document.documentNumber}</h2>
             <p className="mt-2 text-sm text-slate-600">{document.title}</p>
           </div>
-          <StatusBadge status={document.status} label={statusText} />
+          <StatusBadge status={document.status} label={statusText} downloaded={viewerDownloaded} />
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -214,7 +221,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
               <Row label="Waiting since" value={formatDate(document.currentApproverAssignedAt)} />
               <Row label="Created" value={formatDate(document.createdAt)} />
               <Row label="Approved" value={formatDate(document.approvedAt)} />
-              {document.receivedAt ? <Row label="Received" value={`${formatDate(document.receivedAt)}${document.receivedBy ? ` by ${document.receivedBy.name}` : ""}`} /> : null}
+              {!receiptConfirmationRequired ? <Row label="Receipt confirmation" value="Not required" /> : document.receivedAt ? <Row label="Received" value={`${formatDate(document.receivedAt)}${document.receivedBy ? ` by ${document.receivedBy.name}` : ""}`} /> : null}
             </div>
           </div>
         </div>
@@ -326,8 +333,8 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
               <Network className="h-4 w-4 text-slate-500" />
               <h3 className="text-base font-semibold text-slate-900">Linked documents</h3>
             </div>
-            {isAdminUser && document.processLinks[0] ? (
-              <Link href={`/processes/${document.processLinks[0].processInstance.id}`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            {isAdminUser && ownProcessLink ? (
+              <Link href={`/processes/${ownProcessLink.processInstance.id}`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                 Open process run
               </Link>
             ) : null}
@@ -339,7 +346,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
                   <Link href={`/documents/${item.id}`} className="font-medium text-cyan-700 hover:underline">{item.documentNumber}</Link>
                   <p className="text-xs text-slate-500">{item.documentType.name} · {item.title}</p>
                 </div>
-                <StatusBadge status={item.status} label={getDocumentStatusDisplay(item.status, { levelNumber: item.currentWorkflowStep })} />
+                <StatusBadge status={item.status} label={getDocumentStatusDisplay(item.status, { levelNumber: item.currentWorkflowStep })} downloaded={downloadedByMe.has(item.id)} />
               </div>
             ))}
           </div>

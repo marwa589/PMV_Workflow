@@ -43,13 +43,15 @@ model Project {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  location          Location?                    @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  documents         Document[]
-  flowAssignments   DocumentWorkflowAssignment[]
-  scopedAssignments UserAssignment[]
-  assignmentScopes  UserAssignmentProjectScope[]
-  counters          DocumentNumberCounter[]
-  processInstances  ProcessInstance[]
+  location               Location?                       @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  documents              Document[]
+  flowAssignments        DocumentWorkflowAssignment[]
+  scopedAssignments      UserAssignment[]
+  assignmentScopes       UserAssignmentProjectScope[]
+  counters               DocumentNumberCounter[]
+  processInstances       ProcessInstance[]
+  maintenanceTickets     MaintenanceTicket[]
+  maintenanceAssignments MaintenanceWorkflowAssignment[]
 
   @@index([locationId, isActive])
 }
@@ -62,9 +64,11 @@ model UserType {
   name      String   @unique
   createdAt DateTime @default(now())
 
-  users                 User[]
-  workflowStepApprovers DocumentWorkflowStepApprover[]
-  approvalStepApprovers DocumentApprovalStepApprover[]
+  users                          User[]
+  workflowStepApprovers          DocumentWorkflowStepApprover[]
+  approvalStepApprovers          DocumentApprovalStepApprover[]
+  maintenanceStepApprovers       MaintenanceWorkflowStepApprover[]
+  maintenanceTicketStepApprovers MaintenanceTicketLevelApprover[]
 }
 
 model User {
@@ -85,31 +89,37 @@ model User {
   // When true, this user may select several pending documents and review/approve them together on one screen.
   canBulkApprove        Boolean   @default(false)
 
-  userType                  UserType                       @relation(fields: [userTypeId], references: [id], onDelete: Restrict)
-  assignments               UserAssignment[]
-  delegationsGiven          ApprovalDelegation[]           @relation("DelegationsGiven")
-  delegationsReceived       ApprovalDelegation[]           @relation("DelegationsReceived")
-  delegationsCreated        ApprovalDelegation[]           @relation("DelegationsCreatedBy")
-  approvalHistory           ApprovalHistory[]              @relation("ApprovalsPerformedBy")
-  approvalsOnBehalfOf       ApprovalHistory[]              @relation("ApprovalsOnBehalfOf")
-  auditLogsPerformed        AuditLog[]                     @relation("AuditLogsPerformedBy")
-  deletionRequestsReviewed  DeletionRequest[]              @relation("DeletionRequestsReviewedBy")
-  deletionRequestsApproved  DeletionRequest[]              @relation("DeletionRequestsApprovedBy")
-  deletionRequestsRequested DeletionRequest[]              @relation("DeletionRequestsRequestedBy")
-  createdDocuments          Document[]                     @relation("DocumentsCreatedBy")
-  receivedDocuments         Document[]                     @relation("DocumentsReceivedBy")
-  uploadedVersions          DocumentVersion[]              @relation("VersionsUploadedBy")
-  approvalStepsActed        DocumentApprovalStep[]         @relation("ApprovalStepActedBy")
-  workflowStepApprovals     DocumentWorkflowStepApprover[] @relation("WorkflowStepApprover")
-  approvalStepApprovals     DocumentApprovalStepApprover[] @relation("ApprovalStepApprover")
-  emailNotificationEvents   EmailNotificationEvent[]       @relation("EmailEventsForUser")
-  notifications             Notification[]                 @relation("NotificationsForUser")
-  otpChallenges             OtpChallenge[]
-  trustedDevices            TrustedDevice[]
-  passwordResetTokens       PasswordResetToken[]
-  processInstancesStarted   ProcessInstance[]              @relation("ProcessInstancesStartedBy")
-  processStepLinks          ProcessStepDocument[]          @relation("ProcessStepLinkedBy")
-  documentDownloads         DocumentDownload[]
+  userType                        UserType                          @relation(fields: [userTypeId], references: [id], onDelete: Restrict)
+  assignments                     UserAssignment[]
+  delegationsGiven                ApprovalDelegation[]              @relation("DelegationsGiven")
+  delegationsReceived             ApprovalDelegation[]              @relation("DelegationsReceived")
+  delegationsCreated              ApprovalDelegation[]              @relation("DelegationsCreatedBy")
+  approvalHistory                 ApprovalHistory[]                 @relation("ApprovalsPerformedBy")
+  approvalsOnBehalfOf             ApprovalHistory[]                 @relation("ApprovalsOnBehalfOf")
+  auditLogsPerformed              AuditLog[]                        @relation("AuditLogsPerformedBy")
+  deletionRequestsReviewed        DeletionRequest[]                 @relation("DeletionRequestsReviewedBy")
+  deletionRequestsApproved        DeletionRequest[]                 @relation("DeletionRequestsApprovedBy")
+  deletionRequestsRequested       DeletionRequest[]                 @relation("DeletionRequestsRequestedBy")
+  createdDocuments                Document[]                        @relation("DocumentsCreatedBy")
+  receivedDocuments               Document[]                        @relation("DocumentsReceivedBy")
+  uploadedVersions                DocumentVersion[]                 @relation("VersionsUploadedBy")
+  approvalStepsActed              DocumentApprovalStep[]            @relation("ApprovalStepActedBy")
+  workflowStepApprovals           DocumentWorkflowStepApprover[]    @relation("WorkflowStepApprover")
+  approvalStepApprovals           DocumentApprovalStepApprover[]    @relation("ApprovalStepApprover")
+  emailNotificationEvents         EmailNotificationEvent[]          @relation("EmailEventsForUser")
+  notifications                   Notification[]                    @relation("NotificationsForUser")
+  otpChallenges                   OtpChallenge[]
+  trustedDevices                  TrustedDevice[]
+  passwordResetTokens             PasswordResetToken[]
+  processInstancesStarted         ProcessInstance[]                 @relation("ProcessInstancesStartedBy")
+  maintenanceTicketsCreated       MaintenanceTicket[]               @relation("MaintenanceTicketRequester")
+  maintenanceLevelActions         MaintenanceTicketEvent[]          @relation("MaintenanceEventActor")
+  maintenanceStepApprovals        MaintenanceWorkflowStepApprover[] @relation("MaintenanceStepUser")
+  maintenanceAttachments          MaintenanceTicketAttachment[]     @relation("MaintenanceAttachmentUploader")
+  maintenanceTicketLevelsActed    MaintenanceTicketLevel[]          @relation("MaintenanceLevelActedBy")
+  maintenanceTicketLevelApprovals MaintenanceTicketLevelApprover[]
+  processStepLinks                ProcessStepDocument[]             @relation("ProcessStepLinkedBy")
+  documentDownloads               DocumentDownload[]
 
   @@index([userTypeId, isActive])
 }
@@ -134,15 +144,16 @@ model PasswordResetToken {
 
 // Replaces enum DocumentType, enum ErrType, enum ErrFileKind and PurchaseOrder.
 model DocumentType {
-  id                String   @id @default(cuid())
-  code              String   @unique
-  numberingCode     String   @unique @default("")
-  name              String   @unique
-  description       String?
-  namingPattern     String   @default("{TYPE}-{PROJECT}-{YYYY}-{SEQ:4}")
-  supportsLineItems Boolean  @default(false)
-  isActive          Boolean  @default(true)
-  createdAt         DateTime @default(now())
+  id                          String   @id @default(cuid())
+  code                        String   @unique
+  numberingCode               String   @unique @default("")
+  name                        String   @unique
+  description                 String?
+  namingPattern               String   @default("{TYPE}-{PROJECT}-{YYYY}-{SEQ:4}")
+  supportsLineItems           Boolean  @default(false)
+  receiptConfirmationRequired Boolean  @default(true)
+  isActive                    Boolean  @default(true)
+  createdAt                   DateTime @default(now())
 
   subtypes          DocumentSubtype[]
   fieldDefinitions  FieldDefinition[]
@@ -150,27 +161,28 @@ model DocumentType {
   documents         Document[]
   flowAssignments   DocumentWorkflowAssignment[]
   processSteps      ProcessStep[]
-  referenceForSteps ProcessStep[] @relation("ProcessStepReferenceType")
+  referenceForSteps ProcessStep[]                     @relation("ProcessStepReferenceType")
   scopedAssignments UserAssignment[]
   assignmentScopes  UserAssignmentDocumentTypeScope[]
 }
 
 // Replaces Document.documentSubtype, enum MrType, enum ComparisonType and the ERR type variants.
 model DocumentSubtype {
-  id             String   @id @default(cuid())
-  documentTypeId String
-  code           String
-  numberingCode  String   @default("")
-  name           String
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
+  id                          String   @id @default(cuid())
+  documentTypeId              String
+  code                        String
+  numberingCode               String   @default("")
+  name                        String
+  receiptConfirmationRequired Boolean?
+  isActive                    Boolean  @default(true)
+  createdAt                   DateTime @default(now())
 
   documentType      DocumentType                         @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
   fieldDefinitions  FieldDefinition[]
   documents         Document[]
   flowAssignments   DocumentWorkflowAssignment[]
   processSteps      ProcessStep[]
-  referenceForSteps ProcessStep[] @relation("ProcessStepReferenceSubtype")
+  referenceForSteps ProcessStep[]                        @relation("ProcessStepReferenceSubtype")
   scopedAssignments UserAssignment[]
   assignmentScopes  UserAssignmentDocumentSubtypeScope[]
   counters          DocumentNumberCounter[]
@@ -333,12 +345,12 @@ model UserAssignmentProcessScope {
 
 // An admin hands one user's approval tasks to another user, optionally until a fixed expiry time.
 model ApprovalDelegation {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   delegatorUserId String
   delegateUserId  String
   createdById     String
   reason          String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
   expiresAt       DateTime?
 
   delegator User @relation("DelegationsGiven", fields: [delegatorUserId], references: [id], onDelete: Cascade)
@@ -370,13 +382,13 @@ model DocumentWorkflowTemplate {
 
 // stepNumber 0 = uploader step; 1 to 10 = approval levels.
 model DocumentWorkflowStep {
-  id         String   @id @default(cuid())
-  templateId String
-  stepNumber Int
-  name       String?
+  id                String   @id @default(cuid())
+  templateId        String
+  stepNumber        Int
+  name              String?
   // Whether the approver must place a signature to approve at this level (on by default).
-  signatureRequired Boolean @default(true)
-  createdAt  DateTime @default(now())
+  signatureRequired Boolean  @default(true)
+  createdAt         DateTime @default(now())
 
   template  DocumentWorkflowTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
   approvers DocumentWorkflowStepApprover[]
@@ -448,7 +460,7 @@ model Document {
   receivedAt                DateTime?
   // A reference document: uploaded next to a process step's document, never approved, and visible only to people
   // holding documents.view_reference (hidden from every list, search and download for everyone else).
-  isReference               Boolean        @default(false)
+  isReference               Boolean         @default(false)
   receivedById              String?
 
   createdBy        User                      @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
@@ -464,7 +476,8 @@ model Document {
   fieldValues      DocumentFieldValue[]
   deletionRequests DeletionRequest[]         @relation("DeletionRequests")
   processLinks     ProcessStepDocument[]
-  referencedBy     ProcessStepDocument[] @relation("ProcessStepReference")
+  referencedBy     ProcessStepReference[]    @relation("ProcessStepReference")
+  followUpRuns     ProcessInstance[]         @relation("ProcessFollowedDocument")
   downloadRecords  DocumentDownload[]
 
   @@index([createdById])
@@ -551,14 +564,14 @@ model DocumentVersion {
 // ============================================================================
 
 model ProcessDefinition {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  description String?
-  isActive    Boolean  @default(true)
+  id             String   @id @default(cuid())
+  name           String   @unique
+  description    String?
+  isActive       Boolean  @default(true)
   // Editing a process that already has runs creates a new version of its tree: runs keep the version they
   // started with, new uploads use currentVersion.
-  currentVersion Int     @default(1)
-  createdAt   DateTime @default(now())
+  currentVersion Int      @default(1)
+  createdAt      DateTime @default(now())
 
   steps             ProcessStep[]
   instances         ProcessInstance[]
@@ -571,29 +584,32 @@ model ProcessDefinition {
 // whichever child gets uploaded decides the path the run follows. A node with no children ends the path.
 // stepNumber is only a unique label for the node inside its process (1 = root, then depth-first order).
 model ProcessStep {
-  id                  String  @id @default(cuid())
-  processDefinitionId String
-  stepNumber          Int
-  name                String
-  documentTypeId      String
-  documentSubtypeId   String?
-  parentStepId        String?
-  versionNumber       Int     @default(1)
+  id                         String  @id @default(cuid())
+  processDefinitionId        String
+  stepNumber                 Int
+  name                       String
+  documentTypeId             String
+  documentSubtypeId          String?
+  parentStepId               String?
+  versionNumber              Int     @default(1)
   // Optional reference document the uploader of this step may attach (a type, or a sub type of it).
   referenceDocumentTypeId    String?
   referenceDocumentSubtypeId String?
   // Hours to wait after the PARENT document is finally approved before this step may be uploaded (0 = no wait).
-  delayHours          Int     @default(0)
+  delayHours                 Int     @default(0)
+  // "Allow multiple uploads" (set up per step, off by default): several documents may be uploaded together for this
+  // step; each one starts its own follow-up run, linked to the run and the approved document it follows.
+  allowMultipleUploads       Boolean @default(false)
 
-  processDefinition ProcessDefinition     @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
-  documentType      DocumentType          @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
-  documentSubtype   DocumentSubtype?      @relation(fields: [documentSubtypeId], references: [id], onDelete: Restrict)
-  referenceDocumentType    DocumentType?    @relation("ProcessStepReferenceType", fields: [referenceDocumentTypeId], references: [id], onDelete: Restrict)
-  referenceDocumentSubtype DocumentSubtype? @relation("ProcessStepReferenceSubtype", fields: [referenceDocumentSubtypeId], references: [id], onDelete: Restrict)
-  parentStep        ProcessStep?          @relation("ProcessStepTree", fields: [parentStepId], references: [id], onDelete: Cascade)
-  childSteps        ProcessStep[]         @relation("ProcessStepTree")
-  stepDocuments     ProcessStepDocument[]
-  runsAtStep        ProcessInstance[]     @relation("ProcessInstanceCurrentStep")
+  processDefinition        ProcessDefinition     @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
+  documentType             DocumentType          @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
+  documentSubtype          DocumentSubtype?      @relation(fields: [documentSubtypeId], references: [id], onDelete: Restrict)
+  referenceDocumentType    DocumentType?         @relation("ProcessStepReferenceType", fields: [referenceDocumentTypeId], references: [id], onDelete: Restrict)
+  referenceDocumentSubtype DocumentSubtype?      @relation("ProcessStepReferenceSubtype", fields: [referenceDocumentSubtypeId], references: [id], onDelete: Restrict)
+  parentStep               ProcessStep?          @relation("ProcessStepTree", fields: [parentStepId], references: [id], onDelete: Cascade)
+  childSteps               ProcessStep[]         @relation("ProcessStepTree")
+  stepDocuments            ProcessStepDocument[]
+  runsAtStep               ProcessInstance[]     @relation("ProcessInstanceCurrentStep")
 
   @@unique([processDefinitionId, versionNumber, stepNumber])
   @@index([parentStepId])
@@ -614,8 +630,16 @@ model ProcessInstance {
   startedById         String
   startedAt           DateTime      @default(now())
   completedAt         DateTime?
+  // Follow-up runs ("allow multiple uploads"): when several documents are uploaded together as the next step of a
+  // run, each one becomes its own run. It points back at the run it follows and at the approved document it follows
+  // (e.g. a comparison sheet followed by six MRs = six runs, all linked to that sheet). Null for ordinary runs.
+  parentInstanceId    String?
+  followedDocumentId  String?
 
   processDefinition ProcessDefinition     @relation(fields: [processDefinitionId], references: [id], onDelete: Restrict)
+  parentInstance    ProcessInstance?      @relation("ProcessFollowUps", fields: [parentInstanceId], references: [id], onDelete: SetNull)
+  followUps         ProcessInstance[]     @relation("ProcessFollowUps")
+  followedDocument  Document?             @relation("ProcessFollowedDocument", fields: [followedDocumentId], references: [id], onDelete: SetNull)
   project           Project?              @relation(fields: [projectId], references: [id], onDelete: Restrict)
   startedBy         User                  @relation("ProcessInstancesStartedBy", fields: [startedById], references: [id], onDelete: Restrict)
   currentStep       ProcessStep?          @relation("ProcessInstanceCurrentStep", fields: [currentStepId], references: [id], onDelete: SetNull)
@@ -625,41 +649,56 @@ model ProcessInstance {
   @@index([processDefinitionId, status])
   @@index([currentStepId])
   @@index([projectId])
+  @@index([parentInstanceId])
+  @@index([followedDocumentId])
 }
 
 // The document that filled a node of a run; rejected ones stay as history (isCurrent = false).
 // "Only one current document per node per run" is enforced by a partial unique index in the migration.
 model ProcessStepDocument {
-  id                String            @id @default(cuid())
-  processInstanceId String
-  processStepId     String
-  documentId        String
-  source            ProcessStepSource
-  linkedById        String
-  isCurrent         Boolean           @default(true)
-  linkedAt          DateTime          @default(now())
-  // Optional reference document uploaded (or picked from approved documents) together with this step's document.
-  referenceDocumentId String?
+  id                  String            @id @default(cuid())
+  processInstanceId   String
+  processStepId       String
+  documentId          String
+  source              ProcessStepSource
+  linkedById          String
+  isCurrent           Boolean           @default(true)
+  linkedAt            DateTime          @default(now())
 
   processInstance   ProcessInstance @relation(fields: [processInstanceId], references: [id], onDelete: Cascade)
   processStep       ProcessStep     @relation(fields: [processStepId], references: [id], onDelete: Restrict)
   document          Document        @relation(fields: [documentId], references: [id], onDelete: Restrict)
-  referenceDocument Document?       @relation("ProcessStepReference", fields: [referenceDocumentId], references: [id], onDelete: SetNull)
-  linkedBy        User            @relation("ProcessStepLinkedBy", fields: [linkedById], references: [id], onDelete: Restrict)
+  // Any number of reference documents uploaded (or picked from approved documents) together with this step's document.
+  references        ProcessStepReference[]
+  linkedBy          User            @relation("ProcessStepLinkedBy", fields: [linkedById], references: [id], onDelete: Restrict)
 
   @@unique([processInstanceId, processStepId, documentId])
   @@index([documentId])
-  @@index([referenceDocumentId])
+}
+
+// One reference document attached to a step's document. Reference documents are not part of the run's flow: they are
+// never approved and only shown to people holding documents.view_reference. A step document can have any number.
+model ProcessStepReference {
+  id                    String   @id @default(cuid())
+  processStepDocumentId String
+  documentId            String
+  createdAt             DateTime @default(now())
+
+  processStepDocument ProcessStepDocument @relation(fields: [processStepDocumentId], references: [id], onDelete: Cascade)
+  document            Document            @relation("ProcessStepReference", fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([processStepDocumentId, documentId])
+  @@index([documentId])
 }
 
 // Remembers that people were told a delayed (or immediate) next step of a run has opened for upload,
 // so the scheduled job never tells them twice for the same approved document.
 model ProcessUploadNotice {
-  id                 String   @id @default(cuid())
-  processInstanceId  String
-  processStepId      String
-  anchorDocumentId   String
-  notifiedAt         DateTime @default(now())
+  id                String   @id @default(cuid())
+  processInstanceId String
+  processStepId     String
+  anchorDocumentId  String
+  notifiedAt        DateTime @default(now())
 
   processInstance ProcessInstance @relation(fields: [processInstanceId], references: [id], onDelete: Cascade)
 
@@ -672,16 +711,16 @@ model ProcessUploadNotice {
 
 // Copy of the flow's levels, made at upload. Later flow edits never change documents in progress.
 model DocumentApprovalStep {
-  id          String     @id @default(cuid())
-  documentId  String
-  levelNumber Int
-  name        String?
+  id                String     @id @default(cuid())
+  documentId        String
+  levelNumber       Int
+  name              String?
   // Copied from the flow when the document is uploaded.
-  signatureRequired Boolean @default(true)
-  status      StepStatus @default(WAITING)
-  actedById   String?
-  actedAt     DateTime?
-  comment     String?
+  signatureRequired Boolean    @default(true)
+  status            StepStatus @default(WAITING)
+  actedById         String?
+  actedAt           DateTime?
+  comment           String?
 
   document  Document                       @relation(fields: [documentId], references: [id], onDelete: Cascade)
   actedBy   User?                          @relation("ApprovalStepActedBy", fields: [actedById], references: [id], onDelete: SetNull)
@@ -842,6 +881,183 @@ model OtpChallenge {
 // ============================================================================
 // ENUMS
 // ============================================================================
+
+// ============================================================================
+// MAINTENANCE MANAGEMENT
+// ============================================================================
+
+model MaintenanceItem {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments MaintenanceWorkflowAssignment[]
+  tickets     MaintenanceTicket[]
+}
+
+model MaintenanceWorkflow {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  levels      MaintenanceWorkflowLevel[]
+  assignments MaintenanceWorkflowAssignment[]
+  tickets     MaintenanceTicket[]
+}
+
+model MaintenanceWorkflowLevel {
+  id          String   @id @default(cuid())
+  workflowId  String
+  levelNumber Int
+  name        String
+  createdAt   DateTime @default(now())
+
+  workflow  MaintenanceWorkflow               @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  approvers MaintenanceWorkflowStepApprover[]
+
+  @@unique([workflowId, levelNumber])
+  @@index([workflowId, levelNumber])
+}
+
+model MaintenanceWorkflowStepApprover {
+  id           String       @id @default(cuid())
+  levelId      String
+  approverType ApproverType
+  userId       String?
+  userTypeId   String?
+
+  level    MaintenanceWorkflowLevel @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  user     User?                    @relation("MaintenanceStepUser", fields: [userId], references: [id], onDelete: Cascade)
+  userType UserType?                @relation(fields: [userTypeId], references: [id], onDelete: Restrict)
+
+  @@index([levelId])
+  @@index([userId])
+  @@index([userTypeId])
+}
+
+model MaintenanceWorkflowAssignment {
+  id         String   @id @default(cuid())
+  projectId  String
+  itemId     String
+  workflowId String
+  createdAt  DateTime @default(now())
+
+  project  Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  item     MaintenanceItem     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  workflow MaintenanceWorkflow @relation(fields: [workflowId], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, itemId])
+  @@index([workflowId])
+}
+
+model MaintenanceTicket {
+  id           String                  @id @default(cuid())
+  ticketNumber String                  @unique
+  projectId    String
+  itemId       String
+  requesterId  String
+  workflowId   String
+  requestType  MaintenanceRequestType
+  units        Int
+  phoneNumber  String
+  description  String
+  status       MaintenanceTicketStatus @default(OPEN)
+  currentLevel Int                     @default(1)
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+  closedAt     DateTime?
+
+  project     Project                       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  item        MaintenanceItem               @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  requester   User                          @relation("MaintenanceTicketRequester", fields: [requesterId], references: [id], onDelete: Restrict)
+  workflow    MaintenanceWorkflow           @relation(fields: [workflowId], references: [id], onDelete: Restrict)
+  events      MaintenanceTicketEvent[]
+  attachments MaintenanceTicketAttachment[]
+  steps       MaintenanceTicketLevel[]
+
+  @@index([requesterId, createdAt])
+  @@index([projectId, status])
+  @@index([status, currentLevel])
+}
+
+model MaintenanceTicketLevel {
+  id          String    @id @default(cuid())
+  ticketId    String
+  levelNumber Int
+  name        String
+  status      String    @default("PENDING")
+  actedById   String?
+  actedAt     DateTime?
+
+  ticket    MaintenanceTicket                @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actedBy   User?                            @relation("MaintenanceLevelActedBy", fields: [actedById], references: [id], onDelete: SetNull)
+  approvers MaintenanceTicketLevelApprover[]
+
+  @@unique([ticketId, levelNumber])
+}
+
+model MaintenanceTicketLevelApprover {
+  id           String       @id @default(cuid())
+  levelId      String
+  approverType ApproverType
+  userId       String?
+  userTypeId   String?
+
+  level    MaintenanceTicketLevel @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  user     User?                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  userType UserType?              @relation(fields: [userTypeId], references: [id], onDelete: Restrict)
+
+  @@index([levelId])
+  @@index([userId])
+  @@index([userTypeId])
+}
+
+model MaintenanceTicketEvent {
+  id          String   @id @default(cuid())
+  ticketId    String
+  actorId     String
+  levelNumber Int?
+  action      String
+  details     String?
+  createdAt   DateTime @default(now())
+
+  ticket MaintenanceTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor  User              @relation("MaintenanceEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+}
+
+model MaintenanceTicketAttachment {
+  id           String   @id @default(cuid())
+  ticketId     String
+  uploadedById String
+  filePath     String
+  originalName String
+  mimeType     String
+  fileSize     Int
+  createdAt    DateTime @default(now())
+
+  ticket     MaintenanceTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  uploadedBy User              @relation("MaintenanceAttachmentUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+}
+
+enum MaintenanceRequestType {
+  REPAIR
+  NEW_INSTALLATION
+}
+
+enum MaintenanceTicketStatus {
+  OPEN
+  IN_PROGRESS
+  CLOSED
+}
 
 // Pending-at-which-level is now currentWorkflowStep, not part of the status.
 enum DocumentStatus {

@@ -1,13 +1,14 @@
 // src/app/new-document/page.tsx
 import { redirect } from "next/navigation";
 import DashboardShell from "@/components/dashboard-shell";
-import NewDocumentForm, { type UploadDocumentType, type UploadProcessContext } from "@/components/new-document-form";
+import NewDocumentForm, { type UploadDocumentType, type UploadProcessContext, type UploadStartProcess } from "@/components/new-document-form";
 import { requireAuth } from "@/lib/auth/guards";
 import { getDefaultRouteForRole } from "@/lib/auth/roles";
 import { optionValues } from "@/lib/document-fields";
 import { prisma } from "@/lib/prisma";
 import { canUserUploadAnything } from "@/lib/workflow/eligibility";
-import { getRootReferenceConfigs, getTaskOnlyChecker, getUploadTasks } from "@/lib/workflow/processes";
+import { USER_TYPE } from "@/lib/auth/roles";
+import { getRootReferenceConfigs, getStartableProcesses, getTaskOnlyChecker, getUploadTasks } from "@/lib/workflow/processes";
 import { resolveFlow } from "@/lib/workflow/resolve-flow";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +23,26 @@ export default async function NewDocumentPage({ searchParams }: { searchParams?:
 
   const params = (await searchParams) ?? {};
   const processInstanceId = typeof params.processInstanceId === "string" ? params.processInstanceId : "";
+  const initialStepId = typeof params.processStepId === "string" ? params.processStepId : "";
+  const startProcessId = typeof params.startProcessId === "string" ? params.startProcessId : "";
+  const isAdmin = session.userType === USER_TYPE.ADMIN;
+
+  // An Admin user starting a process on purpose: the first document of that process is uploaded here.
+  let startProcess: UploadStartProcess | null = null;
+  if (startProcessId) {
+    if (!isAdmin || processInstanceId) redirect("/unauthorized");
+    const found = (await getStartableProcesses(prisma)).find((candidate) => candidate.id === startProcessId);
+    if (!found) redirect("/processes");
+    startProcess = {
+      definitionId: found.id,
+      name: found.name,
+      rootName: found.rootName,
+      documentTypeId: found.documentTypeId,
+      documentSubtypeId: found.documentSubtypeId,
+      typeName: found.typeName,
+      subtypeName: found.subtypeName,
+    };
+  }
 
   // The next document of a running process: only the choices this person may upload are offered. They come from
   // the same list as My Tasks, so a run that is not waiting for an upload (or not for this person) shows nothing here.
@@ -116,8 +137,18 @@ export default async function NewDocumentPage({ searchParams }: { searchParams?:
   });
 
   return (
-    <DashboardShell role={session.userType} userName={session.name} title="New Document" subtitle="Upload and submit a document to start workflow">
-      <NewDocumentForm documentTypes={documentTypes} projects={projects} defaultRedirectPath={getDefaultRouteForRole(session.userType)} process={process} rootReferences={rootReferences} referenceTypes={referenceTypes} />
+    <DashboardShell role={session.userType} userName={session.name} title={startProcess ? "Start Process" : "New Document"} subtitle={startProcess ? "Upload the first document to start this process" : "Upload and submit a document to start workflow"}>
+      <NewDocumentForm
+        documentTypes={documentTypes}
+        projects={projects}
+        defaultRedirectPath={getDefaultRouteForRole(session.userType)}
+        process={process}
+        initialStepId={initialStepId}
+        startProcess={startProcess}
+        isAdmin={isAdmin}
+        rootReferences={rootReferences}
+        referenceTypes={referenceTypes}
+      />
     </DashboardShell>
   );
 }

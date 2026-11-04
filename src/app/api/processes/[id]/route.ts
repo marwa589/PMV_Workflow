@@ -33,6 +33,23 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       completedAt: true,
       project: { select: { id: true, code: true, name: true } },
       startedBy: { select: { id: true, name: true } },
+      // Follow-up runs ("allow multiple uploads"): the run and approved document this one follows, and the runs that follow it.
+      parentInstance: { select: { id: true, reference: true, processDefinition: { select: { name: true } } } },
+      followedDocument: { select: { id: true, documentNumber: true, title: true } },
+      followUps: {
+        orderBy: { startedAt: "asc" },
+        select: {
+          id: true,
+          reference: true,
+          status: true,
+          stepDocuments: {
+            where: { isCurrent: true, processStep: { parentStepId: { not: null } } },
+            orderBy: { linkedAt: "desc" },
+            take: 1,
+            select: { document: { select: { id: true, documentNumber: true, title: true, status: true, currentWorkflowStep: true } } },
+          },
+        },
+      },
       processDefinition: {
         select: {
           id: true,
@@ -62,7 +79,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
           isCurrent: true,
           source: true,
           linkedAt: true,
-          referenceDocumentId: true,
+          references: { select: { documentId: true } },
           document: { select: { id: true, documentNumber: true, title: true, status: true, approvedAt: true, currentWorkflowStep: true } },
         },
       },
@@ -106,7 +123,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   }
 
   // Reference documents are shown only to people who hold "View reference documents" for them (and can see the document).
-  const referenceIds = [...new Set(run.stepDocuments.flatMap((link) => (link.referenceDocumentId ? [link.referenceDocumentId] : [])))];
+  const referenceIds = [...new Set(run.stepDocuments.flatMap((link) => link.references.map((reference) => reference.documentId)))];
   let visibleReferences = new Map<string, { id: string; documentNumber: string; title: string }>();
   if (referenceIds.length > 0) {
     const [visibility, referenceView] = await Promise.all([buildDocumentVisibilityWhere(session), buildReferenceViewWhere(session)]);
@@ -131,6 +148,29 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       project: run.project,
       startedBy: run.startedBy,
       processDefinition: { id: run.processDefinition.id, name: run.processDefinition.name },
+      follows: run.parentInstance
+        ? {
+            run: { id: run.parentInstance.id, reference: run.parentInstance.reference, name: run.parentInstance.processDefinition.name },
+            document: run.followedDocument,
+          }
+        : null,
+      followUps: run.followUps.map((followUp) => {
+        const document = followUp.stepDocuments[0]?.document ?? null;
+        return {
+          id: followUp.id,
+          reference: followUp.reference,
+          status: followUp.status,
+          document: document
+            ? {
+                id: document.id,
+                documentNumber: document.documentNumber,
+                title: document.title,
+                status: document.status,
+                statusLabel: getDocumentStatusDisplay(document.status, { levelNumber: document.currentWorkflowStep }),
+              }
+            : null,
+        };
+      }),
       // True while the run waits for someone to upload the next document (the open choices are the children of currentStepId).
       awaitingUpload,
       canUpload,
@@ -148,7 +188,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
             title: link.document.title,
             status: link.document.status,
             statusLabel: getDocumentStatusDisplay(link.document.status, { levelNumber: link.document.currentWorkflowStep }),
-            referenceDocument: link.referenceDocumentId ? visibleReferences.get(link.referenceDocumentId) ?? null : null,
+            referenceDocuments: link.references.flatMap((reference) => {
+              const visible = visibleReferences.get(reference.documentId);
+              return visible ? [visible] : [];
+            }),
           }));
         return {
           id: step.id,

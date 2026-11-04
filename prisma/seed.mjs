@@ -26,6 +26,7 @@ const PERMISSIONS = [
   ["documents.print", "Print documents", "Print documents inside the assignment scope, one by one or in bulk."],
   ["documents.archive", "Archive documents", "Archive approved documents inside the scope and restore them from the archive."],
   ["documents.confirm_receipt", "Confirm receipt", "Mark an approved document (for example a purchase order) as received. Shows the Confirm receipt button on the document page."],
+  ["maintenance.manage", "Manage maintenance setup", "Manage maintenance items, workflows and project/item workflow assignments. Adds Maintenance Setup to the menu."],
   ["documents.delete_request", "Request deletion", "Ask for a document inside the scope to be deleted. The request goes to the people who can review deletions."],
   ["documents.delete_review", "Review deletion", "Approve or reject deletion requests for documents inside the scope. Approving deletes the document. Adds the Deletion Requests page."],
   ["processes.manage", "Manage processes", "Create and edit process definitions: steps, document types per step, reference documents and waiting periods. Adds Process Setup to the menu."],
@@ -47,6 +48,7 @@ const ROLES = [
   { name: "Reference Viewer", description: "May see reference documents attached to process steps, in scope (also needs documents.view for normal documents).", permissions: ["documents.view_reference", "documents.view"] },
   { name: "Uploader", description: "May upload documents in scope.", permissions: ["documents.upload", "documents.view"] },
   { name: "Receiving Clerk", description: "Confirms receipt of approved documents in scope.", permissions: ["documents.view", "documents.confirm_receipt"] },
+  { name: "Maintenance Administrator", description: "Configures maintenance items and workflows.", permissions: ["maintenance.manage"] },
   { name: "Archivist", description: "Archive and print.", permissions: ["documents.archive", "documents.print", "documents.view"] },
   { name: "Deletion Reviewer", description: "Request and review deletions.", permissions: ["documents.delete_request", "documents.delete_review", "documents.view"] },
   { name: "Flow Admin", description: "Builds flows, document types and processes.", permissions: ["flows.manage", "types.manage", "processes.manage"] },
@@ -77,6 +79,11 @@ async function main() {
   for (const [code, name, description] of PERMISSIONS) {
     await prisma.permission.upsert({ where: { code }, update: { name, description }, create: { code, name, description } });
   }
+
+  // Maintenance is driven by its workflow (level 0 = who may submit, levels 1..N = who follows up), so the earlier
+  // per-person "submit" / "follow up" permissions and their role templates are no longer used. Remove them if present.
+  await prisma.role.deleteMany({ where: { name: { in: ["Maintenance Requester", "Maintenance Follow-up"] } } });
+  await prisma.permission.deleteMany({ where: { code: { in: ["maintenance.submit", "maintenance.follow_up"] } } });
 
   for (const role of ROLES) {
     const saved = await prisma.role.upsert({

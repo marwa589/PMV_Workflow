@@ -78,6 +78,12 @@ export function parseProjectFilter(value: unknown): ProjectFilter {
   return parseSafeToken(value);
 }
 
+/** Every value of a repeated query parameter (?x=a&x=b), already cleaned by `parse` and without duplicates. */
+export function parseMultiFilter<T extends string>(value: string | string[] | undefined, parse: (item: unknown) => T | ""): T[] {
+  const items = Array.isArray(value) ? value : value === undefined ? [] : [value];
+  return [...new Set(items.map((item) => parse(item)).filter((item): item is T => item !== ""))];
+}
+
 export function parseDownloadStatusFilter(value: unknown): DownloadStatusFilter {
   return value === "DOWNLOADED" || value === "NOT_DOWNLOADED" ? value : "";
 }
