@@ -1,0 +1,284 @@
+diff -ru --strip-trailing-cr a/src/app/api/documents/[id]/actions/route.ts src/app/api/documents/[id]/actions/route.ts
+--- a/src/app/api/documents/[id]/actions/route.ts	2026-11-08 06:44:17.773471735 +0000
++++ b/src/app/api/documents/[id]/actions/route.ts	2026-11-08 06:44:32.233618757 +0000
+@@ -43,6 +43,10 @@
+ 
+   const { id: documentId } = await params;
+   const savedPaths: string[] = [];
++  // Becomes true once the database transaction has committed. From then on the action HAS happened,
++  // so nothing after this point may report a failure or delete the files the new version points to.
++  let committed = false;
++  let decisionForLog = "";
+ 
+   try {
+     const formData = await request.formData();
+@@ -58,6 +62,7 @@
+     const targetLevelValue = formData.get("targetLevel");
+     const targetLevel = targetLevelValue === null || String(targetLevelValue).trim() === "" ? null : Number(targetLevelValue);
+ 
++    decisionForLog = decision;
+     if (!DECISIONS.includes(decision)) {
+       throw new WorkflowError(`Decision must be one of: ${DECISIONS.join(", ")}.`, 400);
+     }
+@@ -154,20 +159,32 @@
+       },
+       { maxWait: 10_000, timeout: 30_000 },
+     );
++    committed = true;
+ 
+     console.info(`[actions] Transaction completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision });
+ 
++    // Everything below is follow-up work (emails, notifications, audit entry). The decision is already saved, so a
++    // failure here is logged but never turned into an error for the person, and never removes any file.
++
+     // Rejected: stop any "please review" emails still waiting to be sent.
+     if (outcome.result.status === DocumentStatus.CANCELLED) {
+-      await prisma.emailNotificationEvent.updateMany({
+-        where: { documentId, emailSent: false, type: { in: ["APPROVAL_PENDING", "APPROVAL_OVERDUE"] } },
+-        data: { emailSent: true, claimedAt: null },
+-      });
++      try {
++        await prisma.emailNotificationEvent.updateMany({
++          where: { documentId, emailSent: false, type: { in: ["APPROVAL_PENDING", "APPROVAL_OVERDUE"] } },
++          data: { emailSent: true, claimedAt: null },
++        });
++      } catch (followUpError) {
++        console.error("[actions] Could not cancel pending review emails after reject", { documentId, error: followUpError });
++      }
+     }
+ 
+-    await dispatchWorkflowEffects(outcome.result.effects);
++    try {
++      await dispatchWorkflowEffects(outcome.result.effects);
++    } catch (followUpError) {
++      console.error("[actions] Could not queue notifications/emails after the action", { documentId, decision, error: followUpError });
++    }
+ 
+-    await writeAuditLog({
++    const auditEntry = {
+       documentId,
+       performedById: session.userId,
+       action: outcome.result.auditAction ?? (decision === "APPROVE" && outcome.result.status === DocumentStatus.APPROVED ? "DOCUMENT_APPROVED" : AUDIT_ACTION[decision]),
+@@ -182,7 +199,13 @@
+         signatureCount: Number.isFinite(signatureCount) ? signatureCount : 0,
+         ...(outcome.result.auditDetails ?? {}),
+       }),
+-    });
++    };
++    try {
++      await writeAuditLog(auditEntry);
++    } catch (followUpError) {
++      // Logged with the full entry so it can be recovered by hand.
++      console.error("[actions] Could not write the audit log entry", { entry: auditEntry, error: followUpError });
++    }
+ 
+     return NextResponse.json(
+       {
+@@ -196,8 +219,19 @@
+       { status: 200 },
+     );
+   } catch (error) {
+-    // The database work was rolled back, so remove any file that was already written.
+-    if (savedPaths.length > 0) {
++    // Previously nothing was logged here, so a failed action left no trace on the server.
++    console.error("[actions] Action failed", {
++      documentId,
++      decision: decisionForLog,
++      userId: session.userId,
++      committed,
++      status: error instanceof WorkflowError ? error.status : 400,
++      error,
++    });
++
++    // If the database work was rolled back, remove any file that was already written.
++    // After a commit the files belong to the saved version and must stay.
++    if (savedPaths.length > 0 && !committed) {
+       await deleteDocumentFiles({ filePaths: savedPaths }).catch(() => undefined);
+     }
+ 
+diff -ru --strip-trailing-cr a/src/components/batch-document-review.tsx src/components/batch-document-review.tsx
+--- a/src/components/batch-document-review.tsx	2026-11-08 06:44:17.774974534 +0000
++++ b/src/components/batch-document-review.tsx	2026-11-08 06:44:17.823439239 +0000
+@@ -64,8 +64,7 @@
+       setMessage(`${submitted.current.size} of ${items.length} documents submitted.`);
+     }
+ 
+-    router.push(returnUrl);
+-    router.refresh();
++    router.replace(returnUrl);
+   }
+ 
+   return (
+diff -ru --strip-trailing-cr a/src/components/dashboard-shell.tsx src/components/dashboard-shell.tsx
+--- a/src/components/dashboard-shell.tsx	2026-11-08 06:44:17.775005949 +0000
++++ b/src/components/dashboard-shell.tsx	2026-11-08 06:44:45.695601263 +0000
+@@ -536,7 +536,6 @@
+   const profileMenuRef = useRef<HTMLDivElement | null>(null);
+   const router = useRouter();
+   const pathname = usePathname();
+-  const searchParams = useSearchParams();
+ 
+   // Top-bar search: looks through every document the person may open (not just the page that is showing).
+   useEffect(() => {
+@@ -651,8 +650,12 @@
+ 
+   useEffect(() => {
+     let active = true;
++    let inFlight = false;
+ 
++    // The counts query is heavy, so it is skipped while the tab is hidden and never overlaps itself.
+     const loadSidebarCounts = () => {
++      if (inFlight || document.visibilityState === "hidden") return;
++      inFlight = true;
+       void fetch("/api/sidebar-counts", { cache: "no-store" })
+         .then((response) =>
+           response.ok
+@@ -663,18 +666,29 @@
+           if (!active || !counts) return;
+           setSidebarCounts(counts);
+         })
+-        .catch(() => undefined);
++        .catch(() => undefined)
++        .finally(() => {
++          inFlight = false;
++        });
+     };
+ 
++    // Counts do not depend on the filters in the address (only on who is signed in), so this refreshes when the
++    // page changes (for example right after an approve or reject) and not on every filter change.
+     loadSidebarCounts();
+ 
+     const intervalId = window.setInterval(loadSidebarCounts, 30000);
++    // Catch up as soon as the person comes back to the tab.
++    const onVisible = () => {
++      if (document.visibilityState === "visible") loadSidebarCounts();
++    };
++    document.addEventListener("visibilitychange", onVisible);
+ 
+     return () => {
+       active = false;
+       window.clearInterval(intervalId);
++      document.removeEventListener("visibilitychange", onVisible);
+     };
+-  }, [pathname, searchParams]);
++  }, [pathname]);
+ 
+   async function handleSignOut() {
+     setIsSigningOut(true);
+diff -ru --strip-trailing-cr a/src/components/document-review-editor.tsx src/components/document-review-editor.tsx
+--- a/src/components/document-review-editor.tsx	2026-11-08 06:44:17.775079226 +0000
++++ b/src/components/document-review-editor.tsx	2026-11-08 06:44:17.822993920 +0000
+@@ -193,6 +193,11 @@
+   const [saving, setSaving] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+   const [status, setStatus] = useState<string | null>(null);
++  // Blocks a second click while a decision is being sent (state updates are too slow to catch a fast double click).
++  const submittingRef = useRef(false);
++  const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
++
++  useEffect(() => () => { if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current); }, []);
+ 
+   const activePlacement = useMemo(() => placements[placements.length - 1] || null, [placements]);
+   const signatureUrl = hasSignature ? "/api/auth/signature" : null;
+@@ -439,6 +444,9 @@
+       setError("Choose the person who should approve this document first.");
+       return false;
+     }
++    if (submittingRef.current) return false;
++    submittingRef.current = true;
++    let handedOffToNavigation = false;
+     setSaving(true);
+     setError(null);
+     const startedAt = performance.now();
+@@ -546,21 +554,31 @@
+   },
+   body: formData,
+ });
+-      const result = (await response.json()) as { message?: string };
+-      if (!response.ok) throw new Error(result.message || "Unable to process document action.");
++      // A proxy or gateway error can come back as an HTML page, so reading it as JSON must not throw.
++      const result = (await response.json().catch(() => ({}))) as { message?: string };
++      if (!response.ok) throw new Error(result.message || `Unable to process document action (HTTP ${response.status}).`);
+       console.info(`[review] Action request completed in ${Math.round(performance.now() - startedAt)}ms`, { documentId, decision: action });
+       if (batch) {
+         setStatus(decision === "APPROVE" ? "Approved and submitted." : "Rejected and submitted.");
+       } else {
+-        router.push(returnUrl);
+-        router.refresh();
++        // The decision is saved. Keep the button locked so it cannot be sent twice while the page changes.
++        // The lists are rendered fresh on every visit, so one replace is enough (no extra refresh to race with it).
++        handedOffToNavigation = true;
++        setStatus("Saved. Returning to your tasks...");
++        router.replace(returnUrl);
++        // Safety net: if the page has not changed after a few seconds, go there with a normal page load.
++        redirectTimerRef.current = setTimeout(() => window.location.assign(returnUrl), 4000);
+       }
+       return true;
+     } catch (submitError) {
++      console.error("[review] Action failed", { documentId, decision: action, error: submitError });
+       setError(submitError instanceof Error ? submitError.message : "Unable to process document action.");
+       return false;
+     } finally {
+-      setSaving(false);
++      if (!handedOffToNavigation) {
++        submittingRef.current = false;
++        setSaving(false);
++      }
+     }
+   }
+ 
+diff -ru --strip-trailing-cr a/src/lib/audit.ts src/lib/audit.ts
+--- a/src/lib/audit.ts	2026-11-08 06:44:17.775467505 +0000
++++ b/src/lib/audit.ts	2026-11-08 06:44:45.694927825 +0000
+@@ -39,6 +39,6 @@
+     },
+   });
+ 
+-  await pruneAuditLogs();
++  // Old entries are removed by the background worker (see workflow-email-worker.ts), not on every write.
+   return entry;
+ }
+diff -ru --strip-trailing-cr a/src/lib/workflow-email-worker.ts src/lib/workflow-email-worker.ts
+--- a/src/lib/workflow-email-worker.ts	2026-11-08 06:44:17.776112020 +0000
++++ b/src/lib/workflow-email-worker.ts	2026-11-08 06:44:45.695193987 +0000
+@@ -1,20 +1,40 @@
++import { pruneAuditLogs } from "@/lib/audit";
+ import { isEmailQuietHours, nextEmailSendTime, sendInstantMailEvents, sendPendingTaskDigests } from "@/lib/workflow-email-batching";
+ 
+ // How often the worker looks for people whose summary interval is up. Each person still gets at most one email per interval.
+ const WORKER_INTERVAL_MS = 5 * 60 * 1000;
++// Old audit log entries are removed at most once a day (this used to run on every audit write).
++const AUDIT_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+ 
+ type WorkflowEmailWorkerState = typeof globalThis & {
+   workflowEmailWorkerStarted?: boolean;
+   workflowEmailWorkerRunning?: boolean;
++  auditLastPrunedAt?: number;
+ };
+ 
+ const workerState = globalThis as WorkflowEmailWorkerState;
+ 
++async function pruneAuditLogsIfDue() {
++  const now = Date.now();
++  if (workerState.auditLastPrunedAt && now - workerState.auditLastPrunedAt < AUDIT_PRUNE_INTERVAL_MS) return;
++  workerState.auditLastPrunedAt = now;
++  try {
++    const result = await pruneAuditLogs();
++    if (result.count > 0) console.info(`[audit] Removed ${result.count} old audit log entries`);
++  } catch (error) {
++    // Try again at the next run instead of waiting a day.
++    workerState.auditLastPrunedAt = undefined;
++    console.error("Audit log pruning failed:", error);
++  }
++}
++
+ async function processWorkflowEmails() {
+   if (workerState.workflowEmailWorkerRunning) return;
+   workerState.workflowEmailWorkerRunning = true;
+ 
+   try {
++    // Housekeeping does not depend on quiet hours.
++    await pruneAuditLogsIfDue();
+     if (isEmailQuietHours()) return;
+     await sendInstantMailEvents();
+     await sendPendingTaskDigests();

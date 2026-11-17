@@ -29,7 +29,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const ticket = await prisma.maintenanceTicket.findUnique({
     where: { id },
     include: {
-      project: { select: { locationId: true } },
+      project: { select: { locationId: true, companyId: true } },
       steps: { orderBy: { levelNumber: "asc" }, include: { approvers: true } },
     },
   });

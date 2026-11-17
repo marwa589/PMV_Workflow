@@ -12,11 +12,12 @@ import {
 import { USER_TYPE, type UserTypeCode } from "@/lib/auth/roles";
 const UPLOAD_PERMISSION = "documents.upload";
 
-import { resolveFlow, type FlowStepEntry } from "@/lib/workflow/resolve-flow";
+import { PROJECT_ROLE_HOLDER_SELECT, expandProjectRoles, holdersOf, resolveFlow, type FlowStepEntry } from "@/lib/workflow/resolve-flow";
 
 export type DocScope = {
   projectId: string | null;
   locationId: string | null;
+  companyId: string | null;
   documentTypeId: string;
   documentSubtypeId: string | null;
 };
@@ -26,12 +27,13 @@ export async function loadDocScope(
   doc: { projectId: string | null; documentTypeId: string; documentSubtypeId: string | null },
 ): Promise<DocScope> {
   const project = doc.projectId
-    ? await db.project.findUnique({ where: { id: doc.projectId }, select: { locationId: true } })
+    ? await db.project.findUnique({ where: { id: doc.projectId }, select: { locationId: true, companyId: true } })
     : null;
 
   return {
     projectId: doc.projectId,
     locationId: project?.locationId ?? null,
+    companyId: project?.companyId ?? null,
     documentTypeId: doc.documentTypeId,
     documentSubtypeId: doc.documentSubtypeId,
   };
@@ -102,7 +104,8 @@ export async function createEligibilityChecker(db: Db, userId: string) {
 
 /**
  * Everyone who should be notified for a level: named users, users of a named type who hold a matching
- * assignment, and anyone their tasks are delegated to. Admin users are never notified.
+ * assignment, and anyone their tasks are delegated to. Admin users are notified only when the level names them
+ * (by name, or as the Project Director); a user type or a delegation never brings in an Admin user.
  */
 export async function getEligibleRecipients(
   db: Db,
@@ -142,10 +145,14 @@ export async function getEligibleRecipients(
   const allIds = Array.from(new Set([...baseIds, ...delegations.map((row) => row.delegateUserId)]));
   if (allIds.length === 0) return [];
 
-  return db.user.findMany({
-    where: { id: { in: allIds }, isActive: true, userType: { code: { not: USER_TYPE.ADMIN } } },
-    select: { id: true, email: true, name: true },
+  const named = new Set(namedIds);
+  const users = await db.user.findMany({
+    where: { id: { in: allIds }, isActive: true },
+    select: { id: true, email: true, name: true, userType: { select: { code: true } } },
   });
+  return users
+    .filter((user) => user.userType.code !== USER_TYPE.ADMIN || named.has(user.id))
+    .map(({ id, email, name }) => ({ id, email, name }));
 }
 
 /**
@@ -208,5 +215,104 @@ export async function canUserUploadAnything(db: Db, user: { id: string; userType
   const named = await db.documentWorkflowStepApprover.count({
     where: { step: { stepNumber: 0 }, OR: [{ userId: user.id }, { userTypeId: record.userTypeId }] },
   });
-  return named > 0;
+  if (named > 0) return true;
+
+  // A project director / manager can upload where a flow's uploader step names that role.
+  const [directs, manages] = await Promise.all([
+    db.project.count({ where: { directorId: user.id, isActive: true } }),
+    db.project.count({ where: { managerId: user.id, isActive: true } }),
+  ]);
+  const roles = [...(directs > 0 ? [ApproverType.PROJECT_DIRECTOR] : []), ...(manages > 0 ? [ApproverType.PROJECT_MANAGER] : [])];
+  if (roles.length === 0) return false;
+  const roleUploaderSteps = await db.documentWorkflowStepApprover.count({
+    where: { step: { stepNumber: 0 }, approverType: { in: roles } },
+  });
+  return roleUploaderSteps > 0;
+}
+
+/**
+ * Every (project, type, sub type) combination this person may upload, worked out in memory with the same rules as
+ * canUserUpload (role with "Upload documents" in scope, or named at the flow's uploader step), so the New Document
+ * form only offers what the server will accept. `null` means no limit (Admin).
+ * Keys look like `${projectId}|${documentTypeId}|${documentSubtypeId}` with an empty string for "no project" / "no sub type".
+ */
+export async function getUploadableScopeKeys(
+  db: Db,
+  actor: { id: string; userType: UserTypeCode },
+  input: {
+    projects: Array<{ id: string }>;
+    types: Array<{ id: string; subtypes: Array<{ id: string }> }>;
+  },
+): Promise<string[] | null> {
+  if (actor.userType === USER_TYPE.ADMIN) return null;
+
+  const [projectRows, uploadAssignments, candidate, flowRows] = await Promise.all([
+    db.project.findMany({
+      where: { id: { in: input.projects.map((project) => project.id) } },
+      select: { id: true, locationId: true, companyId: true, ...PROJECT_ROLE_HOLDER_SELECT },
+    }),
+    db.userAssignment.findMany({
+      where: { userId: actor.id, role: { permissions: { some: { permission: { code: UPLOAD_PERMISSION } } } } },
+      select: ASSIGNMENT_SCOPE_SELECT,
+    }),
+    loadCandidate(db, actor.id),
+    db.documentWorkflowAssignment.findMany({
+      where: { documentTypeId: { in: input.types.map((type) => type.id) } },
+      select: { documentTypeId: true, documentSubtypeId: true, projectId: true, templateId: true },
+    }),
+  ]);
+
+  const templateIds = [...new Set(flowRows.flatMap((row) => (row.templateId ? [row.templateId] : [])))];
+  const uploaderStepRows = templateIds.length
+    ? await db.documentWorkflowStep.findMany({
+        where: { templateId: { in: templateIds }, stepNumber: 0 },
+        select: { templateId: true, approvers: { select: { approverType: true, userId: true, userTypeId: true } } },
+      })
+    : [];
+  const uploaderEntriesByTemplate = new Map<string, FlowStepEntry[]>(uploaderStepRows.map((row) => [row.templateId, row.approvers]));
+
+  const locationOf = new Map(projectRows.map((row) => [row.id, row.locationId]));
+  const companyOf = new Map(projectRows.map((row) => [row.id, row.companyId]));
+  const holdersByProject = new Map(projectRows.map((row) => [row.id, holdersOf(row)]));
+  // Same as resolveFlow: a "Project Director" / "Project Manager" entry stands for that person of the project checked.
+  const withDirector = (entries: FlowStepEntry[], projectId: string | null): FlowStepEntry[] =>
+    expandProjectRoles(entries, (projectId ? holdersByProject.get(projectId) : null) ?? holdersOf(null)).approvers;
+  const rank = (row: { documentSubtypeId: string | null; projectId: string | null }) => {
+    if (row.projectId && row.documentSubtypeId) return 1;
+    if (row.projectId) return 2;
+    if (row.documentSubtypeId) return 3;
+    return 4;
+  };
+
+  const keys: string[] = [];
+  const projectChoices: Array<string | null> = [null, ...input.projects.map((project) => project.id)];
+
+  for (const type of input.types) {
+    const subtypeChoices: Array<string | null> = type.subtypes.length > 0 ? type.subtypes.map((subtype) => subtype.id) : [null];
+    for (const subtypeId of subtypeChoices) {
+      for (const projectId of projectChoices) {
+        const scope: ScopeContext = {
+          projectId,
+          locationId: projectId ? locationOf.get(projectId) ?? null : null,
+          companyId: projectId ? companyOf.get(projectId) ?? null : null,
+          documentTypeId: type.id,
+          documentSubtypeId: subtypeId,
+        };
+
+        let allowed = uploadAssignments.some((assignment) => assignmentMatchesScope(assignment, scope));
+
+        if (!allowed && candidate) {
+          // Same choice resolveFlow makes: the most specific assignment for this type / sub type / project.
+          const best = flowRows
+            .filter((row) => row.documentTypeId === type.id && (row.documentSubtypeId === null || row.documentSubtypeId === subtypeId) && (row.projectId === null || row.projectId === projectId))
+            .sort((a, b) => rank(a) - rank(b))[0];
+          const entries = withDirector(best?.templateId ? uploaderEntriesByTemplate.get(best.templateId) ?? [] : [], projectId);
+          allowed = entries.length > 0 && candidateMatchesEntries(candidate, entries, scope);
+        }
+
+        if (allowed) keys.push(`${projectId ?? ""}|${type.id}|${subtypeId ?? ""}`);
+      }
+    }
+  }
+  return keys;
 }

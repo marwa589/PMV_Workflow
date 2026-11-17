@@ -283,18 +283,14 @@ export async function PATCH(request: Request) {
 
   try {
     if (body?.isActive === false) {
-      const [inProgressRuns, assignmentCounts] = await Promise.all([
+      const [inProgressRuns, current] = await Promise.all([
         prisma.processInstance.count({ where: { processDefinitionId: id, status: "IN_PROGRESS" } }),
-        prisma.processDefinition.findUnique({
-          where: { id },
-          select: { isActive: true, _count: { select: { scopedAssignments: true, assignmentScopes: true } } },
-        }),
+        prisma.processDefinition.findUnique({ where: { id }, select: { isActive: true } }),
       ]);
-      if (assignmentCounts?.isActive) {
+      if (current?.isActive) {
         const confirmation = deactivationConfirmationResponse(body, "This process", [
           { label: "existing run(s)", count: runs },
           { label: "currently running process(es)", count: inProgressRuns },
-          { label: "role assignment(s)", count: assignmentCounts._count.scopedAssignments + assignmentCounts._count.assignmentScopes },
         ]);
         if (confirmation) return confirmation;
       }

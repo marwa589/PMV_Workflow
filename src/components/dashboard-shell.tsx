@@ -5,7 +5,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
+import { Clock } from "lucide-react";
 import {
+  Trash2,
   Archive,
   Building2,
   UserCheck,
@@ -40,7 +42,7 @@ type NavItem = {
   label: string;
   href: string;
   icon: LucideIcon;
-  badge?: { kind: "all" } | { kind: "pending" } | { kind: "tasks" } | { kind: "type"; documentTypeId: string };
+  badge?: { kind: "all" } | { kind: "pending" } | { kind: "tasks" } | { kind: "uploads" } | { kind: "type"; documentTypeId: string };
 };
 
 type AppRole = UserTypeCode;
@@ -136,7 +138,7 @@ function getVisibleNavItems(role: AppRole, counts: SidebarCounts): { workItems: 
   ];
 
   if (counts.canUpload) {
-    workItems.push({ label: "New Document", href: "/new-document", icon: FilePlus2 });
+    workItems.push({ label: "New Document", href: "/new-document", icon: FilePlus2, badge: { kind: "uploads" } });
   }
 
   if (counts.canViewProcesses) {
@@ -147,6 +149,10 @@ function getVisibleNavItems(role: AppRole, counts: SidebarCounts): { workItems: 
     workItems.push({ label: "Maintenance Requests", href: "/maintenance", icon: Wrench });
   }
 
+  if (counts.manage.deletionReview) {
+    workItems.push({ label: "Deletion Requests", href: "/deletion-requests", icon: Trash2 });
+  }
+
   const documentItems: NavItem[] = [
     {
       label: role === "admin" ? "All Documents" : "My Documents",
@@ -155,6 +161,9 @@ function getVisibleNavItems(role: AppRole, counts: SidebarCounts): { workItems: 
       badge: { kind: "all" },
     },
   ];
+
+  // Documents still moving through approval (the document lists filter on ?status=PENDING).
+  documentItems.push({ label: "Pending", href: `${home.list}?status=PENDING`, icon: Clock });
 
   if (isApprover) {
     documentItems.push({ label: "Approved", href: `${base}/approved-documents`, icon: CheckCircle2 });
@@ -213,10 +222,6 @@ function Sidebar({
       label: "Organization",
       items: [...(manage.projects ? [{ label: "Projects & Locations", href: "/admin/projects", icon: Building2 }] : [])],
     },
-    {
-      label: "System",
-      items: [...(role === "admin" ? [{ label: "System Settings", href: "/admin/settings", icon: Settings }] : [])],
-    },
   ].filter((group) => group.items.length > 0);
   const setupItems = setupGroups.flatMap((group) => group.items);
 
@@ -266,6 +271,9 @@ const badgeCount = (item: NavItem): number => {
 
     case "tasks":
       return counts.tasks.uploads + counts.tasks.reviews;
+
+    case "uploads":
+      return counts.tasks.uploads;
 
     case "type":
       return (
@@ -529,7 +537,6 @@ export default function DashboardShell({
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
 
   // Top-bar search: looks through every document the person may open (not just the page that is showing).
   useEffect(() => {
@@ -644,8 +651,12 @@ export default function DashboardShell({
 
   useEffect(() => {
     let active = true;
+    let inFlight = false;
 
+    // The counts query is heavy, so it is skipped while the tab is hidden and never overlaps itself.
     const loadSidebarCounts = () => {
+      if (inFlight || document.visibilityState === "hidden") return;
+      inFlight = true;
       void fetch("/api/sidebar-counts", { cache: "no-store" })
         .then((response) =>
           response.ok
@@ -656,18 +667,29 @@ export default function DashboardShell({
           if (!active || !counts) return;
           setSidebarCounts(counts);
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight = false;
+        });
     };
 
+    // Counts do not depend on the filters in the address (only on who is signed in), so this refreshes when the
+    // page changes (for example right after an approve or reject) and not on every filter change.
     loadSidebarCounts();
 
     const intervalId = window.setInterval(loadSidebarCounts, 30000);
+    // Catch up as soon as the person comes back to the tab.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") loadSidebarCounts();
+    };
+    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       active = false;
       window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [pathname, searchParams]);
+  }, [pathname]);
 
   async function handleSignOut() {
     setIsSigningOut(true);

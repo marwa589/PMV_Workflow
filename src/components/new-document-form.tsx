@@ -17,6 +17,10 @@ import {
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 import { FieldInput, inputClass, type FieldValue, type FieldValues } from "@/components/upload-field-input";
 import DocumentScanPanel from "@/components/document-scan-panel";
+import LinkedDocumentPicker from "@/components/linked-document-picker";
+import ProjectPicker from "@/components/project-picker";
+import { findAutoMatch, stripExtension } from "@/lib/linked-document-match";
+import type { AwaitingUpload } from "@/lib/workflow/processes";
 import DocumentScanReview from "@/components/document-scan-review";
 import { fileKey, useDocumentScan } from "@/lib/document-scan/use-document-scan";
 import { DOCUMENT_SCAN_ENABLED } from "@/lib/document-scan/config";
@@ -79,6 +83,15 @@ export type UploadStartProcess = {
   documentSubtypeId: string | null;
   typeName: string;
   subtypeName: string | null;
+};
+
+// My Tasks "Upload several": files of ONE sub type, each linked to one of the person's awaiting tasks (matched by name).
+export type UploadBulkContext = {
+  documentTypeId: string;
+  documentSubtypeId: string | null;
+  label: string;
+  // For each awaiting task (`${runId}|${stepId}`), the other documents the same run could continue with instead.
+  siblings: Record<string, string[]>;
 };
 
 export type UploadProcessContext = {
@@ -164,7 +177,8 @@ function cleanValues(fields: UploadField[], values: FieldValues): Record<string,
 
 type Props = {
   documentTypes: UploadDocumentType[];
-  projects: Array<{ id: string; code: string; name: string }>;
+  // director / manager: the project's people (shown next to the project so uploaders can check the path).
+  projects: Array<{ id: string; code: string; name: string; director?: { name: string; isActive: boolean } | null; manager?: { name: string; isActive: boolean } | null }>;
   defaultRedirectPath?: string;
   process?: UploadProcessContext | null;
   // Admin only: preselect one of the open choices of the run (comes from the "Upload" button of a step).
@@ -175,6 +189,15 @@ type Props = {
   isAdmin?: boolean;
   rootReferences?: RootReferenceInfo[];
   referenceTypes?: ReferenceTypeInfo[];
+  // Types / sub types that only exist as a LATER document of a process tree: every file of these must name the document it follows.
+  linkedTypeScopes?: Array<{ documentTypeId: string; documentSubtypeId: string | null }>;
+  // The documents a later document can follow (waiting runs, and completed runs the document is added to).
+  linkedEntries?: AwaitingUpload[];
+  // What this person may upload, as `${projectId}|${typeId}|${subtypeId}` keys ("" = no project / no sub type).
+  // null = no limit (Admin users, and running processes which offer only their own choices).
+  uploadScopeKeys?: string[] | null;
+  // Set when several awaiting tasks of one sub type are uploaded together (from My Tasks).
+  bulk?: UploadBulkContext | null;
 };
 
 type ReferenceState = {
@@ -186,6 +209,55 @@ type ReferenceState = {
 };
 
 const blankReference = (): ReferenceState => ({ mode: "none", file: null, title: "", subtypeId: "", documentId: "" });
+
+/** Bulk upload from My Tasks: the awaiting documents of this sub type, ticked off as files are matched to them. */
+function BulkTasksSummary({ bulk, entries, matchedKeys }: { bulk: UploadBulkContext; entries: AwaitingUpload[]; matchedKeys: Set<string> }) {
+  const [open, setOpen] = useState(true);
+  const matched = entries.filter((entry) => matchedKeys.has(entry.key)).length;
+  return (
+    <section className="rounded-2xl border border-cyan-200 bg-cyan-50 shadow-sm">
+      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="flex w-full flex-wrap items-center justify-between gap-3 px-5 py-4 text-left sm:px-6">
+        <span>
+          <span className="block text-base font-semibold text-cyan-900">Awaiting {bulk.label}</span>
+          <span className="mt-0.5 block text-sm text-cyan-900/80">
+            {matched} of {entries.length} awaiting document{entries.length === 1 ? "" : "s"} {matched === 1 ? "has" : "have"} a file. Documents without a file stay in My Tasks.
+          </span>
+        </span>
+        <span className="flex items-center gap-3">
+          <span className="h-2 w-32 overflow-hidden rounded-full bg-white ring-1 ring-cyan-200">
+            <span className="block h-full rounded-full bg-cyan-600 transition-all" style={{ width: `${entries.length ? Math.round((matched / entries.length) * 100) : 0}%` }} />
+          </span>
+          <span className="text-xs font-medium text-cyan-900">{open ? "Hide" : "Show"}</span>
+        </span>
+      </button>
+      {open ? (
+        <ul className="max-h-64 divide-y divide-cyan-100 overflow-y-auto border-t border-cyan-100 px-5 sm:px-6">
+          {entries.map((entry) => {
+            const done = matchedKeys.has(entry.key);
+            const others = bulk.siblings[entry.key] ?? [];
+            return (
+              <li key={entry.key} className="flex flex-wrap items-center justify-between gap-3 py-2.5 text-sm">
+                <span className="flex min-w-0 items-start gap-2">
+                  {done ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <span className="mt-1 h-3.5 w-3.5 shrink-0 rounded-full border-2 border-cyan-300" />}
+                  <span className="min-w-0">
+                    <span className="font-medium text-slate-900">{entry.previousDocument?.documentNumber ?? entry.label}</span>
+                    {entry.previousDocument?.title ? <span className="text-slate-600"> · {entry.previousDocument.title}</span> : null}
+                    <span className="block text-xs text-slate-500">
+                      {entry.option.name}
+                      {entry.projectLabel ? ` · ${entry.projectLabel}` : ""}
+                      {others.length > 0 ? ` · could also continue with ${others.join(", ")}` : ""}
+                    </span>
+                  </span>
+                </span>
+                <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${done ? "bg-emerald-100 text-emerald-800" : "bg-white text-slate-600 ring-1 ring-cyan-200"}`}>{done ? "File matched" : "No file yet"}</span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
 
 /**
  * The optional reference document of ONE uploaded file: none, a new file, or an approved document picked from the list.
@@ -332,7 +404,7 @@ function ReferencePicker({
   );
 }
 
-export default function NewDocumentForm({ documentTypes, projects, defaultRedirectPath = "/clerk", process = null, initialStepId = "", startProcess = null, isAdmin = false, rootReferences = [], referenceTypes = [] }: Props) {
+export default function NewDocumentForm({ documentTypes, projects, defaultRedirectPath = "/clerk", process = null, initialStepId = "", startProcess = null, isAdmin = false, rootReferences = [], referenceTypes = [], linkedTypeScopes = [], linkedEntries = [], uploadScopeKeys = null, bulk = null }: Props) {
   const router = useRouter();
 
   const [description, setDescription] = useState("");
@@ -340,17 +412,25 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
   // One open choice is chosen for the person; an Admin user can also arrive with the step already picked.
   const startOption = onlyOption ?? process?.options.find((option) => option.stepId === initialStepId) ?? null;
   const [processStepId, setProcessStepId] = useState(startOption?.stepId ?? "");
-  const [documentTypeId, setDocumentTypeId] = useState(startOption?.documentTypeId ?? startProcess?.documentTypeId ?? "");
-  const [documentSubtypeId, setDocumentSubtypeId] = useState(startOption?.documentSubtypeId ?? startProcess?.documentSubtypeId ?? "");
+  const [documentTypeId, setDocumentTypeId] = useState(startOption?.documentTypeId ?? startProcess?.documentTypeId ?? bulk?.documentTypeId ?? "");
+  const [documentSubtypeId, setDocumentSubtypeId] = useState(startOption?.documentSubtypeId ?? startProcess?.documentSubtypeId ?? bulk?.documentSubtypeId ?? "");
+  // Bulk upload: files whose run could also continue with another document need the uploader to confirm the choice.
+  const [confirmedBranches, setConfirmedBranches] = useState<Record<string, boolean>>({});
   // Admin only: the document is already approved (no approval flow), optionally with the date it was approved on.
   const [alreadyApproved, setAlreadyApproved] = useState(false);
   const [approvedDate, setApprovedDate] = useState("");
   const [notifyNext, setNotifyNext] = useState(false);
+  // Unique tracks of the flow's uploader level; the check box is always off until the uploader ticks it.
+  const [uniqueTracks, setUniqueTracks] = useState<Array<{ sortOrder: number; name: string; receiverName: string | null }>>([]);
+  const [trackSortOrder, setTrackSortOrder] = useState<number | null>(null);
   const [projectId, setProjectId] = useState(process?.projectId ?? "");
+  const [projectTouched, setProjectTouched] = useState(false);
   const [headerValues, setHeaderValues] = useState<FieldValues>({});
   const [lineItems, setLineItems] = useState<FieldValues[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileTitles, setFileTitles] = useState<string[]>([]);
+  // Each file's own description (same position as the file). `null` = not edited yet: it follows the Description above.
+  const [fileDescriptions, setFileDescriptions] = useState<Array<string | null>>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -358,6 +438,8 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
   // Optional reference document for EACH uploaded file (same position as the file).
   // Each file can carry any number of reference documents (same position as the file).
   const [references, setReferences] = useState<ReferenceState[][]>([]);
+  // The linked document of each file (by file), chosen by the uploader or matched from the file name.
+  const [linkChoices, setLinkChoices] = useState<Record<string, { key: string; auto: boolean }>>({});
 
   const selectedType = documentTypes.find((type) => type.id === documentTypeId) ?? null;
   const applicableFields = useMemo(
@@ -368,15 +450,110 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
   const lineFields = applicableFields.filter((field) => field.fieldGroup === "LINE_ITEM");
   const showLineItems = Boolean(selectedType?.supportsLineItems) && lineFields.length > 0;
   const chosenOption = process?.options.find((option) => option.stepId === processStepId) ?? null;
-  const typeLocked = Boolean(process) || Boolean(startProcess);
-  const subtypeLocked = Boolean(chosenOption?.documentSubtypeId) || Boolean(startProcess?.documentSubtypeId);
+  const typeLocked = Boolean(process) || Boolean(startProcess) || Boolean(bulk);
+  const subtypeLocked = Boolean(chosenOption?.documentSubtypeId) || Boolean(startProcess?.documentSubtypeId) || Boolean(bulk);
   // "Allow multiple uploads" comes from the process setup of the chosen step: each file then becomes its own
   // follow-up run, linked to the run and the approved document it follows.
   const allowMultiple = Boolean(chosenOption?.allowMultipleUploads);
   const singleFile = (Boolean(process) && !allowMultiple) || Boolean(startProcess);
-  const projectLocked = Boolean(process);
+  // A later document of a process (not a start document) must name the document it follows; roots and documents
+  // outside every process need no link.
+  const linkRequired =
+    Boolean(bulk) ||
+    (!process &&
+    !startProcess &&
+    Boolean(selectedType) &&
+    linkedTypeScopes.some((scope) => scope.documentTypeId === documentTypeId && scope.documentSubtypeId === (documentSubtypeId || null)));
+  const typeEntries = useMemo(
+    () =>
+      linkRequired
+        ? linkedEntries.filter(
+            (entry) => entry.option.documentTypeId === documentTypeId && (!entry.option.documentSubtypeId || entry.option.documentSubtypeId === documentSubtypeId),
+          )
+        : [],
+    [linkRequired, linkedEntries, documentTypeId, documentSubtypeId],
+  );
+  const chosenEntries = useMemo(
+    () => selectedFiles.flatMap((file) => typeEntries.filter((entry) => entry.key === linkChoices[fileKey(file)]?.key)),
+    [selectedFiles, linkChoices, typeEntries],
+  );
+  // Each file gets the project of the document it follows, so the project field cannot be changed. With one project
+  // for every file it shows that project; with several it says each file takes its own.
+  const entryForFile = (index: number) => {
+    const file = selectedFiles[index];
+    return file ? typeEntries.find((entry) => entry.key === linkChoices[fileKey(file)]?.key) ?? null : null;
+  };
+  const linkedProjects = new Set(chosenEntries.map((entry) => entry.projectId ?? ""));
+  const linkedProjectId = chosenEntries.length > 0 && linkedProjects.size === 1 ? chosenEntries[0].projectId ?? "" : null;
+  const linkedMode = linkRequired && chosenEntries.length > 0;
+  const projectLocked = Boolean(process) || linkedMode;
+
+  // Name matching: a file called "LPO-783050-MR-214497.pdf" is linked to "MR 214497" by itself (when only one fits).
+  useEffect(() => {
+    if (!linkRequired) return;
+    setLinkChoices((current) => {
+      let changed = false;
+      const next = { ...current };
+      selectedFiles.forEach((file, index) => {
+        const key = fileKey(file);
+        const existing = next[key];
+        if (existing && typeEntries.some((entry) => entry.key === existing.key)) return;
+        if (existing) {
+          delete next[key];
+          changed = true;
+        }
+        const match = findAutoMatch([stripExtension(file.name), fileTitles[index] ?? ""], typeEntries);
+        if (match) {
+          next[key] = { key: match.key, auto: true };
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [linkRequired, selectedFiles, fileTitles, typeEntries]);
+
+  useEffect(() => {
+    if (linkedMode) setProjectId(linkedProjectId ?? "");
+  }, [linkedMode, linkedProjectId]);
   // Inside a process only the chosen document's type is offered; elsewhere every type is.
-  const visibleTypes = process || startProcess ? documentTypes.filter((type) => type.id === documentTypeId) : documentTypes;
+  // What the person may upload decides what is offered, and the three choices narrow each other: a type is offered for the
+  // chosen project, a sub type for the chosen project and type, and a project for the chosen type / sub type.
+  const keySet = useMemo(() => (uploadScopeKeys ? new Set(uploadScopeKeys) : null), [uploadScopeKeys]);
+  const projectScopeKnown = Boolean(keySet) && !process && !startProcess;
+  const allowedFor = (projectKey: string, typeId: string, subtypeId: string) => !keySet || keySet.has(`${projectKey}|${typeId}|${subtypeId}`);
+  const typeAllowedFor = (type: UploadDocumentType, projectKey: string) =>
+    type.subtypes.length > 0 ? type.subtypes.some((subtype) => allowedFor(projectKey, type.id, subtype.id)) : allowedFor(projectKey, type.id, "");
+  // In linked mode the project comes from the linked document; the type list then does not depend on a project choice.
+  // Until the person touches the project field, "No project" is only the starting value, not a choice that narrows the types.
+  const projectFilterKey = linkedMode ? null : projectId !== "" || projectTouched ? projectId : null;
+  const typesForProject = !projectScopeKnown || projectFilterKey === null ? documentTypes : documentTypes.filter((type) => typeAllowedFor(type, projectFilterKey));
+  const subtypesForChoice = (type: UploadDocumentType) =>
+    !projectScopeKnown || projectFilterKey === null ? type.subtypes : type.subtypes.filter((subtype) => allowedFor(projectFilterKey, type.id, subtype.id));
+  const projectAllowedForChoice = (candidateProjectKey: string) => {
+    if (!projectScopeKnown) return true;
+    const chosenType = documentTypes.find((type) => type.id === documentTypeId);
+    if (!chosenType) return documentTypes.some((type) => typeAllowedFor(type, candidateProjectKey));
+    if (chosenType.subtypes.length > 0 && !documentSubtypeId) return typeAllowedFor(chosenType, candidateProjectKey);
+    return allowedFor(candidateProjectKey, chosenType.id, documentSubtypeId);
+  };
+  const projectsForChoice = projectScopeKnown ? projects.filter((project) => projectAllowedForChoice(project.id)) : projects;
+  const noProjectAllowed = !projectScopeKnown || projectAllowedForChoice("");
+  const visibleTypes = process || startProcess || bulk ? documentTypes.filter((type) => type.id === documentTypeId) : typesForProject;
+
+  // A choice that stops being allowed after another choice changed is cleared instead of being submitted.
+  useEffect(() => {
+    if (!projectScopeKnown) return;
+    const chosenType = documentTypes.find((type) => type.id === documentTypeId);
+    if (chosenType && projectFilterKey !== null && !typeAllowedFor(chosenType, projectFilterKey)) {
+      setDocumentTypeId("");
+      setDocumentSubtypeId("");
+      return;
+    }
+    if (chosenType && documentSubtypeId && projectFilterKey !== null && !allowedFor(projectFilterKey, chosenType.id, documentSubtypeId)) {
+      setDocumentSubtypeId("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectScopeKnown, projectFilterKey, documentTypeId, documentSubtypeId]);
 
   // Reading the attached files to fill the fields (free OCR in the browser). It needs the type, and the sub type if there is one.
   const scanEnabled = DOCUMENT_SCAN_ENABLED && selectedType !== null && (selectedType.subtypes.length === 0 || Boolean(documentSubtypeId)) && (headerFields.length > 0 || showLineItems);
@@ -397,12 +574,36 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
         ? { typeId: chosenOption.referenceDocumentTypeId, subtypeId: chosenOption.referenceDocumentSubtypeId }
         : null;
     }
+    if (linkRequired) {
+      const withReference = chosenEntries.find((entry) => entry.option.referenceDocumentTypeId);
+      return withReference?.option.referenceDocumentTypeId
+        ? { typeId: withReference.option.referenceDocumentTypeId, subtypeId: withReference.option.referenceDocumentSubtypeId }
+        : null;
+    }
     const matches = rootReferences.filter(
       (config) => config.documentTypeId === documentTypeId && (!config.documentSubtypeId || config.documentSubtypeId === documentSubtypeId),
     );
     const best = matches.find((config) => config.documentSubtypeId) ?? matches[0];
     return best ? { typeId: best.referenceDocumentTypeId, subtypeId: best.referenceDocumentSubtypeId } : null;
-  }, [process, chosenOption, rootReferences, documentTypeId, documentSubtypeId]);
+  }, [process, chosenOption, linkRequired, chosenEntries, rootReferences, documentTypeId, documentSubtypeId]);
+  // Load the unique tracks of the flow that applies to the chosen type / sub type / project.
+  useEffect(() => {
+    setTrackSortOrder(null);
+    if (!documentTypeId) {
+      setUniqueTracks([]);
+      return;
+    }
+    const controller = new AbortController();
+    const params = new URLSearchParams({ documentTypeId });
+    if (documentSubtypeId) params.set("documentSubtypeId", documentSubtypeId);
+    if (projectId) params.set("projectId", projectId);
+    fetch(`/api/documents/tracks?${params.toString()}`, { signal: controller.signal })
+      .then((response) => (response.ok ? response.json() : { tracks: [] }))
+      .then((data: { tracks: Array<{ sortOrder: number; name: string; receiverName: string | null }> }) => setUniqueTracks(data.tracks ?? []))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [documentTypeId, documentSubtypeId, projectId]);
+
   const referenceType = referenceConfig ? referenceTypes.find((type) => type.id === referenceConfig.typeId) ?? null : null;
   const referenceAvailable = Boolean(referenceConfig && referenceType);
   const needsReferenceSubtype = Boolean(referenceType && referenceType.subtypes.length > 0 && !referenceConfig?.subtypeId);
@@ -446,6 +647,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
     setSelectedFiles((current) => (singleFile ? uniqueIncomingFiles.slice(0, 1) : [...current, ...uniqueIncomingFiles]));
     setReferences((current) => (singleFile ? uniqueIncomingFiles.slice(0, 1).map(() => [blankReference()]) : [...current, ...uniqueIncomingFiles.map(() => [blankReference()])]));
     setFileTitles((current) => (singleFile ? uniqueIncomingFiles.slice(0, 1).map((file) => file.name.replace(/\.[^.]+$/, "")) : [...current, ...uniqueIncomingFiles.map((file) => file.name.replace(/\.[^.]+$/, ""))]));
+    setFileDescriptions((current) => (singleFile ? uniqueIncomingFiles.slice(0, 1).map(() => null) : [...current, ...uniqueIncomingFiles.map(() => null)]));
   }
 
   function onDrop(e: React.DragEvent<HTMLLabelElement>) {
@@ -468,12 +670,15 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
     setDescription("");
     if (!typeLocked) setDocumentTypeId("");
     if (!subtypeLocked) setDocumentSubtypeId("");
-    if (!projectLocked) setProjectId("");
+    if (!process) setProjectId("");
+    setLinkChoices({});
+    setConfirmedBranches({});
     if (!onlyOption) setProcessStepId("");
     setHeaderValues({});
     setLineItems([]);
     setSelectedFiles([]);
     setFileTitles([]);
+    setFileDescriptions([]);
     setReferences([]);
     setAlreadyApproved(false);
     setApprovedDate("");
@@ -497,9 +702,40 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
       setError("Please select a sub type.");
       return;
     }
+    if (projectScopeKnown && !linkedMode && !allowedFor(projectId, selectedType.id, documentSubtypeId)) {
+      setError(projectId === "" ? "Please select a project." : "You are not allowed to upload this type of document for the chosen project.");
+      return;
+    }
     if (selectedFiles.length === 0) {
       setError("Please choose at least one file.");
       return;
+    }
+    if (linkRequired) {
+      // The linked document is optional for now: a file without one is uploaded on its own.
+      const picked = selectedFiles.flatMap((file) => typeEntries.filter((entry) => entry.key === linkChoices[fileKey(file)]?.key));
+      const taken = new Map<string, number>();
+      for (const entry of picked) taken.set(entry.key, (taken.get(entry.key) ?? 0) + 1);
+      const crowded = picked.find((entry) => entry.mode === "continue" && !entry.option.allowMultipleUploads && (taken.get(entry.key) ?? 0) > 1);
+      if (crowded) {
+        setError(`Only one document can be uploaded for ${crowded.previousDocument?.documentNumber ?? crowded.label} (${crowded.option.name}).`);
+        return;
+      }
+      if (bulk) {
+        // Every file must belong to one of the awaiting tasks, and a run with other choices needs the choice confirmed.
+        const unlinked = selectedFiles.find((file) => !typeEntries.some((entry) => entry.key === linkChoices[fileKey(file)]?.key));
+        if (unlinked) {
+          setError(`Choose the awaiting document ${unlinked.name} belongs to, or remove the file.`);
+          return;
+        }
+        const unconfirmed = selectedFiles.find((file) => {
+          const key = linkChoices[fileKey(file)]?.key ?? "";
+          return (bulk.siblings[key] ?? []).length > 0 && !confirmedBranches[`${fileKey(file)}|${key}`];
+        });
+        if (unconfirmed) {
+          setError(`Confirm which document ${unconfirmed.name} continues its process with.`);
+          return;
+        }
+      }
     }
     if (referenceAvailable) {
       for (const [index, item] of references.flatMap((list, fileIndex) => list.map((entry) => ({ ...entry, fileIndex }))).map((entry) => [entry.fileIndex, entry] as const)) {
@@ -546,11 +782,18 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
       formData.set("documentTypeId", selectedType.id);
       if (documentSubtypeId) formData.set("documentSubtypeId", documentSubtypeId);
       if (projectId) formData.set("projectId", projectId);
+      if (trackSortOrder !== null && !(isAdmin && alreadyApproved)) formData.set("trackSortOrder", String(trackSortOrder));
       if (process) {
         formData.set("processInstanceId", process.instanceId);
         formData.set("processStepId", processStepId);
       }
       if (startProcess) formData.set("startProcessDefinitionId", startProcess.definitionId);
+      if (linkRequired) {
+        selectedFiles.forEach((file, index) => {
+          const choice = linkChoices[fileKey(file)];
+          if (choice) formData.set(`linkedKey_${index}`, choice.key);
+        });
+      }
       if (isAdmin && alreadyApproved) {
         formData.set("alreadyApproved", "true");
         if (approvedDate) formData.set("approvedAt", approvedDate);
@@ -587,6 +830,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
       selectedFiles.forEach((file, index) => {
         formData.append("files", file);
         formData.append("fileTitles", fileTitles[index] || file.name.replace(/\.[^.]+$/, ""));
+        formData.append("fileDescriptions", fileDescriptions[index] ?? description);
       });
 
       const response = await fetch("/api/documents", {
@@ -595,7 +839,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
         body: formData,
       });
 
-      const result = (await response.json()) as { message?: string; processRunId?: string | null };
+      const result = (await response.json()) as { message?: string; processRunId?: string | null; signUrl?: string | null };
       if (!response.ok) {
         setError(result.message || "Failed to create document.");
         setIsSubmitting(false);
@@ -603,12 +847,19 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
       }
 
       setIsSubmitting(false);
-      setShowToast(true);
       resetForm();
+
+      // The uploader is the approver of the first level and it needs their signature: open it for signing now.
+      if (result.signUrl) {
+        router.push(result.signUrl);
+        return;
+      }
+
+      setShowToast(true);
       window.setTimeout(() => {
         setShowToast(false);
         // An Admin user who started or continued a run is taken to that run; everyone else goes back to their list.
-        router.push(isAdmin && result.processRunId ? `/processes/${result.processRunId}` : process ? "/tasks" : defaultRedirectPath);
+        router.push(bulk ? "/tasks?tab=upload" : isAdmin && result.processRunId ? `/processes/${result.processRunId}` : process ? "/tasks" : defaultRedirectPath);
         router.refresh();
       }, 1600);
     } catch {
@@ -653,6 +904,14 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
               Upload the first document ({startProcess.rootName}: {startProcess.typeName}{startProcess.subtypeName ? ` - ${startProcess.subtypeName}` : ""}). The run starts with it. You can add the documents of the next steps from the run page.
             </p>
           </section>
+        ) : null}
+
+        {bulk ? (
+          <BulkTasksSummary
+            bulk={bulk}
+            entries={typeEntries}
+            matchedKeys={new Set(selectedFiles.map((file) => linkChoices[fileKey(file)]?.key).filter((key): key is string => Boolean(key)))}
+          />
         ) : null}
 
         {process ? (
@@ -714,7 +973,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
                     {type.name}
                   </button>
                 ))}
-                {documentTypes.length === 0 ? <p className="text-sm text-slate-500">No document types are set up yet.</p> : null}
+                {documentTypes.length === 0 ? <p className="text-sm text-slate-500">No document types are set up yet.</p> : visibleTypes.length === 0 ? <p className="text-sm text-slate-500">You cannot upload any document type for this project.</p> : null}
               </div>
             </div>
 
@@ -724,7 +983,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
                   Sub Type <span className="text-rose-600">*</span>
                 </label>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  {selectedType.subtypes.filter((subtype) => !subtypeLocked || subtype.id === documentSubtypeId).map((subtype) => (
+                  {subtypesForChoice(selectedType).filter((subtype) => !subtypeLocked || subtype.id === documentSubtypeId).map((subtype) => (
                     <button
                       key={subtype.id}
                       type="button"
@@ -750,12 +1009,28 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
               <label htmlFor="project" className="mb-2 block text-sm font-medium text-slate-700">
                 Project
               </label>
-              <select id="project" value={projectId} disabled={projectLocked} onChange={(e) => setProjectId(e.target.value)} className={inputClass}>
-                <option value="">No project</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.code} - {project.name}</option>
-                ))}
-              </select>
+              {/* Shows each project's name with its director and manager; typing also searches the project code. */}
+              <ProjectPicker
+                id="project"
+                value={projectId}
+                projects={projectsForChoice}
+                disabled={projectLocked}
+                onChange={(next) => { setProjectTouched(true); setProjectId(next); }}
+                emptyLabel={noProjectAllowed || linkedMode || process ? (linkedMode && linkedProjectId === null ? "Taken from each linked document" : "No project") : null}
+                placeholder={noProjectAllowed || linkedMode || process ? (linkedMode && linkedProjectId === null ? "Taken from each linked document" : "No project") : "Select a project"}
+              />
+              {(() => {
+                const chosen = projects.find((project) => project.id === projectId);
+                if (!chosen) return null;
+                const director = chosen.director?.isActive ? chosen.director.name : null;
+                const manager = chosen.manager?.isActive ? chosen.manager.name : null;
+                return (
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200">
+                    <span>Project Director: <span className={director ? "font-medium text-slate-900" : "text-amber-700"}>{director ?? "not set"}</span></span>
+                    <span>Project Manager: <span className={manager ? "font-medium text-slate-900" : "text-amber-700"}>{manager ?? "not set"}</span></span>
+                  </div>
+                );
+              })()}
             </div>
 
             <DocumentScanPanel
@@ -827,7 +1102,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={4}
-                placeholder="Add optional context for approvers"
+                placeholder={selectedFiles.length > 1 ? "Add optional context for approvers (copied to every file; change it per file below)" : "Add optional context for approvers"}
                 className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none ring-cyan-300 transition focus:ring-2"
               />
             </div>
@@ -839,6 +1114,17 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
           <p className="mt-1 text-xs text-slate-500">
             Accepted: PDF, Word, Excel, JPG, JPEG, PNG.{singleFile ? "" : " You can upload multiple files."}
           </p>
+          {linkRequired && bulk ? (
+            <p className="mt-2 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-900">
+              Drop all the files at once. A file whose name contains the number of the document it follows is linked to its task automatically; pick the task yourself for any file that is not.
+            </p>
+          ) : linkRequired ? (
+            <p className={`mt-2 rounded-lg border px-3 py-2 text-xs ${typeEntries.length === 0 ? "border-amber-300 bg-amber-50 text-amber-900" : "border-cyan-200 bg-cyan-50 text-cyan-900"}`}>
+              {typeEntries.length === 0
+                ? "This type of document follows another document of a process, and none is waiting for it right now."
+                : "This type of document follows another document of a process. Choose the document each file follows (a file name that contains its number links it automatically)."}
+            </p>
+          ) : null}
 
 
           <label
@@ -898,6 +1184,83 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
                           placeholder="Enter document title"
                         />
                       </label>
+                      {fileSummary.length > 1 ? (
+                        <label className="mt-2 block text-xs font-medium text-slate-600">
+                          Description
+                          <textarea
+                            value={fileDescriptions[index] ?? description}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setFileDescriptions((current) => {
+                                const next = [...current];
+                                next[index] = value;
+                                return next;
+                              });
+                            }}
+                            rows={2}
+                            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-300 transition focus:ring-2"
+                            placeholder="Optional context for approvers of this file"
+                          />
+                          {fileDescriptions[index] !== null && fileDescriptions[index] !== undefined && fileDescriptions[index] !== description ? (
+                            <button
+                              type="button"
+                              onClick={() => setFileDescriptions((current) => current.map((item, i) => (i === index ? null : item)))}
+                              className="mt-1 text-xs font-medium text-cyan-700 hover:underline"
+                            >
+                              Use the description above
+                            </button>
+                          ) : null}
+                        </label>
+                      ) : null}
+                      {linkRequired && selectedFiles[index] ? (
+                        <div className="mt-3">
+                          <label htmlFor={`linked-document-${index}`} className="block text-xs font-medium text-slate-600">
+                            {bulk ? (
+                              <>Awaiting document <span className="text-rose-600">*</span></>
+                            ) : (
+                              <>Linked document <span className="font-normal text-slate-500">(optional)</span></>
+                            )}
+                          </label>
+                          <div className="mt-1">
+                            <LinkedDocumentPicker
+                              id={`linked-document-${index}`}
+                              entries={typeEntries}
+                              value={linkChoices[fileKey(selectedFiles[index])]?.key ?? ""}
+                              auto={Boolean(linkChoices[fileKey(selectedFiles[index])]?.auto)}
+                              required={Boolean(bulk)}
+                              matchText={[stripExtension(file.name), fileTitles[index] ?? ""]}
+                              disabled={isSubmitting}
+                              onChange={(key) => setLinkChoices((current) => ({ ...current, [fileKey(selectedFiles[index])]: { key, auto: false } }))}
+                            />
+                          </div>
+                          {entryForFile(index) ? (
+                            <p className="mt-1 text-xs text-slate-600">
+                              Project: <span className="font-medium text-slate-800">{entryForFile(index)?.projectLabel ?? "No project"}</span> (taken from the linked document)
+                            </p>
+                          ) : null}
+                          {(() => {
+                            // Bulk upload: the run could also go on with another document, so the uploader confirms this one.
+                            const entry = entryForFile(index);
+                            const others = bulk && entry ? bulk.siblings[entry.key] ?? [] : [];
+                            if (!entry || others.length === 0) return null;
+                            const confirmKey = `${fileKey(selectedFiles[index])}|${entry.key}`;
+                            return (
+                              <label className={`mt-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${confirmedBranches[confirmKey] ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-900"}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(confirmedBranches[confirmKey])}
+                                  onChange={(event) => setConfirmedBranches((current) => ({ ...current, [confirmKey]: event.target.checked }))}
+                                  className="mt-0.5 h-4 w-4 rounded border-amber-400"
+                                />
+                                <span>
+                                  Continue this process with <span className="font-semibold">{entry.option.name}</span>.
+                                  <span className="block opacity-80">It could also continue with {others.join(", ")}; the process follows the document you upload.</span>
+                                </span>
+                              </label>
+                            );
+                          })()}
+                        </div>
+                      ) : null}
                       {referenceAvailable && referenceType && referenceConfig ? (
                         <>
                           {(references[index] ?? [blankReference()]).map((entry, position) => (
@@ -913,7 +1276,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
                               onRemove={position > 0 ? () => setReferences((current) => current.map((list, i) => (i === index ? list.filter((_, p) => p !== position) : list))) : undefined}
                               type={referenceType}
                               config={referenceConfig}
-                              projectId={projectId}
+                              projectId={linkRequired ? entryForFile(index)?.projectId ?? "" : projectId}
                               needsSubtype={needsReferenceSubtype}
                               onError={setError}
                             />
@@ -935,6 +1298,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
                     onClick={() => {
                       setSelectedFiles((current) => current.filter((_, itemIndex) => itemIndex !== index));
                       setFileTitles((current) => current.filter((_, itemIndex) => itemIndex !== index));
+                      setFileDescriptions((current) => current.filter((_, itemIndex) => itemIndex !== index));
                       setReferences((current) => current.filter((_, itemIndex) => itemIndex !== index));
                     }}
                     className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
@@ -954,6 +1318,28 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
           )}
         </section>
 
+        {uniqueTracks.length > 0 && !(isAdmin && alreadyApproved) ? (
+          <section className="rounded-2xl border border-cyan-200 bg-cyan-50 p-5 shadow-sm sm:p-6">
+            <p className="text-sm font-semibold text-cyan-950">Unique tracks</p>
+            <div className="mt-2 space-y-2">
+              {uniqueTracks.map((track) => (
+                <label key={track.sortOrder} className="flex items-start gap-3 text-sm text-cyan-950">
+                  <input
+                    type="checkbox"
+                    checked={trackSortOrder === track.sortOrder}
+                    onChange={(e) => setTrackSortOrder(e.target.checked ? track.sortOrder : null)}
+                    className="mt-0.5 h-4 w-4 rounded border-cyan-400"
+                  />
+                  <span>
+                    <span className="block font-semibold">{track.name}</span>
+                    {track.receiverName ? <span className="block text-cyan-900/80">Sends the document straight to {track.receiverName}.</span> : null}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
         {isAdmin ? (
           <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm sm:p-6">
             <label className="flex items-start gap-3 text-sm text-amber-950">
@@ -966,7 +1352,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
               <span>
                 <span className="block font-semibold">This document is already approved</span>
                 <span className="block text-amber-900/80">
-                  Skip the approval flow: the document is saved as approved right away{process || startProcess ? " and the process moves on to the next step" : ""}. This is recorded in its history.
+                  Skip the approval flow: the document is saved as approved right away{process || startProcess || bulk ? " and the process moves on to the next step" : ""}. This is recorded in its history.
                 </span>
               </span>
             </label>
@@ -985,7 +1371,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
                   />
                   <p className="mt-1 text-xs text-amber-900/70">Leave empty to use today. It also sets when any waiting period of the next step starts.</p>
                 </div>
-                {process || startProcess ? (
+                {process || startProcess || bulk ? (
                   <label className="flex items-start gap-3 text-sm text-amber-950 sm:pt-7">
                     <input type="checkbox" checked={notifyNext} onChange={(e) => setNotifyNext(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-amber-400" />
                     <span>Tell the people who may upload the next document of this process</span>
@@ -999,7 +1385,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <button
             type="button"
-            onClick={() => router.push(defaultRedirectPath)}
+            onClick={() => router.push(bulk ? "/tasks?tab=upload" : defaultRedirectPath)}
             disabled={isSubmitting}
             className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -1017,7 +1403,7 @@ export default function NewDocumentForm({ documentTypes, projects, defaultRedire
                 Creating...
               </>
             ) : (
-              alreadyApproved ? "Save as Approved" : startProcess ? "Start Process" : allowMultiple && selectedFiles.length > 1 ? `Create ${selectedFiles.length} Processes` : "Create Document"
+              alreadyApproved ? "Save as Approved" : startProcess ? "Start Process" : bulk ? (selectedFiles.length > 0 ? `Upload ${selectedFiles.length} Document${selectedFiles.length === 1 ? "" : "s"}` : "Upload Documents") : allowMultiple && selectedFiles.length > 1 ? `Create ${selectedFiles.length} Processes` : "Create Document"
             )}
           </button>
         </div>

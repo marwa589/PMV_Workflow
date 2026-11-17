@@ -1,7 +1,7 @@
 // src/app/search/page.tsx
 import Link from "next/link";
 import DashboardShell from "@/components/dashboard-shell";
-import StatusBadge from "@/components/status-badge";
+import SearchResultsTable from "@/components/search-results-table";
 import { getDownloadedAtMap } from "@/lib/download-tracking";
 import { requireAuth } from "@/lib/auth/guards";
 import { SEARCH_MIN_LENGTH, searchDocuments } from "@/lib/global-search";
@@ -50,33 +50,22 @@ export default async function SearchPage({ searchParams }: { searchParams?: Prom
         ) : hits.length === 0 ? (
           <div className="px-5 py-6 text-sm text-slate-500">No documents you can access match &quot;{query}&quot;.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-5 py-3 font-semibold">Number</th>
-                  <th className="px-5 py-3 font-semibold">Title</th>
-                  <th className="px-5 py-3 font-semibold">Type</th>
-                  <th className="px-5 py-3 font-semibold">Project</th>
-                  <th className="px-5 py-3 font-semibold">Status</th>
-                  <th className="px-5 py-3 font-semibold">Created</th>
-                </tr>
-              </thead>
-              <tbody>
-                {hits.map((hit) => (
-                  <tr key={hit.id} className="border-t border-slate-100 hover:bg-slate-50/50">
-                    <td className="px-5 py-3"><Link href={`/documents/${hit.id}`} className="font-medium text-cyan-700 hover:underline">{hit.documentNumber}</Link></td>
-                    <td className="px-5 py-3 text-slate-800">{hit.title}</td>
-                    <td className="px-5 py-3 text-slate-600">{hit.typeName}{hit.subtypeName ? ` - ${hit.subtypeName}` : ""}</td>
-                    <td className="px-5 py-3 text-slate-600">{hit.projectLabel ?? "—"}</td>
-                    <td className="px-5 py-3"><StatusBadge status={hit.status} label={hit.statusLabel} downloaded={downloadedByMe.has(hit.id)} /></td>
-                    <td className="px-5 py-3 text-slate-500">{dateFormat.format(new Date(hit.createdAt))}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {total > hits.length ? <p className="px-5 py-3 text-xs text-slate-500">Showing the {hits.length} most recent of {total}. Narrow the search to see the rest.</p> : null}
-          </div>
+          <>
+            <SearchResultsTable
+              rows={hits.map((hit) => ({
+                id: hit.id,
+                documentNumber: hit.documentNumber,
+                title: hit.title,
+                typeLabel: `${hit.typeName}${hit.subtypeName ? ` - ${hit.subtypeName}` : ""}`,
+                projectLabel: hit.projectLabel,
+                status: hit.status,
+                statusLabel: hit.statusLabel,
+                downloaded: downloadedByMe.has(hit.id),
+                createdLabel: dateFormat.format(new Date(hit.createdAt)),
+              }))}
+            />
+            {total > hits.length ? <p className="border-t border-slate-200 px-5 py-3 text-xs text-slate-500">Showing the {hits.length} most recent of {total}. Narrow the search to see the rest.</p> : null}
+          </>
         )}
       </section>
     </DashboardShell>

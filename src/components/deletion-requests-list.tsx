@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, CheckSquare, Square, Check, X } from "lucide-react";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
+import { Pager, usePagination } from "@/components/pager";
 
 type DeletionRequest = {
   id: string;
@@ -22,6 +23,7 @@ export default function DeletionRequestsList({ requests }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [processingBulk, setProcessingBulk] = useState(false);
   const [processingIndividual, setProcessingIndividual] = useState<Set<string>>(new Set());
+  const pagination = usePagination(requests, { storageKey: "deletion-requests", initialPageSize: 25 });
 
   const allSelected = selected.size === requests.length && requests.length > 0;
   const someSelected = selected.size > 0 && selected.size < requests.length;
@@ -161,7 +163,7 @@ export default function DeletionRequestsList({ requests }: Props) {
       )}
 
       <div className="divide-y divide-slate-100">
-        {requests.map((request) => (
+        {pagination.pageItems.map((request) => (
           <div key={request.id} className="px-5 py-4 hover:bg-slate-50">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex gap-3 flex-1">
@@ -210,6 +212,7 @@ export default function DeletionRequestsList({ requests }: Props) {
           </div>
         ))}
       </div>
+      <Pager {...pagination} noun="requests" />
     </>
   );
 }

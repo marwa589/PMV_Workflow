@@ -1,7 +1,7 @@
 // src/app/api/admin/assignments/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { optionalId, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
+import { optionalId, prismaErrorResponse, readJsonBody, requireApiAdmin, str } from "@/lib/admin-api";
 
 export const runtime = "nodejs";
 
@@ -14,7 +14,6 @@ const assignmentSelect = {
   locationId: true,
   documentTypeId: true,
   documentSubtypeId: true,
-  processDefinitionId: true,
   createdAt: true,
   user: { select: { id: true, name: true, email: true } },
   role: { select: { id: true, name: true } },
@@ -23,7 +22,6 @@ const assignmentSelect = {
   location: { select: { id: true, name: true } },
   documentType: { select: { id: true, code: true, name: true } },
   documentSubtype: { select: { id: true, code: true, name: true, documentTypeId: true } },
-  processDefinition: { select: { id: true, name: true } },
   projectScopes: { select: { project: { select: { id: true, code: true, name: true } } } },
   documentTypeScopes: {
     select: {
@@ -32,7 +30,6 @@ const assignmentSelect = {
       subtypes: { select: { documentSubtype: { select: { id: true, code: true, name: true } } } },
     },
   },
-  processScopes: { select: { processDefinition: { select: { id: true, name: true } } } },
 } as const;
 
 /**
@@ -40,16 +37,17 @@ const assignmentSelect = {
  * restriction, while each selected document type independently has an all-subtypes or selected-subtypes scope.
  */
 export async function GET(request: Request) {
-  const auth = await requireApiPermission(request, "assignments.manage");
+  const auth = await requireApiAdmin(request);
   if (auth.response) return auth.response;
 
   const userId = new URL(request.url).searchParams.get("userId")?.trim();
 
-  const [storedAssignments, users, roles, companies, projects, locations, documentTypes, processes] = await Promise.all([
+  const [storedAssignments, users, roles, companyRows, projects, locations, documentTypes] = await Promise.all([
     prisma.userAssignment.findMany({ where: userId ? { userId } : {}, select: assignmentSelect, orderBy: [{ user: { name: "asc" } }, { createdAt: "asc" }] }),
     prisma.user.findMany({ where: { isActive: true }, select: { id: true, name: true, email: true, userType: { select: { code: true, name: true } } }, orderBy: { name: "asc" } }),
     prisma.role.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
-    prisma.company.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    // A role given for a company covers the projects that belong to it (set in Projects & Locations).
+    prisma.company.findMany({ where: { isActive: true }, select: { id: true, name: true, _count: { select: { projects: true } } }, orderBy: { name: "asc" } }),
     prisma.project.findMany({ where: { isActive: true }, select: { id: true, code: true, name: true }, orderBy: { code: "asc" } }),
     prisma.location.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.documentType.findMany({
@@ -57,8 +55,8 @@ export async function GET(request: Request) {
       select: { id: true, code: true, name: true, subtypes: { where: { isActive: true }, select: { id: true, code: true, name: true } } },
       orderBy: { name: "asc" },
     }),
-    prisma.processDefinition.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
+  const companies = companyRows.map((company) => ({ id: company.id, name: company.name, projectCount: company._count.projects }));
 
   const assignments = storedAssignments.map((assignment) => {
     const projectById = new Map<string, (typeof projects)[number]>();
@@ -85,10 +83,6 @@ export async function GET(request: Request) {
       });
     }
 
-    const processById = new Map<string, { id: string; name: string }>();
-    if (assignment.processDefinition) processById.set(assignment.processDefinition.id, assignment.processDefinition);
-    for (const scope of assignment.processScopes) processById.set(scope.processDefinition.id, scope.processDefinition);
-
     return {
       id: assignment.id,
       user: assignment.user,
@@ -97,63 +91,76 @@ export async function GET(request: Request) {
       location: assignment.location,
       projects: [...projectById.values()],
       documentTypeScopes: [...typeScopes.values()],
-      processes: [...processById.values()],
     };
   });
 
-  return NextResponse.json({ assignments, users, roles, companies, projects, locations, documentTypes, processes });
+  return NextResponse.json({ assignments, users, roles, companies, projects, locations, documentTypes });
 }
 
-export async function POST(request: Request) {
-  const auth = await requireApiPermission(request, "assignments.manage");
-  if (auth.response) return auth.response;
+type AssignmentInput = {
+  userId: string;
+  roleId: string;
+  companyId: string | null;
+  locationId: string | null;
+  projectIds: string[];
+  documentTypeScopes: Array<{ documentTypeId: string; allSubtypes: boolean; subtypeIds: string[] }>;
+};
 
-  const body = await readJsonBody(request);
+/** Reads and checks the user, role and scope of an assignment (shared by assigning and editing). */
+async function parseAssignmentInput(body: Record<string, unknown> | null): Promise<{ input: AssignmentInput } | { response: NextResponse }> {
   const userId = optionalId(body?.userId);
   const roleId = optionalId(body?.roleId);
   const projectIds = body && Array.isArray(body.projectIds)
     ? parseIds(body.projectIds)
     : parseIds([body?.projectId]);
-  const processDefinitionIds = body && Array.isArray(body.processDefinitionIds)
-    ? parseIds(body.processDefinitionIds)
-    : parseIds([body?.processDefinitionId]);
   const documentTypeScopes = parseDocumentTypeScopes(body);
   const companyId = optionalId(body?.companyId);
   const locationId = optionalId(body?.locationId);
 
-  if (!userId || !roleId) return NextResponse.json({ message: "User and role are required." }, { status: 400 });
+  if (!userId || !roleId) return { response: NextResponse.json({ message: "User and role are required." }, { status: 400 }) };
 
   if (!documentTypeScopes) {
-    return NextResponse.json({ message: "Each document type needs a valid subtype selection." }, { status: 400 });
+    return { response: NextResponse.json({ message: "Each document type needs a valid subtype selection." }, { status: 400 }) };
   }
 
   const subtypeIds = documentTypeScopes.flatMap((scope) => scope.subtypeIds);
-  const [validProjects, validProcesses, validTypes, validSubtypes] = await Promise.all([
+  const [validProjects, validCompany, validTypes, validSubtypes] = await Promise.all([
     prisma.project.count({ where: { id: { in: projectIds }, isActive: true } }),
-    prisma.processDefinition.count({ where: { id: { in: processDefinitionIds }, isActive: true } }),
+    companyId ? prisma.company.count({ where: { id: companyId, isActive: true } }) : Promise.resolve(1),
     prisma.documentType.count({ where: { id: { in: documentTypeScopes.map((scope) => scope.documentTypeId) }, isActive: true } }),
     prisma.documentSubtype.findMany({
       where: { id: { in: subtypeIds }, isActive: true },
       select: { id: true, documentTypeId: true },
     }),
   ]);
-  if (validProjects !== projectIds.length) return NextResponse.json({ message: "One or more selected projects are unavailable." }, { status: 400 });
-  if (validProcesses !== processDefinitionIds.length) return NextResponse.json({ message: "One or more selected processes are unavailable." }, { status: 400 });
-  if (validTypes !== documentTypeScopes.length) return NextResponse.json({ message: "One or more selected document types are unavailable." }, { status: 400 });
-  if (validSubtypes.length !== subtypeIds.length) return NextResponse.json({ message: "One or more selected subtypes are unavailable." }, { status: 400 });
+  if (validProjects !== projectIds.length) return { response: NextResponse.json({ message: "One or more selected projects are unavailable." }, { status: 400 }) };
+  if (validCompany !== 1) return { response: NextResponse.json({ message: "The selected company is unavailable." }, { status: 400 }) };
+  if (validTypes !== documentTypeScopes.length) return { response: NextResponse.json({ message: "One or more selected document types are unavailable." }, { status: 400 }) };
+  if (validSubtypes.length !== subtypeIds.length) return { response: NextResponse.json({ message: "One or more selected subtypes are unavailable." }, { status: 400 }) };
 
   const subtypeTypeById = new Map(validSubtypes.map((subtype) => [subtype.id, subtype.documentTypeId]));
   for (const scope of documentTypeScopes) {
     if (scope.allSubtypes && scope.subtypeIds.length > 0) {
-      return NextResponse.json({ message: "Choose all subtypes or specific subtypes for each document type." }, { status: 400 });
+      return { response: NextResponse.json({ message: "Choose all subtypes or specific subtypes for each document type." }, { status: 400 }) };
     }
     if (!scope.allSubtypes && scope.subtypeIds.length === 0) {
-      return NextResponse.json({ message: "Select at least one subtype or choose all subtypes." }, { status: 400 });
+      return { response: NextResponse.json({ message: "Select at least one subtype or choose all subtypes." }, { status: 400 }) };
     }
     if (scope.subtypeIds.some((id) => subtypeTypeById.get(id) !== scope.documentTypeId)) {
-      return NextResponse.json({ message: "A selected subtype does not belong to its document type." }, { status: 400 });
+      return { response: NextResponse.json({ message: "A selected subtype does not belong to its document type." }, { status: 400 }) };
     }
   }
+
+  return { input: { userId, roleId, companyId, locationId, projectIds, documentTypeScopes } };
+}
+
+export async function POST(request: Request) {
+  const auth = await requireApiAdmin(request);
+  if (auth.response) return auth.response;
+
+  const parsed = await parseAssignmentInput(await readJsonBody(request));
+  if ("response" in parsed) return parsed.response;
+  const { userId, roleId, companyId, locationId, projectIds, documentTypeScopes } = parsed.input;
 
   try {
     await prisma.userAssignment.create({
@@ -174,9 +181,6 @@ export async function POST(request: Request) {
             },
           })),
         },
-        processScopes: {
-          create: processDefinitionIds.map((id) => ({ processDefinition: { connect: { id } } })),
-        },
       },
       select: { id: true },
     });
@@ -186,6 +190,57 @@ export async function POST(request: Request) {
       duplicate: "This user already holds this role with exactly this scope.",
       reference: "One of the selected items (user, role or scope) does not exist.",
     }) ?? NextResponse.json({ message: "Unable to save the assignment." }, { status: 500 });
+  }
+}
+
+// Edit an assigned role: the role and every part of its scope can change (the person stays the same).
+// The old scope is replaced as a whole, so what is saved is exactly what the form shows.
+export async function PATCH(request: Request) {
+  const auth = await requireApiAdmin(request);
+  if (auth.response) return auth.response;
+
+  const body = await readJsonBody(request);
+  const id = str(body?.id);
+  if (!id) return NextResponse.json({ message: "Assignment id is required." }, { status: 400 });
+
+  const existing = await prisma.userAssignment.findUnique({ where: { id }, select: { id: true, userId: true } });
+  if (!existing) return NextResponse.json({ message: "This assignment no longer exists." }, { status: 404 });
+
+  const parsed = await parseAssignmentInput({ ...body, userId: existing.userId });
+  if ("response" in parsed) return parsed.response;
+  const { roleId, companyId, locationId, projectIds, documentTypeScopes } = parsed.input;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.userAssignmentProjectScope.deleteMany({ where: { userAssignmentId: id } });
+      await tx.userAssignmentDocumentTypeScope.deleteMany({ where: { userAssignmentId: id } });
+      await tx.userAssignment.update({
+        where: { id },
+        data: {
+          roleId,
+          companyId,
+          locationId,
+          // Older assignments kept one project / type in these columns; the scope lists now hold everything.
+          projectId: null,
+          documentTypeId: null,
+          documentSubtypeId: null,
+          projectScopes: { create: projectIds.map((projectId) => ({ project: { connect: { id: projectId } } })) },
+          documentTypeScopes: {
+            create: documentTypeScopes.map((scope) => ({
+              documentType: { connect: { id: scope.documentTypeId } },
+              allSubtypes: scope.allSubtypes,
+              subtypes: { create: scope.subtypeIds.map((subtypeId) => ({ documentSubtype: { connect: { id: subtypeId } } })) },
+            })),
+          },
+        },
+      });
+    });
+    return NextResponse.json({ message: "Assignment updated." });
+  } catch (error) {
+    return prismaErrorResponse(error, {
+      duplicate: "This user already holds this role with exactly this scope.",
+      reference: "One of the selected items (role or scope) does not exist.",
+    }) ?? NextResponse.json({ message: "Unable to update the assignment." }, { status: 500 });
   }
 }
 
@@ -223,7 +278,7 @@ function parseDocumentTypeScopes(body: Record<string, unknown> | null): Array<{
 }
 
 export async function DELETE(request: Request) {
-  const auth = await requireApiPermission(request, "assignments.manage");
+  const auth = await requireApiAdmin(request);
   if (auth.response) return auth.response;
 
   const id = str((await readJsonBody(request))?.id);

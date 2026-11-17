@@ -2,6 +2,7 @@
 import { ApproverType, type Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { MAX_TRACKS_PER_LEVEL } from "@/lib/workflow/tracks";
 import { deactivationConfirmationResponse, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
 
 export const runtime = "nodejs";
@@ -18,6 +19,7 @@ const flowInclude = {
           userType: { select: { id: true, name: true } },
         },
       },
+      tracks: { orderBy: { sortOrder: "asc" }, include: { receiver: { select: { id: true, name: true } } } },
     },
   },
   _count: { select: { assignments: true, documents: true } },
@@ -49,15 +51,31 @@ function serializeFlow(flow: FlowRow) {
         userTypeId: entry.userTypeId,
         userTypeName: entry.userType?.name ?? null,
       })),
+      tracks: step.tracks.map((track) => ({
+        id: track.id,
+        name: track.name,
+        receiverUserId: track.receiverUserId,
+        receiverName: track.receiver.name,
+        returnLevel: track.returnLevel,
+        signatureRequired: track.signatureRequired,
+      })),
     })),
   };
 }
 
-type ParsedStep = { stepNumber: number; name: string | null; signatureRequired: boolean; approvers: Array<{ approverType: ApproverType; userId: string | null; userTypeId: string | null }> };
+type ParsedTrack = { name: string; receiverUserId: string; returnLevel: number | null; signatureRequired: boolean };
+type ParsedStep = {
+  stepNumber: number;
+  name: string | null;
+  signatureRequired: boolean;
+  approvers: Array<{ approverType: ApproverType; userId: string | null; userTypeId: string | null }>;
+  tracks: ParsedTrack[];
+};
 
 /**
  * Level 0 is the uploader step (who may upload into the flow); levels 1..N are approvals, N up to 10.
- * Every level needs at least one entry. An entry is a named user OR a user type; any one entry is enough (OR).
+ * Every level needs at least one entry. An entry is a named user, a user type, the Project Director or the Project
+ * Manager (that person of the document's project); any one entry is enough (OR).
  */
 function parseSteps(raw: unknown): { steps?: ParsedStep[]; error?: string } {
   if (!Array.isArray(raw) || raw.length === 0) return { error: "A flow needs an uploader step (level 0) and at least one approval level." };
@@ -73,7 +91,7 @@ function parseSteps(raw: unknown): { steps?: ParsedStep[]; error?: string } {
     const label = stepNumber === 0 ? "Uploader step" : `Level ${stepNumber}`;
 
     const entries = Array.isArray(record.approvers) ? record.approvers : [];
-    if (entries.length === 0) return { error: `${label} needs at least one user or user type.` };
+    if (entries.length === 0) return { error: `${label} needs at least one user, user type, the Project Director or the Project Manager.` };
 
     const approvers: ParsedStep["approvers"] = [];
     const seen = new Set<string>();
@@ -89,14 +107,40 @@ function parseSteps(raw: unknown): { steps?: ParsedStep[]; error?: string } {
         if (seen.has(key)) return { error: `${label} lists the same user type twice.` };
         seen.add(key);
         approvers.push({ approverType: ApproverType.USER_TYPE, userId: null, userTypeId: e.userTypeId.trim() });
+      } else if (e.approverType === "PROJECT_DIRECTOR" || e.approverType === "PROJECT_MANAGER") {
+        // The director / manager of the document's project (set per project in Projects & Locations).
+        const roleName = e.approverType === "PROJECT_DIRECTOR" ? "Project Director" : "Project Manager";
+        if (seen.has(e.approverType)) return { error: `${label} lists the ${roleName} twice.` };
+        seen.add(e.approverType);
+        approvers.push({ approverType: e.approverType === "PROJECT_DIRECTOR" ? ApproverType.PROJECT_DIRECTOR : ApproverType.PROJECT_MANAGER, userId: null, userTypeId: null });
       } else {
-        return { error: `${label} has an entry that is neither a user nor a user type.` };
+        return { error: `${label} has an entry that is not a user, a user type, the Project Director or the Project Manager.` };
       }
     }
 
     // "Signature required" is on unless it is explicitly switched off. The uploader step (level 0) never approves, so it always stays on.
     const signatureRequired = stepNumber === 0 ? true : record.signatureRequired !== false;
-    steps.push({ stepNumber, name: typeof record.name === "string" && record.name.trim() ? record.name.trim() : null, signatureRequired, approvers });
+    // Unique tracks of this level (the uploader level too): a name, the person who receives the document, and where
+    // it goes after that person approves (a later level, or null = fully approved).
+    const rawTracks = Array.isArray(record.tracks) ? record.tracks : [];
+    if (rawTracks.length > MAX_TRACKS_PER_LEVEL) return { error: `${label} can have at most ${MAX_TRACKS_PER_LEVEL} unique tracks.` };
+    const tracks: ParsedTrack[] = [];
+    const trackNames = new Set<string>();
+    for (const rawTrack of rawTracks) {
+      const t = (rawTrack ?? {}) as Record<string, unknown>;
+      const trackName = typeof t.name === "string" ? t.name.trim() : "";
+      if (!trackName) return { error: `${label}: every unique track needs a name.` };
+      if (trackNames.has(trackName.toLowerCase())) return { error: `${label}: two unique tracks are both called "${trackName}".` };
+      trackNames.add(trackName.toLowerCase());
+      if (typeof t.receiverUserId !== "string" || !t.receiverUserId.trim()) return { error: `${label}: choose who receives the document for "${trackName}".` };
+      const returnLevel = t.returnLevel === null || t.returnLevel === undefined || t.returnLevel === "" ? null : Number(t.returnLevel);
+      if (returnLevel !== null && (!Number.isInteger(returnLevel) || returnLevel <= stepNumber || returnLevel > MAX_APPROVAL_LEVEL)) {
+        return { error: `${label}: "${trackName}" must return to a later level, or to full approval.` };
+      }
+      tracks.push({ name: trackName, receiverUserId: t.receiverUserId.trim(), returnLevel, signatureRequired: t.signatureRequired !== false });
+    }
+
+    steps.push({ stepNumber, name: typeof record.name === "string" && record.name.trim() ? record.name.trim() : null, signatureRequired, approvers, tracks });
   }
 
   const numbers = steps.map((step) => step.stepNumber).sort((a, b) => a - b);
@@ -104,12 +148,25 @@ function parseSteps(raw: unknown): { steps?: ParsedStep[]; error?: string } {
   if (numbers[0] !== 0) return { error: "A flow needs an uploader step (level 0)." };
   if (numbers.length < 2) return { error: "A flow needs at least one approval level after the uploader step." };
   if (numbers.some((value, index) => value !== index)) return { error: "Approval levels must run 1, 2, 3 ... without gaps." };
+  const lastLevel = numbers[numbers.length - 1];
+  for (const step of steps) {
+    for (const track of step.tracks) {
+      if (track.returnLevel !== null && track.returnLevel > lastLevel) {
+        return { error: `The unique track "${track.name}" returns to level ${track.returnLevel}, which this flow does not have.` };
+      }
+    }
+  }
 
   return { steps: steps.sort((a, b) => a.stepNumber - b.stepNumber) };
 }
 
 async function validateEntries(steps: ParsedStep[]): Promise<string | null> {
-  const userIds = [...new Set(steps.flatMap((step) => step.approvers.flatMap((entry) => (entry.userId ? [entry.userId] : []))))];
+  const userIds = [
+    ...new Set([
+      ...steps.flatMap((step) => step.approvers.flatMap((entry) => (entry.userId ? [entry.userId] : []))),
+      ...steps.flatMap((step) => step.tracks.map((track) => track.receiverUserId)),
+    ]),
+  ];
   const typeIds = [...new Set(steps.flatMap((step) => step.approvers.flatMap((entry) => (entry.userTypeId ? [entry.userTypeId] : []))))];
 
   const [users, types] = await Promise.all([
@@ -128,6 +185,7 @@ function stepCreateData(steps: ParsedStep[]) {
     name: step.name,
     signatureRequired: step.signatureRequired,
     approvers: { create: step.approvers },
+    tracks: { create: step.tracks.map((track, index) => ({ ...track, sortOrder: index })) },
   }));
 }
 

@@ -88,7 +88,7 @@ export async function POST(request: Request) {
   const assignment = await prisma.maintenanceWorkflowAssignment.findUnique({
     where: { projectId_itemId: { projectId, itemId } },
     include: {
-      project: { select: { id: true, isActive: true, locationId: true } },
+      project: { select: { id: true, isActive: true, locationId: true, companyId: true } },
       item: { select: { id: true, isActive: true } },
       workflow: { include: workflowWithLevels },
     },
@@ -101,7 +101,7 @@ export async function POST(request: Request) {
 
   const workflow = assignment.workflow;
   const submitters = workflow.levels.find((level) => level.levelNumber === SUBMIT_LEVEL)?.approvers ?? [];
-  if (!actorMatchesEntries(actor, submitters, { projectId, locationId: assignment.project.locationId })) {
+  if (!actorMatchesEntries(actor, submitters, { projectId, locationId: assignment.project.locationId, companyId: assignment.project.companyId })) {
     return NextResponse.json({ message: "You are not allowed to submit maintenance requests for this project and item." }, { status: 403 });
   }
   const followUpLevels = workflow.levels.filter((level) => level.levelNumber > SUBMIT_LEVEL);

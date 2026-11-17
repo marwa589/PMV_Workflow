@@ -25,9 +25,9 @@ CREATE UNIQUE INDEX "DocumentFieldValue_scope_key"
 CREATE UNIQUE INDEX "FieldDefinition_scope_key"
   ON "FieldDefinition" ("documentTypeId", COALESCE("documentSubtypeId", ''), "fieldGroup", "fieldKey");
 
--- Only one current document per step in a process run.
+-- Only one current document per step in a process run (documents added later to a completed run are the exception).
 CREATE UNIQUE INDEX "ProcessStepDocument_one_current_key"
-  ON "ProcessStepDocument" ("processInstanceId", "processStepId") WHERE "isCurrent";
+  ON "ProcessStepDocument" ("processInstanceId", "processStepId") WHERE "isCurrent" AND NOT "isAddition";
 
 -- An approver entry is either a named user or a user type, never both or neither.
 ALTER TABLE "DocumentWorkflowStepApprover" ADD CONSTRAINT "DocumentWorkflowStepApprover_kind_chk"

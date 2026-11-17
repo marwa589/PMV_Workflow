@@ -2,7 +2,7 @@
 import { hash } from "bcryptjs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { deactivationConfirmationResponse, optionalId, prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
+import { deactivationConfirmationResponse, optionalId, prismaErrorResponse, readJsonBody, requireApiAdmin, str } from "@/lib/admin-api";
 
 export const runtime = "nodejs";
 
@@ -12,6 +12,7 @@ const userSelect = {
   email: true,
   isActive: true,
   canBulkApprove: true,
+  emailNotificationsDisabled: true,
   createdAt: true,
   userType: { select: { id: true, code: true, name: true } },
   _count: { select: { assignments: true } },
@@ -23,6 +24,7 @@ type UserRow = {
   email: string;
   isActive: boolean;
   canBulkApprove: boolean;
+  emailNotificationsDisabled: boolean;
   createdAt: Date;
   userType: { id: string; code: string; name: string };
   _count: { assignments: number };
@@ -35,6 +37,7 @@ function serializeUser(user: UserRow) {
     email: user.email,
     isActive: user.isActive,
     canBulkApprove: user.canBulkApprove,
+    emailNotificationsDisabled: user.emailNotificationsDisabled,
     userType: user.userType,
     assignmentCount: user._count.assignments,
     createdAt: user.createdAt.toISOString(),
@@ -50,7 +53,7 @@ function passwordProblem(password: string): string | null {
 
 // Users and their fixed user type. Roles and scopes are managed in /api/admin/assignments.
 export async function GET(request: Request) {
-  const auth = await requireApiPermission(request, "users.manage");
+  const auth = await requireApiAdmin(request);
   if (auth.response) return auth.response;
 
   const [users, userTypes] = await Promise.all([
@@ -62,7 +65,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireApiPermission(request, "users.manage");
+  const auth = await requireApiAdmin(request);
   if (auth.response) return auth.response;
 
   const body = await readJsonBody(request);
@@ -95,7 +98,7 @@ export async function POST(request: Request) {
 
 // A user's type is set once when the account is created and never changes.
 export async function PATCH(request: Request) {
-  const auth = await requireApiPermission(request, "users.manage");
+  const auth = await requireApiAdmin(request);
   if (auth.response) return auth.response;
 
   const body = await readJsonBody(request);
@@ -121,6 +124,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ message: "A user's type cannot be changed after the account is created." }, { status: 400 });
   }
 
+  const emailNotificationsDisabled = typeof body?.emailNotificationsDisabled === "boolean" ? body.emailNotificationsDisabled : undefined;
   const isActive = typeof body?.isActive === "boolean" ? body.isActive : undefined;
   const canBulkApprove = typeof body?.canBulkApprove === "boolean" ? body.canBulkApprove : undefined;
   if (isActive === false && id === auth.session.userId) {
@@ -165,6 +169,7 @@ export async function PATCH(request: Request) {
         email,
         ...(isActive !== undefined ? { isActive } : {}),
         ...(canBulkApprove !== undefined ? { canBulkApprove } : {}),
+        ...(emailNotificationsDisabled !== undefined ? { emailNotificationsDisabled } : {}),
         // A new password signs the user out everywhere.
         ...(password ? { passwordHash: await hash(password, 12), sessionVersion: { increment: 1 } } : {}),
       },
@@ -178,7 +183,7 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const auth = await requireApiPermission(request, "users.manage");
+  const auth = await requireApiAdmin(request);
   if (auth.response) return auth.response;
 
   const body = await readJsonBody(request);

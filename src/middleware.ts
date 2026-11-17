@@ -104,6 +104,7 @@ export const config = {
     "/tasks/:path*",
     "/search",
     "/maintenance",
+    "/deletion-requests",
     "/api/:path*",
   ],
 };

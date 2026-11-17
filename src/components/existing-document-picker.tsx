@@ -16,6 +16,7 @@ export default function ExistingDocumentPicker({
   documentTypeId,
   documentSubtypeId,
   projectId,
+  includeUsed = false,
   busy = false,
   onPick,
   onCancel,
@@ -23,6 +24,8 @@ export default function ExistingDocumentPicker({
   documentTypeId: string;
   documentSubtypeId: string | null;
   projectId?: string | null;
+  /** Also list documents that already fill a step of another run (admin corrective runs). */
+  includeUsed?: boolean;
   busy?: boolean;
   onPick: (documentId: string, options: { notify: boolean }) => void;
   onCancel: () => void;
@@ -34,7 +37,8 @@ export default function ExistingDocumentPicker({
 
   const load = useCallback(
     async (term: string) => {
-      const query = new URLSearchParams({ documentTypeId, approvedOnly: "1", unlinked: "1" });
+      const query = new URLSearchParams({ documentTypeId, approvedOnly: "1" });
+      if (!includeUsed) query.set("unlinked", "1");
       if (documentSubtypeId) query.set("documentSubtypeId", documentSubtypeId);
       if (projectId !== undefined) query.set("projectId", projectId ?? "");
       if (term) query.set("search", term);
@@ -43,7 +47,7 @@ export default function ExistingDocumentPicker({
       setError(null);
       setDocuments(result.data.documents);
     },
-    [documentTypeId, documentSubtypeId, projectId],
+    [documentTypeId, documentSubtypeId, projectId, includeUsed],
   );
 
   useEffect(() => {
@@ -73,7 +77,7 @@ export default function ExistingDocumentPicker({
 
       {documents === null ? <p className="mt-3 text-sm text-slate-500">Loading...</p> : null}
       {documents !== null && documents.length === 0 ? (
-        <p className="mt-3 text-sm text-slate-500">No approved documents of this type are available (documents already used in a process run are not listed).</p>
+        <p className="mt-3 text-sm text-slate-500">No approved documents of this type are available {includeUsed ? "" : "(documents already used in a process run are not listed)."}</p>
       ) : null}
 
       {documents && documents.length > 0 ? (

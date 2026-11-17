@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createNotification } from "@/lib/notifications";
-import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
+import { queueWorkflowEmailEvents, sendInstantMailEvents } from "@/lib/workflow-email-batching";
 import { runInBackground } from "@/lib/background";
 import type { WorkflowEffects } from "@/lib/workflow/engine";
 
@@ -11,7 +11,9 @@ import type { WorkflowEffects } from "@/lib/workflow/engine";
  */
 export async function dispatchWorkflowEffects(effects: WorkflowEffects): Promise<void> {
   // Email events are queued before responding so none are lost; in-app notifications are sent in the background.
-  await queueWorkflowEmailEvents(effects.emailEvents);
+  const queued = await queueWorkflowEmailEvents(effects.emailEvents);
+  // Instant emails go out right away (the worker picks up anything held back by quiet hours).
+  if (queued > 0) runInBackground(() => sendInstantMailEvents());
   runInBackground(async () => {
     await Promise.all(effects.notifications.map((notification) => createNotification(notification)));
   });

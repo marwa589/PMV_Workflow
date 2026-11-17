@@ -61,7 +61,7 @@ export function resolveStoredFilePath(storedPath: string): string {
 
   const normalizedPath = storedPath.replaceAll("/", path.sep);
   if (normalizedPath.startsWith(`uploads${path.sep}`)) {
-    return path.join(process.cwd(), normalizedPath);
+    return path.join(/*turbopackIgnore: true*/ process.cwd(), normalizedPath);
   }
 
   return path.join(getUploadRoot(), normalizedPath);
@@ -190,8 +190,8 @@ export async function mergePdfFiles(params: {
   subfolder?: string;
 }): Promise<{ relativePath: string }> {
   const [firstBytes, secondBytes] = await Promise.all([
-    readFile(resolveStoredFilePath(params.firstFilePath)),
-    readFile(resolveStoredFilePath(params.secondFilePath)),
+    readFile(/*turbopackIgnore: true*/ resolveStoredFilePath(params.firstFilePath)),
+    readFile(/*turbopackIgnore: true*/ resolveStoredFilePath(params.secondFilePath)),
   ]);
   const mergedPdf = await PDFDocument.create();
   const [firstPdf, secondPdf] = await Promise.all([

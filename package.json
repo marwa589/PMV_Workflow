@@ -7,7 +7,7 @@
     "dev": "next dev",
     "prebuild": "node scripts/copy-ocr-assets.mjs",
     "build": "next build",
-    "start": "cross-env NODE_OPTIONS='--max-old-space-size=2048' next start",
+    "start": "next start",
     "lint": "eslint",
     "ocr:assets": "node scripts/copy-ocr-assets.mjs",
     "db:seed": "node prisma/seed.mjs",
@@ -17,7 +17,8 @@
     "test:workflow": "tsx scripts/smoke-test-workflow.ts",
     "test:e2e": "python3 scripts/e2e-http-test.py",
     "test:e2e-auth": "python3 scripts/e2e-auth-test.py",
-    "test:email": "tsx scripts/test-email-batching.ts"
+    "test:email": "tsx scripts/test-email-batching.ts",
+    "test:documents": "node scripts/create-test-documents.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { callApi } from "@/lib/admin-client";
+import { Pager, usePagination } from "@/components/pager";
 import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton } from "@/components/admin/admin-ui";
 
 type Assignment = {
@@ -30,6 +31,7 @@ export default function FlowAssignmentsManager() {
   const [form, setForm] = useState({ documentTypeId: "", documentSubtypeId: "", projectId: "", templateId: "" });
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const assignmentPages = usePagination(assignments, { storageKey: "flow-assignments", initialPageSize: 25 });
 
   const load = useCallback(async () => {
     const result = await callApi<{ assignments: Assignment[]; documentTypes: TypeOption[]; flows: FlowOption[]; projects: ProjectOption[] }>("/api/admin/flow-assignments");
@@ -135,7 +137,7 @@ export default function FlowAssignmentsManager() {
                 </tr>
               </thead>
               <tbody>
-                {assignments.map((row) => (
+                {assignmentPages.pageItems.map((row) => (
                   <tr key={row.id} className="border-t border-slate-100">
                     <td className="px-3 py-3 font-medium text-slate-900">{row.documentType.name}</td>
                     <td className="px-3 py-3 text-slate-600">{row.documentSubtype?.name ?? "All"}</td>
@@ -160,6 +162,7 @@ export default function FlowAssignmentsManager() {
             </table>
           ) : null}
         </div>
+        <Pager {...assignmentPages} noun="assignments" />
       </Card>
     </div>
   );

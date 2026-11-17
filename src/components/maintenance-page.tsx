@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
+import { Pager, usePagination } from "@/components/pager";
 
 type Project = { id: string; code: string; name: string };
 type Item = { id: string; name: string };
@@ -80,6 +81,7 @@ export default function MaintenancePage() {
   // Open on "Needs my action" when there is something waiting, otherwise on the person's own requests, otherwise all.
   const activeTab: Tab = tabChosen ? tab : needsMyAction.length > 0 ? "action" : myRequests.length > 0 ? "mine" : "all";
   const visibleTickets = activeTab === "action" ? needsMyAction : activeTab === "mine" ? myRequests : tickets;
+  const ticketPages = usePagination(visibleTickets, { storageKey: "maintenance-tickets", initialPageSize: 10 });
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError(""); setNotice("");
@@ -184,7 +186,7 @@ export default function MaintenancePage() {
       <div className="divide-y divide-slate-100">
         {!loaded ? <p className="p-6 text-center text-sm text-slate-500">Loading…</p>
           : visibleTickets.length === 0 ? <p className="p-6 text-center text-sm text-slate-500">{activeTab === "action" ? "Nothing is waiting for your action." : "No maintenance tickets to show."}</p>
-          : visibleTickets.map((ticket) => <article key={ticket.id} className="space-y-3 p-5">
+          : ticketPages.pageItems.map((ticket) => <article key={ticket.id} className="space-y-3 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="flex flex-wrap items-center gap-2">
@@ -208,6 +210,7 @@ export default function MaintenancePage() {
           </div> : null}
         </article>)}
       </div>
+      {loaded ? <Pager {...ticketPages} noun="tickets" /> : null}
     </section>
   </div>;
 }

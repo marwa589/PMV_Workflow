@@ -1,9 +1,11 @@
 // src/app/api/sidebar-counts/route.ts
 import { DocumentStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
+import { userCanReviewDeletions } from "@/lib/deletion-review";
 import { getSession } from "@/lib/auth/session";
 import { USER_TYPE } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
+import { appConfig } from "@/lib/env";
 import { getActionableDocuments } from "@/lib/document-queries";
 import { buildDocumentVisibilityWhere, getGlobalPermissionCodes } from "@/lib/auth/access";
 import { canUserUploadAnything } from "@/lib/workflow/eligibility";
@@ -51,8 +53,6 @@ export async function GET() {
                   scopedAssignments: {
                     some: {
                       userId: session.userId,
-                      companyId: null,
-                      processDefinitionId: null,
                       documentTypeId: { not: null },
                       role: { permissions: { some: { permission: { code: "documents.view" } } } },
                     },
@@ -63,9 +63,6 @@ export async function GET() {
                     some: {
                       assignment: {
                         userId: session.userId,
-                        companyId: null,
-                        processDefinitionId: null,
-                        processScopes: { none: {} },
                         role: { permissions: { some: { permission: { code: "documents.view" } } } },
                       },
                     },
@@ -96,7 +93,7 @@ export async function GET() {
 
   // My Tasks: documents to upload (next document of a running process) and documents to review.
   const [uploadTasks, reviewTasks] = await Promise.all([
-    getUploadTasks(prisma, session),
+    getUploadTasks(prisma, session, { since: appConfig.emailPendingSince() }),
     getActionableDocuments(session, [DocumentStatus.PENDING, DocumentStatus.ON_HOLD, DocumentStatus.REVISION_REQUIRED]),
   ]);
 
@@ -122,11 +119,13 @@ export async function GET() {
       flows: has("flows.manage"),
       types: has("types.manage"),
       processes: has("processes.manage"),
-      users: has("users.manage"),
-      assignments: has("assignments.manage"),
+      // Users, Roles & Access and the Mailing List are for Admin users only.
+      users: session.userType === USER_TYPE.ADMIN,
+      assignments: session.userType === USER_TYPE.ADMIN,
       delegations: has("delegations.manage"),
       projects: has("projects.manage"),
-      deletionReview: has("documents.delete_review"),
+      // Any "Review deletion" role (whatever its scope) opens the Deletion Requests page.
+      deletionReview: await userCanReviewDeletions({ userId: session.userId, userType: session.userType }),
       maintenance: session.userType === USER_TYPE.ADMIN || has("maintenance.manage"),
     },
   });

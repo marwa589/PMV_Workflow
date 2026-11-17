@@ -10,6 +10,7 @@ export type SearchableDocument = {
   projectCode?: string | null;
   currentApproverName?: string | null;
   rejectionComments?: string | null;
+  rejectedByName?: string | null;
   // Text of custom field values (e.g. an MR number) so people can search for them.
   fieldValuesText?: string | null;
 };
@@ -38,6 +39,7 @@ export function matchesDocumentSearch(documentItem: SearchableDocument, query: s
     documentItem.projectCode,
     documentItem.currentApproverName,
     documentItem.rejectionComments,
+    documentItem.rejectedByName,
     documentItem.fieldValuesText,
   ]
     .filter(Boolean)

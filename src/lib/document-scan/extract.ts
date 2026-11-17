@@ -78,6 +78,9 @@ async function ocrImage(image: unknown): Promise<ScanWord[]> {
 
 // ---------- PDF ----------
 
+// Decoders for scanned pages (CCITT / JBIG2 / JPEG 2000 images) are loaded from here; see api/pdfjs-wasm.
+const PDFJS_WASM_URL = typeof window === "undefined" ? undefined : `${window.location.origin}/api/pdfjs-wasm/`;
+
 async function loadPdfJs() {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.mjs", import.meta.url).toString();
@@ -87,7 +90,7 @@ async function loadPdfJs() {
 async function readPdf(file: File, report: Report): Promise<{ pages: ScanPage[]; skippedPages: number }> {
   const pdfjs = await loadPdfJs();
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+  const pdf = await pdfjs.getDocument({ data: bytes, wasmUrl: PDFJS_WASM_URL }).promise;
   const pages: ScanPage[] = [];
   const total = Math.min(pdf.numPages, MAX_PAGES);
 

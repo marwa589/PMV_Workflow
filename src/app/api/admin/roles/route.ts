@@ -1,7 +1,7 @@
 // src/app/api/admin/roles/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { prismaErrorResponse, readJsonBody, requireApiPermission, str } from "@/lib/admin-api";
+import { prismaErrorResponse, readJsonBody, requireApiAdmin, str } from "@/lib/admin-api";
 
 export const runtime = "nodejs";
 
@@ -45,7 +45,7 @@ async function validPermissionIds(raw: unknown): Promise<{ ids?: string[]; error
 
 // A role is a named bundle of permissions. The Approver role has none by design.
 export async function GET(request: Request) {
-  const auth = await requireApiPermission(request, "assignments.manage");
+  const auth = await requireApiAdmin(request);
   if (auth.response) return auth.response;
 
   const [roles, permissions] = await Promise.all([
@@ -56,7 +56,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireApiPermission(request, "assignments.manage");
+  const auth = await requireApiAdmin(request);
   if (auth.response) return auth.response;
 
   const body = await readJsonBody(request);
@@ -84,7 +84,7 @@ export async function POST(request: Request) {
 
 // Replaces the role's name, description and permission list.
 export async function PATCH(request: Request) {
-  const auth = await requireApiPermission(request, "assignments.manage");
+  const auth = await requireApiAdmin(request);
   if (auth.response) return auth.response;
 
   const body = await readJsonBody(request);
@@ -117,7 +117,7 @@ export async function PATCH(request: Request) {
 
 // A role that people still hold cannot be deleted (their access would disappear silently).
 export async function DELETE(request: Request) {
-  const auth = await requireApiPermission(request, "assignments.manage");
+  const auth = await requireApiAdmin(request);
   if (auth.response) return auth.response;
 
   const id = str((await readJsonBody(request))?.id);

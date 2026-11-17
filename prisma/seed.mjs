@@ -23,7 +23,8 @@ const PERMISSIONS = [
   ["documents.view_reference", "View reference documents", "See reference documents attached to process steps, inside the assignment scope. Without it reference documents are hidden everywhere, even from approvers. Also needs View documents for normal documents."],
   ["documents.upload", "Upload documents", "Upload documents of the types, sub types and projects covered by the assignment. Works on top of the approval flow's Uploader level, which still lets the people it names upload."],
   ["documents.download", "Download documents", "Download documents inside the assignment scope, one by one or in bulk (ZIP, process package)."],
-  ["documents.print", "Print documents", "Print documents inside the assignment scope, one by one or in bulk."],
+  ["documents.use_unique_track", "Use unique tracks", "Send documents inside the scope down a unique track of the approval flow, when uploading or when approving at a level that has tracks. Admin users always have it."],
+  ["documents.send_for_approval", "Send for approval", "Adds 'Send for approval' to the review decisions of documents inside the scope: pick any user to approve the document first, then it comes back to the sender. Admin users always have it."],
   ["documents.archive", "Archive documents", "Archive approved documents inside the scope and restore them from the archive."],
   ["documents.confirm_receipt", "Confirm receipt", "Mark an approved document (for example a purchase order) as received. Shows the Confirm receipt button on the document page."],
   ["maintenance.manage", "Manage maintenance setup", "Manage maintenance items, workflows and project/item workflow assignments. Adds Maintenance Setup to the menu."],
@@ -32,13 +33,8 @@ const PERMISSIONS = [
   ["processes.manage", "Manage processes", "Create and edit process definitions: steps, document types per step, reference documents and waiting periods. Adds Process Setup to the menu."],
   ["flows.manage", "Manage flows", "Create and edit approval flows (levels, approvers, signature required) and assign them to document types, sub types and projects. Adds Flows and Flow Assignments."],
   ["types.manage", "Manage document types", "Create and edit document types, sub types, custom fields and numbering codes."],
-  ["users.manage", "Manage users", "Create and edit users: name, email, user type, active state and password resets."],
-  ["assignments.manage", "Manage assignments", "Give roles to users with a scope (project, location, company, type, sub type) and edit roles and the mailing list."],
   ["delegations.manage", "Manage delegations", "Create and remove approval delegations, so one person can approve on behalf of another for a period."],
-  ["projects.manage", "Manage projects", "Create and edit locations, companies and projects."],
-  ["mail.receive_approved", "Receive mail: approved", "Get an email when a document inside the scope is fully approved."],
-  ["mail.receive_rejected", "Receive mail: rejected", "Get an email when a document inside the scope is rejected."],
-  ["mail.receive_revision", "Receive mail: revision requested", "Get an email when a document inside the scope is sent back for revision."],
+  ["projects.manage", "Manage projects", "Create and edit locations, companies and projects, and choose the company and director of each project."],
 ];
 
 // The Approver role has no permissions on purpose: it only sees what a flow names it for.
@@ -49,12 +45,12 @@ const ROLES = [
   { name: "Uploader", description: "May upload documents in scope.", permissions: ["documents.upload", "documents.view"] },
   { name: "Receiving Clerk", description: "Confirms receipt of approved documents in scope.", permissions: ["documents.view", "documents.confirm_receipt"] },
   { name: "Maintenance Administrator", description: "Configures maintenance items and workflows.", permissions: ["maintenance.manage"] },
-  { name: "Archivist", description: "Archive and print.", permissions: ["documents.archive", "documents.print", "documents.view"] },
+  { name: "Approval Sender", description: "May send documents they review to another user for approval first (needs to be an approver at the level).", permissions: ["documents.send_for_approval", "documents.view"] },
+  { name: "Archivist", description: "Archive and restore documents.", permissions: ["documents.archive", "documents.view"] },
   { name: "Deletion Reviewer", description: "Request and review deletions.", permissions: ["documents.delete_request", "documents.delete_review", "documents.view"] },
   { name: "Flow Admin", description: "Builds flows, document types and processes.", permissions: ["flows.manage", "types.manage", "processes.manage"] },
-  { name: "Mailing List (all events)", description: "Emailed when documents in scope are approved, rejected or sent back for revision. Includes view so the link in the email opens.", permissions: ["mail.receive_approved", "mail.receive_rejected", "mail.receive_revision", "documents.view"] },
-  { name: "Mailing List (approved only)", description: "Emailed when documents in scope are fully approved.", permissions: ["mail.receive_approved", "documents.view"] },
-  { name: "User Admin", description: "Users, assignments, delegations, projects.", permissions: ["users.manage", "assignments.manage", "delegations.manage", "projects.manage"] },
+  // Users, roles & access and the mailing list are Admin-only screens (no permission), so this role keeps the rest.
+  { name: "User Admin", description: "Delegations and projects.", permissions: ["delegations.manage", "projects.manage"] },
 ];
 
 // Proposed list (editable later in the admin UI). Custody is not in the PDF, so it is not seeded.
@@ -84,6 +80,8 @@ async function main() {
   // per-person "submit" / "follow up" permissions and their role templates are no longer used. Remove them if present.
   await prisma.role.deleteMany({ where: { name: { in: ["Maintenance Requester", "Maintenance Follow-up"] } } });
   await prisma.permission.deleteMany({ where: { code: { in: ["maintenance.submit", "maintenance.follow_up"] } } });
+  // Users, roles & access and the mailing list are for Admin users only; printing is not a permission.
+  await prisma.permission.deleteMany({ where: { code: { in: ["users.manage", "assignments.manage", "documents.print"] } } });
 
   for (const role of ROLES) {
     const saved = await prisma.role.upsert({

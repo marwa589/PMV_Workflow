@@ -3,14 +3,16 @@ import { DocumentStatus } from "@prisma/client";
 import { redirect } from "next/navigation";
 import BatchDocumentReview from "@/components/batch-document-review";
 import { requireAuth } from "@/lib/auth/guards";
+import { USER_TYPE } from "@/lib/auth/roles";
 import { BULK_APPROVE_MAX } from "@/lib/bulk-approve-config";
 import { userCanBulkApprove } from "@/lib/bulk-approve";
 import { getActionableDocuments } from "@/lib/document-queries";
 import { prisma } from "@/lib/prisma";
+import { getRelatedDocumentsForReview } from "@/lib/related-documents";
 
 export const dynamic = "force-dynamic";
 
-// Opens several pending documents together. Only for users an admin switched "approve several at once" on for.
+// Opens several pending documents together. For Admin users, and for users an admin switched "approve several at once" on for.
 export default async function ReviewBatchPage({ searchParams }: { searchParams: Promise<{ ids?: string }> }) {
   const session = await requireAuth();
   if (!(await userCanBulkApprove(session.userId))) redirect("/unauthorized");
@@ -27,6 +29,9 @@ export default async function ReviewBatchPage({ searchParams }: { searchParams: 
 
   const user = await prisma.user.findUnique({ where: { id: session.userId }, select: { signaturePath: true } });
 
+  // Each document carries the documents it follows in its process (only those this person may open).
+  const relatedById = new Map(await Promise.all(rows.map(async (row) => [row.id, await getRelatedDocumentsForReview(session, row.id)] as const)));
+
   const items = rows.map((row) => ({
       id: row.id,
       documentNumber: row.documentNumber,
@@ -35,7 +40,9 @@ export default async function ReviewBatchPage({ searchParams }: { searchParams: 
       actionUrl: `/api/documents/${row.id}/actions`,
       // The flow level this document waits at decides whether a signature is needed.
       allowNoSignature: !row.signatureRequired,
+      relatedDocuments: relatedById.get(row.id) ?? [],
     }));
 
-  return <BatchDocumentReview items={items} hasSignature={Boolean(user?.signaturePath)} returnUrl="/tasks" />;
+  // Back to where the person picked the documents (Admin users usually pick them on Pending Approvals).
+  return <BatchDocumentReview items={items} hasSignature={Boolean(user?.signaturePath)} returnUrl={session.userType === USER_TYPE.ADMIN ? "/admin/pending-approvals" : "/tasks"} />;
 }

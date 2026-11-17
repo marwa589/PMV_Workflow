@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { callApi, callApiWithDeactivationConfirmation } from "@/lib/admin-client";
+import { Pager, usePagination } from "@/components/pager";
 import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton, secondaryButton } from "@/components/admin/admin-ui";
 
 type UserType = { id: string; code: string; name: string };
@@ -12,6 +13,7 @@ type UserRow = {
   email: string;
   isActive: boolean;
   canBulkApprove: boolean;
+  emailNotificationsDisabled: boolean;
   userType: UserType;
   assignmentCount: number;
   createdAt: string;
@@ -58,6 +60,7 @@ export default function AdminUserManagement() {
       return terms.every((term) => text.includes(term));
     });
   }, [users, query]);
+  const userPages = usePagination(visibleUsers, { storageKey: "admin-users", initialPageSize: 25 });
 
   function startEdit(user: UserRow) {
     setEditingId(user.id);
@@ -101,6 +104,15 @@ export default function AdminUserManagement() {
     setError(null);
     setNotice(null);
     const result = await callApi("/api/admin/users", "PATCH", { id: user.id, name: user.name, email: user.email, canBulkApprove: !user.canBulkApprove });
+    if (!result.ok) return setError(result.message);
+    await load();
+  }
+
+  // Switch on: no pending-task or ticket emails are sent to this user (sign-in codes and password resets still are).
+  async function toggleEmailNotificationsDisabled(user: UserRow) {
+    setError(null);
+    setNotice(null);
+    const result = await callApi("/api/admin/users", "PATCH", { id: user.id, name: user.name, email: user.email, emailNotificationsDisabled: !user.emailNotificationsDisabled });
     if (!result.ok) return setError(result.message);
     await load();
   }
@@ -177,11 +189,12 @@ export default function AdminUserManagement() {
                   <th className="px-3 py-2 font-semibold">Access</th>
                   <th className="px-3 py-2 font-semibold">Status</th>
                   <th className="px-3 py-2 font-semibold">Approve several at once</th>
+                  <th className="px-3 py-2 font-semibold">Disable email notifications</th>
                   <th className="px-3 py-2 font-semibold">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleUsers.map((user) => (
+                {userPages.pageItems.map((user) => (
                   <tr key={user.id} className="border-t border-slate-100">
                     <td className="px-3 py-3 font-medium text-slate-900">{user.name}</td>
                     <td className="px-3 py-3 text-slate-600">{user.email}</td>
@@ -193,6 +206,9 @@ export default function AdminUserManagement() {
                     </td>
                     <td className="px-3 py-3"><Pill tone={user.isActive ? "green" : "amber"}>{user.isActive ? "Active" : "Deactivated"}</Pill></td>
                     <td className="px-3 py-3">
+                      {user.userType.code === "admin" ? (
+                        <span className="text-xs text-slate-500" title="Admin users can always review several documents at once">Always (Admin)</span>
+                      ) : (
                       <button
                         type="button"
                         role="switch"
@@ -203,6 +219,20 @@ export default function AdminUserManagement() {
                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${user.canBulkApprove ? "bg-cyan-600" : "bg-slate-300"}`}
                       >
                         <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${user.canBulkApprove ? "translate-x-5" : "translate-x-0.5"}`} />
+                      </button>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={user.emailNotificationsDisabled}
+                        aria-label={`Disable email notifications for ${user.name}`}
+                        title={user.emailNotificationsDisabled ? "On: no notification emails are sent to this user" : "Off: this user receives notification emails"}
+                        onClick={() => toggleEmailNotificationsDisabled(user)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${user.emailNotificationsDisabled ? "bg-cyan-600" : "bg-slate-300"}`}
+                      >
+                        <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${user.emailNotificationsDisabled ? "translate-x-5" : "translate-x-0.5"}`} />
                       </button>
                     </td>
                     <td className="px-3 py-3">
@@ -216,6 +246,7 @@ export default function AdminUserManagement() {
                 ))}
               </tbody>
             </table>
+            <Pager {...userPages} noun="users" />
           </div>
         )}
       </Card>

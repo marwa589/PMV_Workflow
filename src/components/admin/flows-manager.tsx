@@ -6,8 +6,14 @@ import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButt
 
 type UserOption = { id: string; name: string; email: string; userType: { code: string; name: string } };
 type TypeOption = { id: string; code: string; name: string };
-type Entry = { approverType: "USER" | "USER_TYPE"; userId: string | null; userTypeId: string | null; userName?: string | null; userTypeName?: string | null };
-type Step = { stepNumber: number; name: string; signatureRequired: boolean; approvers: Entry[] };
+type EntryKind = "USER" | "USER_TYPE" | "PROJECT_DIRECTOR" | "PROJECT_MANAGER";
+type RoleKind = "PROJECT_DIRECTOR" | "PROJECT_MANAGER";
+const ROLE_LABEL: Record<RoleKind, string> = { PROJECT_DIRECTOR: "Project Director", PROJECT_MANAGER: "Project Manager" };
+const isRole = (kind: EntryKind): kind is RoleKind => kind === "PROJECT_DIRECTOR" || kind === "PROJECT_MANAGER";
+type Entry = { approverType: EntryKind; userId: string | null; userTypeId: string | null; userName?: string | null; userTypeName?: string | null };
+// A unique track: the person who receives the document, and where it goes after they approve (null = fully approved).
+type Track = { name: string; receiverUserId: string; returnLevel: number | null; signatureRequired: boolean };
+type Step = { stepNumber: number; name: string; signatureRequired: boolean; approvers: Entry[]; tracks: Track[] };
 type Flow = {
   id: string;
   code: string;
@@ -16,7 +22,14 @@ type Flow = {
   isActive: boolean;
   assignmentCount: number;
   documentCount: number;
-  steps: Array<{ id: string; stepNumber: number; name: string | null; signatureRequired: boolean; approvers: Array<Entry & { id: string }> }>;
+  steps: Array<{
+    id: string;
+    stepNumber: number;
+    name: string | null;
+    signatureRequired: boolean;
+    approvers: Array<Entry & { id: string }>;
+    tracks: Array<Track & { id: string; receiverName: string }>;
+  }>;
 };
 
 const MAX_LEVEL = 10;
@@ -29,13 +42,14 @@ function newDraft() {
     description: "",
     isActive: true,
     steps: [
-      { stepNumber: 0, name: "Uploader", signatureRequired: true, approvers: [] },
-      { stepNumber: 1, name: "", signatureRequired: true, approvers: [] },
+      { stepNumber: 0, name: "Uploader", signatureRequired: true, approvers: [], tracks: [] },
+      { stepNumber: 1, name: "", signatureRequired: true, approvers: [], tracks: [] },
     ] as Step[],
   };
 }
 
 function entryLabel(entry: Entry, users: UserOption[], types: TypeOption[]): string {
+  if (isRole(entry.approverType)) return ROLE_LABEL[entry.approverType];
   if (entry.approverType === "USER") return entry.userName ?? users.find((u) => u.id === entry.userId)?.name ?? "User";
   return `Any ${entry.userTypeName ?? types.find((t) => t.id === entry.userTypeId)?.name ?? "user"}`;
 }
@@ -49,7 +63,7 @@ export default function FlowsManager() {
   const [users, setUsers] = useState<UserOption[]>([]);
   const [types, setTypes] = useState<TypeOption[]>([]);
   const [draft, setDraft] = useState(newDraft());
-  const [adding, setAdding] = useState<Record<number, { kind: "USER" | "USER_TYPE"; id: string }>>({});
+  const [adding, setAdding] = useState<Record<number, { kind: EntryKind; id: string }>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -72,14 +86,22 @@ export default function FlowsManager() {
 
   function addEntry(stepNumber: number) {
     const choice = adding[stepNumber];
-    if (!choice?.id) return;
+    if (!choice || (!isRole(choice.kind) && !choice.id)) return;
     const step = draft.steps.find((candidate) => candidate.stepNumber === stepNumber);
     if (!step) return;
-    const duplicate = step.approvers.some((entry) => (choice.kind === "USER" ? entry.userId === choice.id : entry.userTypeId === choice.id));
+    const duplicate = step.approvers.some((entry) =>
+      isRole(choice.kind)
+        ? entry.approverType === choice.kind
+        : choice.kind === "USER"
+          ? entry.userId === choice.id
+          : entry.userTypeId === choice.id,
+    );
     if (duplicate) return setError("That entry is already on this level.");
     setError(null);
     const entry: Entry =
-      choice.kind === "USER"
+      isRole(choice.kind)
+        ? { approverType: choice.kind, userId: null, userTypeId: null }
+        : choice.kind === "USER"
         ? { approverType: "USER", userId: choice.id, userTypeId: null, userName: users.find((u) => u.id === choice.id)?.name }
         : { approverType: "USER_TYPE", userId: null, userTypeId: choice.id, userTypeName: types.find((t) => t.id === choice.id)?.name };
     updateStep(stepNumber, { approvers: [...step.approvers, entry] });
@@ -98,6 +120,7 @@ export default function FlowsManager() {
         name: step.name ?? "",
         signatureRequired: step.signatureRequired,
         approvers: step.approvers.map((entry) => ({ approverType: entry.approverType, userId: entry.userId, userTypeId: entry.userTypeId, userName: entry.userName, userTypeName: entry.userTypeName })),
+        tracks: step.tracks.map((track) => ({ name: track.name, receiverUserId: track.receiverUserId, returnLevel: track.returnLevel, signatureRequired: track.signatureRequired })),
       })),
     });
     setError(null);
@@ -120,6 +143,7 @@ export default function FlowsManager() {
         name: step.name,
         signatureRequired: step.signatureRequired,
         approvers: step.approvers.map((entry) => ({ approverType: entry.approverType, userId: entry.userId ?? undefined, userTypeId: entry.userTypeId ?? undefined })),
+        tracks: step.tracks,
       })),
     };
     const result = draft.id ? await callApi("/api/admin/flows", "PATCH", payload) : await callApi("/api/admin/flows", "POST", payload);
@@ -154,6 +178,26 @@ export default function FlowsManager() {
 
   const lastLevel = draft.steps[draft.steps.length - 1]?.stepNumber ?? 0;
 
+  function updateTrack(stepNumber: number, index: number, patch: Partial<Track>) {
+    const step = draft.steps.find((candidate) => candidate.stepNumber === stepNumber);
+    if (!step) return;
+    updateStep(stepNumber, { tracks: step.tracks.map((track, i) => (i === index ? { ...track, ...patch } : track)) });
+  }
+
+  // Removing the last level: a track that returned to it now returns to full approval.
+  function removeLastLevel() {
+    const removed = lastLevel;
+    setDraft({
+      ...draft,
+      steps: draft.steps.slice(0, -1).map((step) => ({ ...step, tracks: step.tracks.map((track) => (track.returnLevel !== null && track.returnLevel >= removed ? { ...track, returnLevel: null } : track)) })),
+    });
+  }
+
+  const levelLabel = (steps: Array<{ stepNumber: number; name: string | null }>, level: number) => {
+    const step = steps.find((candidate) => candidate.stepNumber === level);
+    return `Level ${level}${step?.name ? ` · ${step.name}` : ""}`;
+  };
+
   return (
     <div className="space-y-6">
       {error ? <Banner kind="error">{error}</Banner> : null}
@@ -185,7 +229,7 @@ export default function FlowsManager() {
                     />
                   </div>
                   {step.stepNumber > 0 && step.stepNumber === lastLevel && draft.steps.length > 2 ? (
-                    <button type="button" className={dangerButton} onClick={() => setDraft({ ...draft, steps: draft.steps.slice(0, -1) })}>Remove level</button>
+                    <button type="button" className={dangerButton} onClick={removeLastLevel}>Remove level</button>
                   ) : null}
                 </div>
 
@@ -207,9 +251,9 @@ export default function FlowsManager() {
                 ) : null}
 
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {step.approvers.length === 0 ? <span className="text-xs text-slate-500">Nobody yet. Add at least one user or user type.</span> : null}
+                  {step.approvers.length === 0 ? <span className="text-xs text-slate-500">Nobody yet. Add at least one user, user type, the Project Director or the Project Manager.</span> : null}
                   {step.approvers.map((entry, index) => (
-                    <span key={index} className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-sm text-slate-800 ring-1 ring-slate-200">
+                    <span key={index} className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm ring-1 ${isRole(entry.approverType) ? "bg-cyan-50 text-cyan-900 ring-cyan-200" : "bg-white text-slate-800 ring-slate-200"}`}>
                       {entryLabel(entry, users, types)}
                       <button type="button" aria-label="Remove" className="text-slate-400 hover:text-rose-600" onClick={() => updateStep(step.stepNumber, { approvers: step.approvers.filter((_, i) => i !== index) })}>×</button>
                     </span>
@@ -217,28 +261,89 @@ export default function FlowsManager() {
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-end gap-2">
-                  <select value={choice.kind} onChange={(e) => setAdding({ ...adding, [step.stepNumber]: { kind: e.target.value as "USER" | "USER_TYPE", id: "" } })} className={`${inputClass} w-44`}>
+                  <select value={choice.kind} onChange={(e) => setAdding({ ...adding, [step.stepNumber]: { kind: e.target.value as EntryKind, id: "" } })} className={`${inputClass} w-44`}>
                     <option value="USER_TYPE">A user type</option>
                     <option value="USER">A named user</option>
+                    <option value="PROJECT_DIRECTOR">Project Director</option>
+                    <option value="PROJECT_MANAGER">Project Manager</option>
                   </select>
-                  <select value={choice.id} onChange={(e) => setAdding({ ...adding, [step.stepNumber]: { kind: choice.kind, id: e.target.value } })} className={`${inputClass} w-64`}>
-                    <option value="">{choice.kind === "USER" ? "Choose a user" : "Choose a user type"}</option>
-                    {choice.kind === "USER"
-                      ? users.map((user) => <option key={user.id} value={user.id}>{user.name} ({user.userType.name})</option>)
-                      : types.map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}
-                  </select>
+                  {isRole(choice.kind) ? (
+                    <span className="flex h-10 w-64 items-center rounded-lg border border-dashed border-cyan-300 bg-cyan-50 px-3 text-xs text-cyan-900">
+                      The {choice.kind === "PROJECT_DIRECTOR" ? "director" : "manager"} of the document&apos;s project
+                    </span>
+                  ) : (
+                    <select value={choice.id} onChange={(e) => setAdding({ ...adding, [step.stepNumber]: { kind: choice.kind, id: e.target.value } })} className={`${inputClass} w-64`}>
+                      <option value="">{choice.kind === "USER" ? "Choose a user" : "Choose a user type"}</option>
+                      {choice.kind === "USER"
+                        ? users.map((user) => <option key={user.id} value={user.id}>{user.name} ({user.userType.name})</option>)
+                        : types.map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}
+                    </select>
+                  )}
                   <button type="button" className={secondaryButton} onClick={() => addEntry(step.stepNumber)}>Add</button>
                 </div>
                 {step.stepNumber > 0 ? (
-                  <p className="mt-2 text-xs text-slate-500">A user type works only for people of that type who also hold a role assignment covering the document&apos;s project. A named user works anywhere.</p>
+                  <p className="mt-2 text-xs text-slate-500">A user type works only for people of that type who also hold a role assignment covering the document&apos;s project. A named user works anywhere. Project Director and Project Manager go to the person set on the document&apos;s project in Projects &amp; Locations.</p>
                 ) : null}
+
+                <div className="mt-4 rounded-lg border border-dashed border-slate-300 bg-white p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Unique tracks</p>
+                      <p className="text-xs text-slate-500">
+                        {step.stepNumber === 0 ? "The uploader can tick one when uploading" : "Whoever approves this level can tick one when approving"}: the document then goes straight to one person, and from there to the stage you choose.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={secondaryButton}
+                      onClick={() => updateStep(step.stepNumber, { tracks: [...step.tracks, { name: "", receiverUserId: "", returnLevel: null, signatureRequired: true }] })}
+                    >
+                      Add unique track
+                    </button>
+                  </div>
+                  {step.tracks.length === 0 ? <p className="mt-2 text-xs text-slate-500">No unique tracks on this level.</p> : null}
+                  <div className="mt-3 space-y-3">
+                    {step.tracks.map((track, index) => (
+                      <div key={index} className="grid grid-cols-1 gap-3 rounded-lg bg-slate-50 p-3 md:grid-cols-[1.4fr_1fr_1fr_auto]">
+                        <Field label="Track name (shown as the check box)">
+                          <input value={track.name} onChange={(e) => updateTrack(step.stepNumber, index, { name: e.target.value })} className={inputClass} placeholder="Goes to Eng. Marc directly" />
+                        </Field>
+                        <Field label="Receives the document">
+                          <select value={track.receiverUserId} onChange={(e) => updateTrack(step.stepNumber, index, { receiverUserId: e.target.value })} className={inputClass}>
+                            <option value="">Choose a user</option>
+                            {users.map((user) => <option key={user.id} value={user.id}>{user.name} ({user.userType.name})</option>)}
+                          </select>
+                        </Field>
+                        <Field label="After they approve, goes to">
+                          <select
+                            value={track.returnLevel === null ? "" : String(track.returnLevel)}
+                            onChange={(e) => updateTrack(step.stepNumber, index, { returnLevel: e.target.value === "" ? null : Number(e.target.value) })}
+                            className={inputClass}
+                          >
+                            <option value="">Full approval</option>
+                            {draft.steps.filter((later) => later.stepNumber > step.stepNumber).map((later) => (
+                              <option key={later.stepNumber} value={later.stepNumber}>{levelLabel(draft.steps, later.stepNumber)}</option>
+                            ))}
+                          </select>
+                        </Field>
+                        <div className="flex items-end gap-3">
+                          <label className="inline-flex items-center gap-2 pb-2 text-xs text-slate-700">
+                            <input type="checkbox" checked={track.signatureRequired} onChange={(e) => updateTrack(step.stepNumber, index, { signatureRequired: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
+                            Signature required
+                          </label>
+                          <button type="button" className={dangerButton} onClick={() => updateStep(step.stepNumber, { tracks: step.tracks.filter((_, i) => i !== index) })}>Remove</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             );
           })}
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
-          <button type="button" disabled={lastLevel >= MAX_LEVEL} className={secondaryButton} onClick={() => setDraft({ ...draft, steps: [...draft.steps, { stepNumber: lastLevel + 1, name: "", signatureRequired: true, approvers: [] }] })}>
+          <button type="button" disabled={lastLevel >= MAX_LEVEL} className={secondaryButton} onClick={() => setDraft({ ...draft, steps: [...draft.steps, { stepNumber: lastLevel + 1, name: "", signatureRequired: true, approvers: [], tracks: [] }] })}>
             Add level {lastLevel + 1}
           </button>
           <button type="button" className={primaryButton} disabled={saving} onClick={save}>{saving ? "Saving..." : draft.id ? "Save flow" : "Create flow"}</button>
@@ -271,6 +376,11 @@ export default function FlowsManager() {
                     <span className="font-medium text-slate-900">{step.stepNumber === 0 ? "Uploader" : `Level ${step.stepNumber}${step.name ? ` · ${step.name}` : ""}`}:</span>{" "}
                     {step.approvers.map((entry) => entryLabel(entry, users, types)).join(" or ")}
                     {step.stepNumber > 0 && !step.signatureRequired ? <span className="ml-2 text-xs text-amber-700">no signature required</span> : null}
+                    {step.tracks.map((track) => (
+                      <div key={track.id} className="ml-5 text-xs text-cyan-800">
+                        Unique track &quot;{track.name}&quot;: {track.receiverName}, then {track.returnLevel === null ? "full approval" : levelLabel(flow.steps, track.returnLevel)}
+                      </div>
+                    ))}
                   </li>
                 ))}
               </ol>

@@ -63,6 +63,7 @@ function searchTextOf(row: DocumentRow) {
     projectCode: row.project?.code,
     currentApproverName: row.currentApprover?.name,
     rejectionComments: row.rejection?.comments,
+    rejectedByName: row.rejection?.performedByName,
   };
 }
 
@@ -100,15 +101,18 @@ export function toListItem(row: DocumentRow): DocumentListItem {
     documentSubtypeName: row.documentSubtype?.name ?? null,
     projectLabel: row.project ? `${row.project.code} - ${row.project.name}` : null,
     rejectionComments: row.rejection?.comments ?? null,
+    rejectedByName: row.rejection?.performedByName ?? null,
     processStatus: row.processStatus,
     processStatusLabel: row.processStatusLabel ?? "No Process",
     currentVersion: row.currentVersion,
     currentApproverName: row.currentApprover?.name ?? null,
+    currentApproverNames: row.currentApprover?.names ?? [],
     downloadedAt: row.downloadedAt,
     receivedAt: row.receivedAt,
     receiptConfirmationRequired: row.receiptConfirmationRequired,
     approvalDate: row.approvedAt,
     dateLabel: dateFormat.format(row.updatedAt),
+    sortTime: row.createdAt.getTime(),
   };
 }
 

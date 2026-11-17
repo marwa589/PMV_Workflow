@@ -377,7 +377,11 @@ export async function linkDocumentToStep(
     select: { documentId: true },
   });
   if (inProgress) {
-    if (inProgress.documentId === document.id) return;
+    if (inProgress.documentId === document.id) {
+      // Already linked (a repeat call). If it is approved the run must still move on: returning here used to leave it stuck.
+      if (document.status === DocumentStatus.APPROVED) await advanceProcessesForApprovedDocument(tx, document.id, effects);
+      return;
+    }
     throw new WorkflowError("This step already has a document in progress.", 409);
   }
 
@@ -396,6 +400,42 @@ export async function linkDocumentToStep(
   if (document.status === DocumentStatus.APPROVED) {
     await advanceProcessesForApprovedDocument(tx, document.id, effects);
   }
+}
+
+/**
+ * Safety net: moves a run forward when the document waiting at its next node is ALREADY approved but the run did not
+ * move (the document was approved before or while it was being linked, a repeated call, an interrupted job...).
+ * Safe to call at any time and as often as needed: it does nothing for a run that is where it should be.
+ * Returns true when the run moved.
+ */
+export async function reconcileProcessRun(tx: Prisma.TransactionClient, processInstanceId: string, effects?: WorkflowEffects): Promise<boolean> {
+  let moved = false;
+  // A run moves one node per approved document; the loop only repeats if a further approved document is already waiting.
+  for (let guard = 0; guard < 50; guard += 1) {
+    await lockRun(tx, processInstanceId);
+    const run = await tx.processInstance.findUnique({
+      where: { id: processInstanceId },
+      select: { status: true, currentStepId: true },
+    });
+    if (!run || run.status !== ProcessStatus.IN_PROGRESS) return moved;
+
+    const waiting = await tx.processStepDocument.findFirst({
+      where: {
+        processInstanceId,
+        isCurrent: true,
+        processStep: { parentStepId: run.currentStepId },
+        document: { status: DocumentStatus.APPROVED },
+      },
+      select: { documentId: true },
+    });
+    if (!waiting) return moved;
+
+    await advanceProcessesForApprovedDocument(tx, waiting.documentId, effects);
+    const after = await tx.processInstance.findUnique({ where: { id: processInstanceId }, select: { status: true, currentStepId: true } });
+    if (!after || (after.status === run.status && after.currentStepId === run.currentStepId)) return moved; // no progress: stop
+    moved = true;
+  }
+  return moved;
 }
 
 /**
@@ -528,6 +568,9 @@ async function collectUploadReadyEffects(
       OR: [
         { assignments: { some: {} } },
         { workflowStepApprovals: { some: { step: { stepNumber: 0 } } } },
+        // Project directors / managers: an uploader step may name "Project Director" or "Project Manager".
+        { directedProjects: { some: {} } },
+        { managedProjects: { some: {} } },
         ...(uploaderTypeIds.length > 0 ? [{ userTypeId: { in: uploaderTypeIds } }] : []),
       ],
     },
@@ -597,6 +640,18 @@ export async function cancelRunsRootedAtDocuments(tx: Prisma.TransactionClient, 
   });
 }
 
+/**
+ * Admin only (checked by the caller): close a run as done before its last step, even if documents are still waiting.
+ * The run keeps the step it reached; later documents of the run no longer move it, and it leaves the upload tasks.
+ */
+export async function completeProcessEarly(tx: Prisma.TransactionClient, processInstanceId: string) {
+  const result = await tx.processInstance.updateMany({
+    where: { id: processInstanceId, status: ProcessStatus.IN_PROGRESS },
+    data: { status: ProcessStatus.COMPLETED, completedAt: new Date() },
+  });
+  if (result.count === 0) throw new WorkflowError("This process run is not in progress.", 409);
+}
+
 export async function cancelProcess(tx: Prisma.TransactionClient, processInstanceId: string) {
   const result = await tx.processInstance.updateMany({
     where: { id: processInstanceId, status: ProcessStatus.IN_PROGRESS },
@@ -645,12 +700,18 @@ export type UploadTask = {
  * document in progress. A person gets the task when they may upload at least one of the choices (same rule as
  * any upload: canUserUpload); they are shown only the choices they may upload.
  */
-export async function getUploadTasks(db: Db, user: { userId: string; userType: UserTypeCode }): Promise<UploadTask[]> {
+export async function getUploadTasks(
+  db: Db,
+  user: { userId: string; userType: UserTypeCode },
+  /** `since`: leave out tasks whose last approved document was approved before this moment (old runs nobody should chase). */
+  filter: { since?: Date } = {},
+): Promise<UploadTask[]> {
   const runs = await db.processInstance.findMany({
     where: { status: ProcessStatus.IN_PROGRESS, currentStepId: { not: null }, currentStep: { childSteps: { some: {} } } },
     orderBy: { startedAt: "desc" },
     select: {
       id: true,
+      startedAt: true,
       reference: true,
       projectId: true,
       currentStepId: true,
@@ -703,6 +764,13 @@ export async function getUploadTasks(db: Db, user: { userId: string; userType: U
 
   for (const run of runs) {
     if (!run.currentStep) continue;
+    if (filter.since) {
+      const anchorApprovedAt = run.stepDocuments.find((link) => link.processStep.id === run.currentStepId)?.document.approvedAt ?? null;
+      // A run started after the cut-off is never an "old run": a corrective run reuses an old approved document, so
+      // the approval date alone would hide it. The newer of the approval and the start of the run decides.
+      const lastActivity = anchorApprovedAt && anchorApprovedAt > run.startedAt ? anchorApprovedAt : run.startedAt;
+      if (anchorApprovedAt && lastActivity < filter.since) continue;
+    }
     // A choice was already made and its document is in progress: nothing to upload until it is approved or rejected.
     if (run.stepDocuments.some((link) => link.processStep.parentStepId === run.currentStepId)) continue;
 
@@ -762,4 +830,296 @@ export async function getUploadTasks(db: Db, user: { userId: string; userType: U
   }
 
   return tasks;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// New Document: "Has a linked document"
+// ---------------------------------------------------------------------------------------------------------
+
+export type AwaitingUpload = {
+  /** `${runId}|${stepId}` (waiting run) or `${runId}|${stepId}|${documentId}` (completed run): one entry per run and choice. */
+  key: string;
+  /**
+   *  - "continue": the run is waiting for this document; it becomes the run's next step.
+   *  - "addition": the run is already COMPLETED; the document is added to the same group (the run does not move).
+   */
+  mode: "continue" | "addition";
+  runId: string;
+  /** Process name and the run's reference, e.g. "Purchase - MR-0012". */
+  label: string;
+  projectId: string | null;
+  projectLabel: string | null;
+  /** The last approved document of the run: the one the new upload follows. */
+  previousDocument: { id: string; documentNumber: string; title: string; approvedAtLabel: string | null } | null;
+  option: UploadTaskOption;
+};
+
+const awaitingDateFormat = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
+
+// Safety limit for completed runs offered as "linking documents" (the most recently completed first). Only runs that
+// still have a document waiting for a follow-up are counted, so it is rarely reached.
+const MAX_COMPLETED_LINK_RUNS = 3000;
+
+/**
+ * Every process document a new upload could follow, whoever the person is:
+ *  - running processes that are waiting for their next document (the new document becomes their next step), and
+ *  - completed processes (the new document is added to the same group).
+ * Unlike getUploadTasks this does NOT check who may upload or who has access to the project: it feeds the
+ * "Has a linked document" list on the New Document form, which lets anyone who can open that form continue a waiting run.
+ * A choice that is still in its waiting period is left out (the upload would be refused), except for Admin users.
+ */
+export async function getAwaitingUploads(db: Db, options: { isAdmin: boolean }): Promise<AwaitingUpload[]> {
+  const runs = await db.processInstance.findMany({
+    where: { status: ProcessStatus.IN_PROGRESS, currentStepId: { not: null }, currentStep: { childSteps: { some: {} } } },
+    orderBy: { startedAt: "desc" },
+    select: {
+      id: true,
+      reference: true,
+      currentStepId: true,
+      project: { select: { id: true, code: true, name: true } },
+      processDefinition: { select: { name: true } },
+      currentStep: {
+        select: {
+          childSteps: {
+            orderBy: { stepNumber: "asc" },
+            select: {
+              id: true,
+              name: true,
+              documentTypeId: true,
+              documentSubtypeId: true,
+              delayHours: true,
+              allowMultipleUploads: true,
+              referenceDocumentTypeId: true,
+              referenceDocumentSubtypeId: true,
+              referenceDocumentType: { select: { name: true } },
+              referenceDocumentSubtype: { select: { name: true } },
+              documentType: { select: { name: true, code: true } },
+              documentSubtype: { select: { name: true, code: true } },
+            },
+          },
+        },
+      },
+      stepDocuments: {
+        where: { isCurrent: true },
+        select: {
+          processStep: { select: { id: true, parentStepId: true } },
+          document: { select: { id: true, documentNumber: true, title: true, approvedAt: true } },
+        },
+      },
+    },
+  });
+
+  const entries: AwaitingUpload[] = [];
+  for (const run of runs) {
+    if (!run.currentStep) continue;
+    // A choice was already made and its document is in progress: nothing to upload until it is approved or rejected.
+    if (run.stepDocuments.some((link) => link.processStep.parentStepId === run.currentStepId)) continue;
+
+    const last = run.stepDocuments.find((link) => link.processStep.id === run.currentStepId)?.document ?? null;
+    for (const child of run.currentStep.childSteps) {
+      const opensAt = stepOpensAt(last?.approvedAt ?? null, child.delayHours);
+      const waiting = opensAt !== null && opensAt.getTime() > Date.now();
+      if (waiting && !options.isAdmin) continue;
+
+      entries.push({
+        key: `${run.id}|${child.id}`,
+        mode: "continue",
+        runId: run.id,
+        label: `${run.processDefinition.name}${run.reference ? ` - ${run.reference}` : ""}`,
+        projectId: run.project?.id ?? null,
+        projectLabel: run.project ? `${run.project.code} - ${run.project.name}` : null,
+        previousDocument: last
+          ? { id: last.id, documentNumber: last.documentNumber, title: last.title, approvedAtLabel: last.approvedAt ? awaitingDateFormat.format(last.approvedAt) : null }
+          : null,
+        option: {
+          stepId: child.id,
+          name: child.name,
+          documentTypeId: child.documentTypeId,
+          documentSubtypeId: child.documentSubtypeId,
+          typeName: child.documentType.name,
+          subtypeName: child.documentSubtype?.name ?? null,
+          typeCode: child.documentType.code,
+          subtypeCode: child.documentSubtype?.code ?? null,
+          referenceDocumentTypeId: child.referenceDocumentTypeId,
+          referenceDocumentSubtypeId: child.referenceDocumentSubtypeId,
+          referenceTypeName: child.referenceDocumentType
+            ? `${child.referenceDocumentType.name}${child.referenceDocumentSubtype ? ` - ${child.referenceDocumentSubtype.name}` : ""}`
+            : null,
+          allowMultipleUploads: child.allowMultipleUploads,
+          waitingUntil: waiting ? opensAt : null,
+        },
+      });
+    }
+  }
+
+  // Completed runs: every approved document of the run is a possible "linking document" for the choices under its node,
+  // as long as nothing is linked to that choice yet (a PO already uploaded for an MR hides that MR).
+  // The choices (child steps of every process version) are loaded first, so only runs that can have a follow-up are read.
+  const definitionSteps = await db.processStep.findMany({
+    where: { parentStepId: { not: null } },
+    select: {
+      id: true,
+      name: true,
+      processDefinitionId: true,
+      versionNumber: true,
+      parentStepId: true,
+      documentTypeId: true,
+      documentSubtypeId: true,
+      allowMultipleUploads: true,
+      referenceDocumentTypeId: true,
+      referenceDocumentSubtypeId: true,
+      referenceDocumentType: { select: { name: true } },
+      referenceDocumentSubtype: { select: { name: true } },
+      documentType: { select: { name: true, code: true } },
+      documentSubtype: { select: { name: true, code: true } },
+    },
+  });
+  const nodesWithChoices = [...new Set(definitionSteps.flatMap((step) => (step.parentStepId ? [step.parentStepId] : [])))];
+  const completedRuns = nodesWithChoices.length
+    ? await db.processInstance.findMany({
+        where: {
+          status: ProcessStatus.COMPLETED,
+          // Runs an admin marked as done early stop mid-tree: nothing more can be added to them.
+          currentStep: { childSteps: { none: {} } },
+          stepDocuments: { some: { isCurrent: true, processStepId: { in: nodesWithChoices }, document: { status: DocumentStatus.APPROVED } } },
+        },
+        orderBy: { completedAt: "desc" },
+        take: MAX_COMPLETED_LINK_RUNS,
+        select: {
+          id: true,
+          reference: true,
+          stepVersion: true,
+          processDefinitionId: true,
+          project: { select: { id: true, code: true, name: true } },
+          processDefinition: { select: { name: true } },
+          // Everything currently held by the run: the approved documents are the linking candidates, and every
+          // non-cancelled one tells which choices are already taken.
+          stepDocuments: {
+            where: { isCurrent: true },
+            select: { processStepId: true, document: { select: { id: true, documentNumber: true, title: true, approvedAt: true, status: true } } },
+          },
+        },
+      })
+    : [];
+
+  for (const run of completedRuns) {
+    const steps = definitionSteps.filter((step) => step.processDefinitionId === run.processDefinitionId && step.versionNumber === run.stepVersion);
+    // Choices that already hold a document (a rejected or archived one does not count).
+    const takenSteps = new Set(
+      run.stepDocuments.filter((link) => link.document.status !== DocumentStatus.CANCELLED && link.document.status !== DocumentStatus.ARCHIVED).map((link) => link.processStepId),
+    );
+    for (const link of run.stepDocuments) {
+      if (link.document.status !== DocumentStatus.APPROVED) continue;
+      for (const child of steps.filter((step) => step.parentStepId === link.processStepId && !takenSteps.has(step.id))) {
+        entries.push({
+          key: `${run.id}|${child.id}|${link.document.id}`,
+          mode: "addition",
+          runId: run.id,
+          label: `${run.processDefinition.name}${run.reference ? ` - ${run.reference}` : ""} (completed)`,
+          projectId: run.project?.id ?? null,
+          projectLabel: run.project ? `${run.project.code} - ${run.project.name}` : null,
+          previousDocument: {
+            id: link.document.id,
+            documentNumber: link.document.documentNumber,
+            title: link.document.title,
+            approvedAtLabel: link.document.approvedAt ? awaitingDateFormat.format(link.document.approvedAt) : null,
+          },
+          option: {
+            stepId: child.id,
+            name: child.name,
+            documentTypeId: child.documentTypeId,
+            documentSubtypeId: child.documentSubtypeId,
+            typeName: child.documentType.name,
+            subtypeName: child.documentSubtype?.name ?? null,
+            typeCode: child.documentType.code,
+            subtypeCode: child.documentSubtype?.code ?? null,
+            referenceDocumentTypeId: child.referenceDocumentTypeId,
+            referenceDocumentSubtypeId: child.referenceDocumentSubtypeId,
+            referenceTypeName: child.referenceDocumentType
+              ? `${child.referenceDocumentType.name}${child.referenceDocumentSubtype ? ` - ${child.referenceDocumentSubtype.name}` : ""}`
+              : null,
+            allowMultipleUploads: child.allowMultipleUploads,
+            waitingUntil: null,
+          },
+        });
+      }
+    }
+  }
+  return entries;
+}
+
+/**
+ * Add an uploaded document to a run that is already COMPLETED, as a later document of the same group.
+ * The document must fit a choice (child node) under the node of the linking document, which has to be an approved
+ * document of that run. Nothing about the run changes (it stays completed, no step is advanced), and the document may
+ * sit next to the one that already fills the step.
+ */
+export async function addDocumentToCompletedRun(
+  tx: Prisma.TransactionClient,
+  input: {
+    processInstanceId: string;
+    stepId: string;
+    /** The approved document of the run that this one follows. */
+    parentDocumentId: string;
+    documentId: string;
+    linkedById: string;
+    referenceDocumentIds?: string[];
+  },
+) {
+  await lockRun(tx, input.processInstanceId);
+  const instance = await tx.processInstance.findUnique({
+    where: { id: input.processInstanceId },
+    select: { id: true, status: true, processDefinitionId: true, projectId: true, stepVersion: true, currentStep: { select: { _count: { select: { childSteps: true } } } } },
+  });
+  if (!instance) throw new WorkflowError("Process run not found.", 404);
+  if (instance.status !== ProcessStatus.COMPLETED) throw new WorkflowError("This process run is not completed.", 409);
+  if (!instance.currentStep || instance.currentStep._count.childSteps > 0) throw new WorkflowError("This process run was closed early; no more documents can be added.", 409);
+
+  const step = await tx.processStep.findFirst({
+    where: { id: input.stepId, processDefinitionId: instance.processDefinitionId },
+    select: { id: true, parentStepId: true, versionNumber: true, documentTypeId: true, documentSubtypeId: true },
+  });
+  if (!step || !step.parentStepId || step.versionNumber !== instance.stepVersion) throw new WorkflowError("Process step not found.", 404);
+
+  const document = await tx.document.findUnique({
+    where: { id: input.documentId },
+    select: { id: true, status: true, documentTypeId: true, documentSubtypeId: true, projectId: true },
+  });
+  if (!document) throw new WorkflowError("Document not found.", 404);
+  if (!nodeMatches(step, document)) throw new WorkflowError("This document is not the type this step asks for.", 400);
+  if (document.projectId !== instance.projectId) throw new WorkflowError("This document belongs to a different project than the process run.", 400);
+  if (document.status === DocumentStatus.CANCELLED || document.status === DocumentStatus.ARCHIVED) {
+    throw new WorkflowError("A rejected or archived document cannot be added to a process.", 400);
+  }
+
+  const parentLink = await tx.processStepDocument.findFirst({
+    where: {
+      processInstanceId: instance.id,
+      processStepId: step.parentStepId,
+      documentId: input.parentDocumentId,
+      isCurrent: true,
+      document: { status: DocumentStatus.APPROVED },
+    },
+    select: { id: true },
+  });
+  if (!parentLink) throw new WorkflowError("The linking document is not an approved document of this process.", 400);
+
+  const already = await tx.processStepDocument.findFirst({
+    where: { processInstanceId: instance.id, processStepId: step.id, documentId: document.id },
+    select: { id: true },
+  });
+  if (already) return;
+
+  await tx.processStepDocument.create({
+    data: {
+      processInstanceId: instance.id,
+      processStepId: step.id,
+      documentId: document.id,
+      source: ProcessStepSource.UPLOADED,
+      linkedById: input.linkedById,
+      isCurrent: true,
+      isAddition: true,
+      references: { create: [...new Set(input.referenceDocumentIds ?? [])].map((documentId) => ({ documentId })) },
+    },
+  });
 }

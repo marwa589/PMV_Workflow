@@ -1,5 +1,6 @@
 // src/app/api/processes/route.ts
 import { DocumentStatus, ProcessStatus, ProcessStepSource } from "@prisma/client";
+import { getWhoCanUploadByRun } from "@/lib/workflow/who-can-upload";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { buildProcessVisibilityWhere } from "@/lib/auth/access";
@@ -7,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { getProcessStatusLabel } from "@/lib/process-status";
 import { USER_TYPE } from "@/lib/auth/roles";
 import { validateCsrf } from "@/lib/csrf";
+import { writeAuditLog } from "@/lib/audit";
 import { dispatchWorkflowEffects } from "@/lib/workflow/effects";
 import { WorkflowError } from "@/lib/workflow/errors";
 import type { WorkflowEffects } from "@/lib/workflow/engine";
@@ -58,6 +60,8 @@ export async function GET() {
   const runs = await prisma.processInstance.findMany({ where: visibility, select: runSelect, orderBy: { startedAt: "desc" }, take: 200 });
 
   const startable = session.userType === USER_TYPE.ADMIN ? await getStartableProcesses(prisma) : [];
+  // Admin only: who may upload the next document of each run that is waiting for one.
+  const whoCanUpload = session.userType === USER_TYPE.ADMIN ? await getWhoCanUploadByRun(prisma, runs.map((run) => run.id)) : null;
 
   return NextResponse.json({
     startable,
@@ -73,11 +77,14 @@ export async function GET() {
       completedAt: run.completedAt?.toISOString() ?? null,
       follows: run.parentInstance ? { runId: run.parentInstance.id, reference: run.parentInstance.reference, documentNumber: run.followedDocument?.documentNumber ?? null } : null,
       followUpCount: run._count.followUps,
+      whoCanUpload: whoCanUpload?.get(run.id) ?? [],
     })),
   });
 }
 
 // Admin only: start a run on purpose with a document that is ALREADY in the system and approved.
+// Corrective action: with `corrective: true` (and a written reason) the document may already be used in another run;
+// the earlier runs are left untouched as history and a new, independent run is started.
 // (A new file for the first document goes through POST /api/documents with startProcessDefinitionId.)
 export async function POST(request: Request) {
   const session = await getSession();
@@ -85,10 +92,13 @@ export async function POST(request: Request) {
   if (session.userType !== USER_TYPE.ADMIN) return NextResponse.json({ message: "Only an Admin user can start a process by hand." }, { status: 403 });
   if (!validateCsrf(request)) return NextResponse.json({ message: "Invalid CSRF token." }, { status: 403 });
 
-  const body = (await request.json().catch(() => null)) as { processDefinitionId?: unknown; documentId?: unknown; notify?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { processDefinitionId?: unknown; documentId?: unknown; notify?: unknown; corrective?: unknown; reason?: unknown } | null;
   const processDefinitionId = typeof body?.processDefinitionId === "string" ? body.processDefinitionId.trim() : "";
   const documentId = typeof body?.documentId === "string" ? body.documentId.trim() : "";
   if (!processDefinitionId || !documentId) return NextResponse.json({ message: "Choose a process and a document." }, { status: 400 });
+  const corrective = body?.corrective === true;
+  const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
+  if (corrective && reason.length < 5) return NextResponse.json({ message: "Enter the reason for this corrective run." }, { status: 400 });
 
   try {
     const process = (await getStartableProcesses(prisma)).find((candidate) => candidate.id === processDefinitionId);
@@ -106,7 +116,7 @@ export async function POST(request: Request) {
     const used = await prisma.processStepDocument.count({
       where: { documentId, isCurrent: true, processInstance: { status: { not: ProcessStatus.CANCELLED } } },
     });
-    if (used > 0) throw new WorkflowError("This document is already used in a process run.", 409);
+    if (used > 0 && !corrective) throw new WorkflowError("This document is already used in a process run. Use a corrective run to start a new one.", 409);
 
     const effects: WorkflowEffects = { notifications: [], emailEvents: [] };
     const run = await prisma.$transaction(async (tx) => {
@@ -127,6 +137,14 @@ export async function POST(request: Request) {
       }, effects);
       return created;
     });
+    if (corrective && used > 0) {
+      await writeAuditLog({
+        documentId: document.id,
+        performedById: session.userId,
+        action: "PROCESS_CORRECTIVE_RUN_STARTED",
+        details: JSON.stringify({ processDefinitionId: process.id, processRunId: run.id, earlierRuns: used, reason }),
+      });
+    }
     if (body?.notify === true) await dispatchWorkflowEffects(effects);
 
     return NextResponse.json({ message: "Process started.", processRunId: run.id }, { status: 201 });

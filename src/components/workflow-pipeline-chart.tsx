@@ -71,6 +71,9 @@ export default function WorkflowPipelineChart({ stages, documents }: Props) {
           </button>
         </div>
 
+        {stages.length === 0 ? (
+          <p className="mt-6 rounded-xl bg-white px-4 py-3 text-sm text-slate-600 ring-1 ring-slate-200">No documents are waiting at any level.</p>
+        ) : null}
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
           {stages.map((stage) => {
             const isActive = selectedStageKey === stage.key;

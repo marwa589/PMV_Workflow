@@ -29,6 +29,8 @@ model Company {
 
   location          Location?        @relation(fields: [locationId], references: [id], onDelete: SetNull)
   scopedAssignments UserAssignment[]
+  // Projects that belong to this company. A role given "for a company" covers all of them.
+  projects          Project[]
 
   @@index([locationId])
 }
@@ -39,11 +41,21 @@ model Project {
   code       String   @unique
   name       String
   locationId String?
+  // The project director: picked from the users in Projects & Locations. A flow level set to "Project Director"
+  // is sent to this person for documents of this project.
+  directorId String?
+  // The project manager, picked the same way. A flow level set to "Project Manager" is sent to this person.
+  managerId  String?
+  // Optional: the company this project belongs to. A role assignment scoped to that company covers the project.
+  companyId  String?
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   location               Location?                       @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  director               User?                           @relation("ProjectDirector", fields: [directorId], references: [id], onDelete: SetNull)
+  manager                User?                           @relation("ProjectManager", fields: [managerId], references: [id], onDelete: SetNull)
+  company                Company?                        @relation(fields: [companyId], references: [id], onDelete: SetNull)
   documents              Document[]
   flowAssignments        DocumentWorkflowAssignment[]
   scopedAssignments      UserAssignment[]
@@ -54,6 +66,9 @@ model Project {
   maintenanceAssignments MaintenanceWorkflowAssignment[]
 
   @@index([locationId, isActive])
+  @@index([directorId])
+  @@index([managerId])
+  @@index([companyId])
 }
 
 // The four fixed kinds of user: Clerk, Engineer, Manager, Admin.
@@ -88,8 +103,10 @@ model User {
   signatureUpdatedAt    DateTime?
   // When true, this user may select several pending documents and review/approve them together on one screen.
   canBulkApprove        Boolean   @default(false)
+  // When true, workflow/ticket notification emails are not sent to this user. Sign-in and password-reset emails still are.
+  emailNotificationsDisabled Boolean @default(false)
 
-  userType                        UserType                          @relation(fields: [userTypeId], references: [id], onDelete: Restrict)
+  userType                       UserType                          @relation(fields: [userTypeId], references: [id], onDelete: Restrict)
   assignments                     UserAssignment[]
   delegationsGiven                ApprovalDelegation[]              @relation("DelegationsGiven")
   delegationsReceived             ApprovalDelegation[]              @relation("DelegationsReceived")
@@ -104,9 +121,15 @@ model User {
   receivedDocuments               Document[]                        @relation("DocumentsReceivedBy")
   uploadedVersions                DocumentVersion[]                 @relation("VersionsUploadedBy")
   approvalStepsActed              DocumentApprovalStep[]            @relation("ApprovalStepActedBy")
+  approvalStepsSent               DocumentApprovalStep[]            @relation("ApprovalStepSentBy")
   workflowStepApprovals           DocumentWorkflowStepApprover[]    @relation("WorkflowStepApprover")
+  workflowTracks                  DocumentWorkflowTrack[]           @relation("WorkflowTrackReceiver")
+  approvalTracks                  DocumentApprovalTrack[]           @relation("ApprovalTrackReceiver")
   approvalStepApprovals           DocumentApprovalStepApprover[]    @relation("ApprovalStepApprover")
   emailNotificationEvents         EmailNotificationEvent[]          @relation("EmailEventsForUser")
+  emailDigestState                EmailDigestState?
+  mailSettings                    MailSetting[]
+  mailFollowRules                 MailFollowRule[]
   notifications                   Notification[]                    @relation("NotificationsForUser")
   otpChallenges                   OtpChallenge[]
   trustedDevices                  TrustedDevice[]
@@ -120,6 +143,8 @@ model User {
   maintenanceTicketLevelApprovals MaintenanceTicketLevelApprover[]
   processStepLinks                ProcessStepDocument[]             @relation("ProcessStepLinkedBy")
   documentDownloads               DocumentDownload[]
+  directedProjects                Project[]                         @relation("ProjectDirector")
+  managedProjects                 Project[]                         @relation("ProjectManager")
 
   @@index([userTypeId, isActive])
 }
@@ -164,6 +189,7 @@ model DocumentType {
   referenceForSteps ProcessStep[]                     @relation("ProcessStepReferenceType")
   scopedAssignments UserAssignment[]
   assignmentScopes  UserAssignmentDocumentTypeScope[]
+  mailFollowRules   MailFollowRule[]
 }
 
 // Replaces Document.documentSubtype, enum MrType, enum ComparisonType and the ERR type variants.
@@ -275,7 +301,6 @@ model UserAssignment {
   locationId          String?
   documentTypeId      String?
   documentSubtypeId   String?
-  processDefinitionId String?
   createdAt           DateTime @default(now())
 
   user               User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -285,12 +310,10 @@ model UserAssignment {
   location           Location?                         @relation(fields: [locationId], references: [id], onDelete: Cascade)
   documentType       DocumentType?                     @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
   documentSubtype    DocumentSubtype?                  @relation(fields: [documentSubtypeId], references: [id], onDelete: Cascade)
-  processDefinition  ProcessDefinition?                @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
   projectScopes      UserAssignmentProjectScope[]
   documentTypeScopes UserAssignmentDocumentTypeScope[]
-  processScopes      UserAssignmentProcessScope[]
 
-  @@unique([userId, roleId, companyId, projectId, locationId, documentTypeId, documentSubtypeId, processDefinitionId])
+  @@unique([userId, roleId, companyId, projectId, locationId, documentTypeId, documentSubtypeId], map: "UserAssignment_userId_roleId_companyId_projectId_locationId_key")
   @@index([userId])
   @@index([roleId])
   @@index([projectId])
@@ -330,17 +353,6 @@ model UserAssignmentDocumentSubtypeScope {
 
   @@id([userAssignmentId, documentTypeId, documentSubtypeId])
   @@index([documentSubtypeId])
-}
-
-model UserAssignmentProcessScope {
-  userAssignmentId    String
-  processDefinitionId String
-
-  assignment        UserAssignment    @relation(fields: [userAssignmentId], references: [id], onDelete: Cascade)
-  processDefinition ProcessDefinition @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
-
-  @@id([userAssignmentId, processDefinitionId])
-  @@index([processDefinitionId])
 }
 
 // An admin hands one user's approval tasks to another user, optionally until a fixed expiry time.
@@ -392,8 +404,30 @@ model DocumentWorkflowStep {
 
   template  DocumentWorkflowTemplate       @relation(fields: [templateId], references: [id], onDelete: Cascade)
   approvers DocumentWorkflowStepApprover[]
+  tracks    DocumentWorkflowTrack[]
 
   @@unique([templateId, stepNumber])
+}
+
+// A unique track offered at a level (the uploader level included): whoever acts at that level can tick it, and the
+// document then goes straight to `receiver`. When the receiver approves it goes to `returnLevel`, or counts as fully
+// approved when returnLevel is null.
+model DocumentWorkflowTrack {
+  id                String   @id @default(cuid())
+  stepId            String
+  name              String
+  receiverUserId    String
+  returnLevel       Int?
+  // Whether the receiver must place a signature to approve.
+  signatureRequired Boolean  @default(true)
+  sortOrder         Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  step     DocumentWorkflowStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  receiver User                 @relation("WorkflowTrackReceiver", fields: [receiverUserId], references: [id], onDelete: Cascade)
+
+  @@index([stepId])
+  @@index([receiverUserId])
 }
 
 // Who may act on a level (any one entry is enough): a named user OR every user of a user type.
@@ -575,8 +609,6 @@ model ProcessDefinition {
 
   steps             ProcessStep[]
   instances         ProcessInstance[]
-  scopedAssignments UserAssignment[]
-  assignmentScopes  UserAssignmentProcessScope[]
 }
 
 // One node of a process tree. parentStepId = null marks the root (the document whose upload starts a run);
@@ -664,6 +696,7 @@ model ProcessStepDocument {
   linkedById          String
   isCurrent           Boolean           @default(true)
   linkedAt            DateTime          @default(now())
+  isAddition          Boolean           @default(false)
 
   processInstance   ProcessInstance @relation(fields: [processInstanceId], references: [id], onDelete: Cascade)
   processStep       ProcessStep     @relation(fields: [processStepId], references: [id], onDelete: Restrict)
@@ -721,12 +754,47 @@ model DocumentApprovalStep {
   actedById         String?
   actedAt           DateTime?
   comment           String?
+  // A step created when a document is sent down a unique track (levelNumber is 1000 + origin level * 100 + the track's
+  // position, so it never clashes with the flow's own levels). originLevel is the level the track was taken at;
+  // returnLevel is where the document goes once the receiver approves (null = fully approved).
+  isTrackStep       Boolean    @default(false)
+  originLevel       Int?
+  returnLevel       Int?
+  // A step created by "Send for approval": the person at `originLevel` picked one user to approve first (levelNumber
+  // is 1,000,000 + a counter). When that user approves, the document goes back to originLevel and to `sentById`.
+  isSideApproval    Boolean    @default(false)
+  sentById          String?
+  // The flow sends this level to the Project Director / Manager, but the project had none when the document was
+  // uploaded. The level waits ("Pending Project Director - No PD Assigned") until one is set on the project (the
+  // person is then added here) or an Admin user sends the level to someone.
+  awaitingProjectDirector Boolean @default(false)
+  awaitingProjectManager  Boolean @default(false)
 
   document  Document                       @relation(fields: [documentId], references: [id], onDelete: Cascade)
   actedBy   User?                          @relation("ApprovalStepActedBy", fields: [actedById], references: [id], onDelete: SetNull)
+  sentBy    User?                          @relation("ApprovalStepSentBy", fields: [sentById], references: [id], onDelete: SetNull)
   approvers DocumentApprovalStepApprover[]
+  tracks    DocumentApprovalTrack[]
 
   @@unique([documentId, levelNumber])
+  @@index([sentById])
+}
+
+// The unique tracks of a level, copied from the flow when the document is uploaded (later flow edits never change it).
+model DocumentApprovalTrack {
+  id                String   @id @default(cuid())
+  stepId            String
+  name              String
+  receiverUserId    String
+  returnLevel       Int?
+  signatureRequired Boolean  @default(true)
+  sortOrder         Int      @default(0)
+
+  step     DocumentApprovalStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  receiver User                 @relation("ApprovalTrackReceiver", fields: [receiverUserId], references: [id], onDelete: Cascade)
+
+  @@index([stepId])
+  @@index([receiverUserId])
 }
 
 model DocumentApprovalStepApprover {
@@ -735,6 +803,11 @@ model DocumentApprovalStepApprover {
   approverType ApproverType
   userTypeId   String?
   userId       String?
+  // True when this entry came from a "Project Director" flow entry. If the project's director changes, levels
+  // that have not been acted on yet move to the new director.
+  viaProjectDirector Boolean @default(false)
+  // The same for a "Project Manager" flow entry.
+  viaProjectManager  Boolean @default(false)
 
   step     DocumentApprovalStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
   userType UserType?            @relation(fields: [userTypeId], references: [id], onDelete: Restrict)
@@ -818,11 +891,81 @@ model Notification {
   @@index([isRead])
 }
 
+// One row per person: when their last "pending tasks" email went out. The hourly digest claims the row atomically
+// (claimedAt) before sending, so two workers (or the cron endpoint) can never send the same person two emails.
+model EmailDigestState {
+  userId     String    @id
+  lastSentAt DateTime  @default(now())
+  claimedAt  DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// One row (id "global"): hours between two summary emails to the same person. No row = every 1 hour.
+model MailDigestConfig {
+  id            String   @id @default("global")
+  intervalHours Int      @default(1)
+  updatedAt     DateTime @updatedAt
+}
+
+// What kinds of email people get. The mailing list is managed on its own page and no longer depends on roles.
+// MailKindDefault: how each kind is delivered unless a person has their own setting.
+model MailKindDefault {
+  kind     MailKind     @id
+  delivery MailDelivery
+}
+
+// One person's setting for one kind of email. delivery null = follow the default for that kind.
+// The three lists limit the documents the person is emailed about; empty lists mean everything they may access.
+// A document type id covers all its sub types; a sub type id covers only that sub type.
+// For the WATCH_* kinds a row is what puts the person on the list at all; for the other kinds the person is
+// emailed because of their involvement (approver, uploader, creator) and the row only adjusts delivery and scope.
+model MailSetting {
+  id                 String        @id @default(cuid())
+  userId             String
+  kind               MailKind
+  delivery           MailDelivery?
+  projectIds         String[]
+  documentTypeIds    String[]
+  documentSubtypeIds String[]
+  updatedAt          DateTime      @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind])
+  @@index([kind])
+}
+
+// "Email me when a document of this TYPE is uploaded / approved in the same process run as a document I uploaded
+// (scope OWN_UPLOADS) or can open (scope ACCESSIBLE)". One rule per person, scope and document type; set by an admin.
+model MailFollowRule {
+  id             String          @id @default(cuid())
+  userId         String
+  scope          MailFollowScope
+  documentTypeId String
+  events         MailFollowEvent[]
+  delivery       MailDelivery?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documentType DocumentType @relation(fields: [documentTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, scope, documentTypeId])
+  @@index([documentTypeId])
+}
+
 model EmailNotificationEvent {
   id          String         @id @default(cuid())
   recipientId String
   type        EmailEventType
   documentId  String?
+  // Which mailing-list kind this event belongs to (null for events queued before kinds existed) and whether it is
+  // sent on its own (INSTANT delivery) instead of inside the hourly summary.
+  kind        MailKind?
+  instant     Boolean        @default(false)
+  // Failed sends of an instant email. It is retried a little later each time and dropped after a few tries, so one
+  // address that keeps failing never holds up everybody else's emails.
+  attempts    Int            @default(0)
   createdAt   DateTime       @default(now())
   emailDueAt  DateTime
   emailSent   Boolean        @default(false)
@@ -1076,11 +1219,18 @@ enum StepStatus {
   REJECTED
   REVISION
   ON_HOLD
+  // Bypassed on purpose: the document took a unique track that returns past this level.
+  SKIPPED
 }
 
 enum ApproverType {
   USER
   USER_TYPE
+  // Flow templates only: the director of the document's project. When a document starts its flow this is
+  // copied onto the document as a USER entry (viaProjectDirector = true) naming the director at that time.
+  PROJECT_DIRECTOR
+  // Flow templates only: the manager of the document's project, copied the same way (viaProjectManager = true).
+  PROJECT_MANAGER
 }
 
 enum ApprovalActionType {
@@ -1096,6 +1246,10 @@ enum ApprovalActionType {
   COMMENTED
   CANCELLED
   ARCHIVED
+  // The document was sent down a unique track (straight to a named person) from a level.
+  UNIQUE_TRACK
+  // Someone sent the document to a chosen person for approval; it comes back to them once that person approves.
+  SENT_FOR_APPROVAL
 }
 
 enum DeletionRequestStatus {
@@ -1139,6 +1293,8 @@ enum NotificationType {
   DOCUMENT_ON_HOLD
   DOCUMENT_RESUMED
   PROCESS_UPLOAD_READY
+  // A deletion request waits for the people who may review it.
+  DELETION_REQUESTED
 }
 
 enum EmailEventType {
@@ -1149,4 +1305,35 @@ enum EmailEventType {
   APPROVAL_OVERDUE
   PROCESS_STEP_OVERDUE
   PROCESS_UPLOAD_READY
+  PROCESS_DOCUMENT_UPLOADED
+}
+
+enum MailKind {
+  AWAITING_REVIEW
+  AWAITING_UPLOAD
+  OWN_APPROVED
+  OWN_REJECTED
+  OWN_REVISION
+  WATCH_APPROVED
+  WATCH_REJECTED
+  WATCH_REVISION
+  PROCESS_UPLOADED
+  PROCESS_APPROVED
+}
+
+// Which documents of a process a follow-up rule looks at: the ones the person uploaded, or the ones they may open.
+enum MailFollowScope {
+  OWN_UPLOADS
+  ACCESSIBLE
+}
+
+enum MailFollowEvent {
+  UPLOADED
+  APPROVED
+}
+
+enum MailDelivery {
+  OFF
+  DIGEST
+  INSTANT
 }

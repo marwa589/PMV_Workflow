@@ -7,7 +7,7 @@ import PageSummaryCards from "@/components/page-summary-cards";
 import { requireUserType } from "@/lib/auth/guards";
 import { USER_TYPE } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
-import { getDocumentsForClerk } from "@/lib/document-queries";
+import { getDocumentsForClerk, withEligibleApprovers } from "@/lib/document-queries";
 import { toListItem } from "@/lib/document-list";
 import { withDownloadTracking } from "@/lib/download-tracking";
 import { TONE_CLASSES } from "@/lib/status-colors";
@@ -27,7 +27,7 @@ export default async function ClerkDashboardPage() {
     }),
   ]);
 
-  const recentDocuments = await withDownloadTracking(data.documents.slice(0, 6), session.userId);
+  const recentDocuments = await withDownloadTracking(await withEligibleApprovers(data.documents.slice(0, 6)), session.userId);
   const revisionRequired = data.documents.filter((doc) => doc.status === DocumentStatus.REVISION_REQUIRED).length;
 
   return (

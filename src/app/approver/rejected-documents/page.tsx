@@ -16,8 +16,9 @@ export default async function ApproverRejectedDocumentsPage({ searchParams }: an
       rows={data.rejectedDocuments}
       searchParams={await Promise.resolve(searchParams)}
       title="Rejected Documents"
-      subtitle="Documents you rejected"
-      emptyMessage="No documents rejected by you yet."
+      subtitle="All rejected documents you have access to"
+      emptyMessage="No rejected documents."
+      lockedStatus="CANCELLED"
       showDownloadFilters
       table={{ showBulkActions: true, showDownloadTracking: true }}
     />

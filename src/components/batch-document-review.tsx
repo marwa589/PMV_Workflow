@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import DocumentReviewEditor, { type BatchAction, type BatchDecision } from "@/components/document-review-editor";
+import type { RelatedDocument } from "@/lib/related-documents";
 
 type ReviewItem = {
   id: string;
@@ -11,6 +12,7 @@ type ReviewItem = {
   downloadUrl: string;
   actionUrl: string;
   allowNoSignature: boolean;
+  relatedDocuments?: RelatedDocument[];
 };
 
 /**
@@ -64,8 +66,7 @@ export default function BatchDocumentReview({ items, hasSignature, returnUrl }: 
       setMessage(`${submitted.current.size} of ${items.length} documents submitted.`);
     }
 
-    router.push(returnUrl);
-    router.refresh();
+    router.replace(returnUrl);
   }
 
   return (
@@ -93,6 +94,7 @@ export default function BatchDocumentReview({ items, hasSignature, returnUrl }: 
               hasSignature={hasSignature}
               allowNoSignature={item.allowNoSignature}
               downloadUrl={item.downloadUrl}
+              relatedDocuments={item.relatedDocuments ?? []}
               actionUrl={item.actionUrl}
               returnUrl={returnUrl}
               batchMode

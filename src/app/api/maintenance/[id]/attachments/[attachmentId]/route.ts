@@ -14,7 +14,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!actor) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   const { id, attachmentId } = await params;
   const [ticket, attachment] = await Promise.all([
-    prisma.maintenanceTicket.findUnique({ where: { id }, include: { project: { select: { locationId: true } }, steps: { include: { approvers: true } } } }),
+    prisma.maintenanceTicket.findUnique({ where: { id }, include: { project: { select: { locationId: true, companyId: true } }, steps: { include: { approvers: true } } } }),
     prisma.maintenanceTicketAttachment.findFirst({ where: { id: attachmentId, ticketId: id } }),
   ]);
   if (!ticket || !attachment) return NextResponse.json({ message: "Attachment not found." }, { status: 404 });

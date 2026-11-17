@@ -1,10 +1,14 @@
 import { getDocumentStatusDisplay } from "@/lib/document-status";
+import { stepSortKey } from "@/lib/workflow/tracks";
 
 export type JourneyStep = {
   levelNumber: number;
   name: string | null;
   // The state of this level on this document: WAITING, PENDING, APPROVED, REJECTED, REVISION or ON_HOLD.
   status: string;
+  // Set on a step created by "Send for approval": it sits right after the level it was sent from.
+  originLevel?: number | null;
+  isSideApproval?: boolean;
 };
 
 type Props = {
@@ -23,9 +27,12 @@ function stepLabel(step: JourneyStep): string {
 
 /** Draws the document's own approval path, so it follows whatever flow the document was given. */
 export default function WorkflowJourneyChart({ status, currentWorkflowStep, steps, downloadedAt = null }: Props) {
-  const levels = [...steps].sort((a, b) => a.levelNumber - b.levelNumber);
+  // Levels a unique track skipped are left out; a track step sits right after the level it was taken at.
+  const levels = [...steps].filter((step) => step.status !== "SKIPPED").sort((a, b) => stepSortKey(a.levelNumber, a.originLevel) - stepSortKey(b.levelNumber, b.originLevel));
+  // While a document is with the person it was sent to for approval, the level it was sent from is still "in progress".
+  const sentFromLevels = new Set(levels.filter((step) => step.isSideApproval && (step.status === "PENDING" || step.status === "ON_HOLD")).map((step) => step.originLevel));
   const nodes = [
-    ...levels.map((step) => ({ label: stepLabel(step), state: step.status })),
+    ...levels.map((step) => ({ label: stepLabel(step), state: step.status === "WAITING" && sentFromLevels.has(step.levelNumber) ? "PENDING" : step.status })),
     { label: "Completed", state: status === "APPROVED" || status === "ARCHIVED" ? "APPROVED" : "WAITING" },
   ];
 

@@ -5,11 +5,14 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { callApi } from "@/lib/admin-client";
 import StatusBadge from "@/components/status-badge";
 import ExistingDocumentPicker from "@/components/existing-document-picker";
+import WhoCanAct from "@/components/admin/who-can-act";
+import type { WhoCanUploadOption } from "@/lib/workflow/who-can-upload";
 import { Banner, Card, Pill, dangerButton, primaryButton, secondaryButton } from "@/components/admin/admin-ui";
 
 type DocRef = {
   linkId: string;
   isCurrent: boolean;
+  isAddition?: boolean;
   source: string;
   linkedAt: string;
   id: string;
@@ -18,7 +21,7 @@ type DocRef = {
   status: string;
   statusLabel: string;
   // Present only when the viewer holds "View reference documents" for it.
-  referenceDocuments: Array<{ id: string; documentNumber: string; title: string }>;
+  referenceDocuments: Array<{ id: string; documentNumber: string; title: string; typeName: string }>;
 };
 type Step = {
   id: string;
@@ -34,6 +37,8 @@ type Step = {
   isOpenChoice: boolean;
   currentDocument: DocRef | null;
   history: DocRef[];
+  // Documents added to the group after the process was completed.
+  additions?: DocRef[];
 };
 type Run = {
   id: string;
@@ -42,8 +47,11 @@ type Run = {
   statusLabel: string;
   currentStepId: string | null;
   awaitingUpload: boolean;
+  // Admin only: who may upload each open choice while the run waits for its next document.
+  whoCanUpload?: WhoCanUploadOption[];
   canUpload: boolean;
   canCancel: boolean;
+  canComplete?: boolean;
   startedAt: string;
   completedAt: string | null;
   project: { id: string; code: string; name: string } | null;
@@ -65,6 +73,24 @@ type Run = {
  * One process run shown as its tree: the path taken so far, the documents that filled it, the choices that are
  * open now, and the branches that were not chosen. Documents are never linked here; they enter the run by upload.
  */
+/** One clear button per reference document (for example "View referenced Quotation"). */
+function ReferenceButtons({ references }: { references: Array<{ id: string; documentNumber: string; title: string; typeName: string }> }) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {references.map((reference) => (
+        <Link
+          key={reference.id}
+          href={`/documents/${reference.id}`}
+          title={`${reference.documentNumber} · ${reference.title}`}
+          className="inline-flex items-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+        >
+          {references.length > 1 ? `View referenced ${reference.typeName} (${reference.documentNumber})` : `View referenced ${reference.typeName}`}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 export default function ProcessRunView({ runId }: { runId: string }) {
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +112,15 @@ export default function ProcessRunView({ runId }: { runId: string }) {
     if (!window.confirm("Cancel this process run?")) return;
     setError(null);
     const result = await callApi(`/api/processes/${runId}`, "PATCH", { action: "cancel" });
+    if (!result.ok) return setError(result.message);
+    await load();
+  }
+
+  async function completeEarly() {
+    const reason = window.prompt("Mark this run as done even though documents are still waiting?\n\nEnter the reason (kept in the audit log):");
+    if (reason === null) return;
+    setError(null);
+    const result = await callApi(`/api/processes/${runId}`, "PATCH", { action: "complete", reason });
     if (!result.ok) return setError(result.message);
     await load();
   }
@@ -164,19 +199,23 @@ export default function ProcessRunView({ runId }: { runId: string }) {
           ) : null}
 
           {step.currentDocument && step.currentDocument.referenceDocuments.length > 0 ? (
-            <ul className="mt-2 space-y-0.5 text-xs text-slate-600">
-              {step.currentDocument.referenceDocuments.map((reference) => (
-                <li key={reference.id}>
-                  Reference document:{" "}
-                  <Link href={`/documents/${reference.id}`} className="font-medium text-cyan-700 hover:underline">
-                    {reference.documentNumber}
-                  </Link>{" "}
-                  · {reference.title}
+            <ReferenceButtons references={step.currentDocument.referenceDocuments} />
+          ) : null}
+          {step.delayHours > 0 ? <p className="mt-1 text-xs text-amber-700">Waits {step.delayHours} hour(s) after the previous document is approved.</p> : null}
+
+          {step.additions && step.additions.length > 0 ? (
+            <ul className="mt-2 space-y-1 text-xs text-slate-600">
+              {step.additions.map((item) => (
+                <li key={item.linkId} className="flex flex-wrap items-center gap-2">
+                  <Pill tone="slate">Added later</Pill>
+                  <StatusBadge status={item.status} label={item.statusLabel} />
+                  <Link href={`/documents/${item.id}`} className="font-medium text-cyan-700 hover:underline">{item.documentNumber}</Link>
+                  <span>{item.title}</span>
+                  {item.referenceDocuments.length > 0 ? <ReferenceButtons references={item.referenceDocuments} /> : null}
                 </li>
               ))}
             </ul>
           ) : null}
-          {step.delayHours > 0 ? <p className="mt-1 text-xs text-amber-700">Waits {step.delayHours} hour(s) after the previous document is approved.</p> : null}
 
           {step.history.length > 0 ? (
             <p className="mt-2 text-xs text-slate-500">
@@ -204,10 +243,21 @@ export default function ProcessRunView({ runId }: { runId: string }) {
             <Pill tone={run.status === "COMPLETED" ? "green" : run.status === "CANCELLED" ? "slate" : "amber"}>{run.statusLabel}</Pill>
             {run.awaitingUpload && run.canUpload ? <Link href={`/new-document?processInstanceId=${run.id}`} className={primaryButton}>Upload next document</Link> : null}
             <a href={`/api/processes/${run.id}/package-download`} className={secondaryButton}>Download package (PDF)</a>
+            {run.canComplete ? <button type="button" className={secondaryButton} onClick={completeEarly}>Mark as done</button> : null}
             {run.canCancel ? <button type="button" className={dangerButton} onClick={cancel}>Cancel run</button> : null}
           </div>
         }
       >
+        {run.awaitingUpload && (run.whoCanUpload ?? []).length > 0 ? (
+          <div className="mb-4 space-y-2 rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3">
+            {(run.whoCanUpload ?? []).map((option) => (
+              <div key={option.stepId}>
+                <p className="mb-1 text-xs font-medium text-slate-500">{option.name} · {option.typeLabel}</p>
+                <WhoCanAct people={option.people} label="Who can upload" />
+              </div>
+            ))}
+          </div>
+        ) : null}
         {run.awaitingUpload && run.canUpload ? (
           <p className="mb-4 text-sm text-slate-600">
             This process is waiting for its next document. Use the Upload button of the step you want (or choose one of the highlighted options on the upload page); the process follows the path of the one you choose. You can tick &quot;already approved&quot; on the upload page to add a document that was approved elsewhere.

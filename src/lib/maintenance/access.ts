@@ -17,7 +17,8 @@ import { USER_TYPE, type UserTypeCode } from "@/lib/auth/roles";
 export const SUBMIT_LEVEL = 0;
 
 export type MaintenanceEntry = { approverType: ApproverType; userId: string | null; userTypeId: string | null };
-export type MaintenanceProjectCtx = { projectId: string; locationId: string | null };
+// companyId: the company the project belongs to (a role given for that company covers the project).
+export type MaintenanceProjectCtx = { projectId: string; locationId: string | null; companyId?: string | null };
 
 export type MaintenanceSession = { userId: string; userType: UserTypeCode; email?: string; name?: string };
 
@@ -41,7 +42,7 @@ export async function loadMaintenanceActor(session: MaintenanceSession): Promise
 
 /** An assignment covers a project when its project / location columns allow it. Document-type scoping is irrelevant here. */
 export function assignmentCoversProject(assignment: AssignmentScope, ctx: MaintenanceProjectCtx): boolean {
-  if (assignment.companyId) return false;
+  if (assignment.companyId && assignment.companyId !== ctx.companyId) return false;
   if (assignment.locationId && assignment.locationId !== ctx.locationId) return false;
   const projectIds = [
     ...(assignment.projectId ? [assignment.projectId] : []),
@@ -99,7 +100,7 @@ export async function getSubmitOptions(actor: MaintenanceActor): Promise<SubmitO
   const assignments = await prisma.maintenanceWorkflowAssignment.findMany({
     where: { project: { isActive: true }, item: { isActive: true }, workflow: { isActive: true } },
     include: {
-      project: { select: { id: true, code: true, name: true, locationId: true } },
+      project: { select: { id: true, code: true, name: true, locationId: true, companyId: true } },
       item: { select: { id: true, name: true } },
       workflow: { include: workflowWithLevels },
     },
@@ -112,7 +113,7 @@ export async function getSubmitOptions(actor: MaintenanceActor): Promise<SubmitO
   for (const assignment of assignments) {
     if (workflowProblem(assignment.workflow)) continue;
     const submitters = assignment.workflow.levels.find((level) => level.levelNumber === SUBMIT_LEVEL)?.approvers ?? [];
-    const ctx = { projectId: assignment.project.id, locationId: assignment.project.locationId };
+    const ctx = { projectId: assignment.project.id, locationId: assignment.project.locationId, companyId: assignment.project.companyId };
     if (!actorMatchesEntries(actor, submitters, ctx)) continue;
     projects.set(assignment.project.id, { id: assignment.project.id, code: assignment.project.code, name: assignment.project.name });
     items.set(assignment.item.id, assignment.item);
@@ -135,11 +136,11 @@ type TicketForAccess = {
   projectId: string;
   status: string;
   currentLevel: number;
-  project: { locationId: string | null };
+  project: { locationId: string | null; companyId?: string | null };
   steps: Array<{ levelNumber: number; approvers: MaintenanceEntry[] }>;
 };
 
-const ctxOf = (ticket: TicketForAccess): MaintenanceProjectCtx => ({ projectId: ticket.projectId, locationId: ticket.project.locationId });
+const ctxOf = (ticket: TicketForAccess): MaintenanceProjectCtx => ({ projectId: ticket.projectId, locationId: ticket.project.locationId, companyId: ticket.project.companyId ?? null });
 
 /** The requester, admins, and everyone named on a level the ticket has reached (current or already passed). */
 export function canViewMaintenanceTicket(actor: MaintenanceActor, ticket: TicketForAccess): boolean {
@@ -176,12 +177,12 @@ export async function userHasMaintenanceAccess(session: MaintenanceSession): Pro
 // Email
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** People who should be told that a ticket reached a level: named users and typed users covering the project. Admins are not emailed. */
+/** People who should be told that a ticket reached a level: named users and typed users covering the project. Admin users are emailed only when named. */
 export async function emailMaintenanceLevel(ticketId: string, levelNumber: number) {
   const ticket = await prisma.maintenanceTicket.findUnique({
     where: { id: ticketId },
     include: {
-      project: { select: { name: true, code: true, locationId: true } },
+      project: { select: { name: true, code: true, locationId: true, companyId: true } },
       item: { select: { name: true } },
       steps: { where: { levelNumber }, include: { approvers: true } },
     },
@@ -189,14 +190,18 @@ export async function emailMaintenanceLevel(ticketId: string, levelNumber: numbe
   const step = ticket?.steps[0];
   if (!ticket || !step) return;
 
-  const ctx = { projectId: ticket.projectId, locationId: ticket.project.locationId };
+  const ctx = { projectId: ticket.projectId, locationId: ticket.project.locationId, companyId: ticket.project.companyId };
   const namedIds = step.approvers.flatMap((a) => (a.approverType === ApproverType.USER && a.userId ? [a.userId] : []));
   const typeIds = step.approvers.flatMap((a) => (a.approverType === ApproverType.USER_TYPE && a.userTypeId ? [a.userTypeId] : []));
   const candidates = await prisma.user.findMany({
-    where: { isActive: true, userType: { code: { not: USER_TYPE.ADMIN } }, OR: [...(namedIds.length ? [{ id: { in: namedIds } }] : []), ...(typeIds.length ? [{ userTypeId: { in: typeIds } }] : [])] },
-    select: { id: true, name: true, email: true, userTypeId: true, assignments: { select: ASSIGNMENT_SCOPE_SELECT } },
+    where: { isActive: true, emailNotificationsDisabled: false, OR: [...(namedIds.length ? [{ id: { in: namedIds } }] : []), ...(typeIds.length ? [{ userTypeId: { in: typeIds } }] : [])] },
+    select: { id: true, name: true, email: true, userTypeId: true, userType: { select: { code: true } }, assignments: { select: ASSIGNMENT_SCOPE_SELECT } },
   });
-  const recipients = candidates.filter((candidate) => namedIds.includes(candidate.id) || (typeIds.includes(candidate.userTypeId) && candidate.assignments.some((a) => assignmentCoversProject(a, ctx))));
+  // Named users (Admin users included); people of a named type need an assignment covering the project, and an Admin
+  // user is never brought in by their type.
+  const recipients = candidates.filter((candidate) =>
+    namedIds.includes(candidate.id) ||
+    (candidate.userType.code !== USER_TYPE.ADMIN && typeIds.includes(candidate.userTypeId) && candidate.assignments.some((a) => assignmentCoversProject(a, ctx))));
   if (recipients.length === 0) return;
 
   const { sendEmail } = await import("@/lib/mail");
@@ -228,7 +233,7 @@ export async function nextTicketNumber(year = new Date().getFullYear()): Promise
 // ---------------------------------------------------------------------------------------------------------------------
 
 export const maintenanceTicketInclude = {
-  project: { select: { id: true, code: true, name: true, locationId: true } },
+  project: { select: { id: true, code: true, name: true, locationId: true, companyId: true } },
   item: { select: { id: true, name: true } },
   requester: { select: { id: true, name: true, email: true } },
   steps: {

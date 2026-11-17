@@ -6,8 +6,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { BULK_APPROVE_MAX } from "@/lib/bulk-approve-config";
 // import { DocumentStatus } from "@prisma/client";
 import StatusBadge from "@/components/status-badge";
+import DownloadPackageButton from "@/components/download-package-button";
+import { useColumnPreferences } from "@/components/column-picker";
+import { Pager, usePagination } from "@/components/pager";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 import { matchesDocumentSearch, parseSearchQuery } from "@/lib/document-search";
+import WhoCanAct from "@/components/admin/who-can-act";
+import ReferenceCell, { type ReferenceSummaryItem } from "@/components/reference-cell";
+import type { EligiblePerson } from "@/lib/workflow/eligible-people-types";
 
 type DocumentStatus = string;
 
@@ -24,12 +30,17 @@ export type DocumentListItem = {
   projectLabel?: string | null;
   currentVersion: number;
   currentApproverName?: string | null;
+  // The people the document waits for, one by one (the table shows the first few and the rest in a tooltip).
+  currentApproverNames?: string[];
   processStatus?: string | null;
   processStatusLabel?: string | null;
   canReview?: boolean;
   // True when the document is pending and waiting for THIS user (it can be reviewed together with others).
   batchEligible?: boolean;
   rejectionComments?: string | null;
+  rejectedByName?: string | null;
+  // Used by the page to order the list (a time value; kept loose so the page can pass a number or a date).
+  sortTime?: number | string | Date | null;
   dateLabel: string;
   downloadedAt?: Date | null;
   receivedAt?: Date | null;
@@ -37,6 +48,10 @@ export type DocumentListItem = {
   // True when the viewer holds documents.confirm_receipt for this approved document and it is not received yet.
   canConfirmReceipt?: boolean;
   approvalDate?: Date | null;
+  // Admin only: the people who can act on the level the document waits at.
+  whoCanReview?: EligiblePerson[];
+  // Reference documents attached to this document that the viewer may see (type and how many).
+  references?: ReferenceSummaryItem[];
 };
 
 function formatDateTime(value?: Date | null): string {
@@ -55,23 +70,45 @@ type Props = {
   showAdminColumns?: boolean;
   // Adds "Review selected" (several pending documents approved together). Only for users an admin allowed to do so.
   allowBatchReview?: boolean;
+  // Shows the "Reference documents" column (people who may view reference documents).
+  showReferences?: boolean;
 };
 
-export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false, allowAdminDelete = false, allowReview = false, showDownloadTracking = false, allowBatchReview = false, showAdminColumns = false }: Props) {
+export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false, allowAdminDelete = false, allowReview = false, showDownloadTracking = false, allowBatchReview = false, showAdminColumns = false, showReferences = false }: Props) {
   const router = useRouter();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [visibleCount, setVisibleCount] = useState(10);
   const searchParams = useSearchParams();
 
   const searchQuery = useMemo(() => parseSearchQuery(searchParams?.get("search")), [searchParams]);
   const visibleDocuments = useMemo(() => documents.filter((doc) => matchesDocumentSearch(doc, searchQuery)), [documents, searchQuery]);
-  const pagedDocuments = visibleDocuments.slice(0, visibleCount);
+  const pagination = usePagination(visibleDocuments, { storageKey: "document-list", initialPageSize: 25 });
+  const pagedDocuments = pagination.pageItems;
   const approvedDocuments = useMemo(() => visibleDocuments.filter((doc) => doc.status === "APPROVED"), [visibleDocuments]);
   const selectedDocuments = useMemo(() => visibleDocuments.filter((doc) => selectedIds.includes(doc.id)), [selectedIds, visibleDocuments]);
   const showReceivedColumn = documents.some((doc) => doc.receiptConfirmationRequired && (doc.canConfirmReceipt || doc.receivedAt));
   const [receivedOverrides, setReceivedOverrides] = useState<Record<string, string>>({});
   const [receiptBusyId, setReceiptBusyId] = useState<string | null>(null);
-  const columnCount = (showReceivedColumn ? 1 : 0) + (showBulkActions ? 1 : 0) + (showDownloadTracking ? 12 : 9) - (showAdminColumns ? 0 : 2);
+  const { isShown, picker } = useColumnPreferences("document-list", [
+    { key: "number", label: "Document Number" },
+    { key: "title", label: "Title" },
+    { key: "status", label: "Status" },
+    ...(showAdminColumns ? [{ key: "process", label: "Process Status" }] : []),
+    { key: "project", label: "Project" },
+    ...(showDownloadTracking
+      ? [
+          { key: "downloadStatus", label: "Download Status" },
+          { key: "downloadTime", label: "Download Timestamp" },
+          { key: "approvalDate", label: "Approval Date/Time" },
+        ]
+      : []),
+    ...(showAdminColumns ? [{ key: "version", label: "Version" }] : []),
+    { key: "approver", label: "Current Approver" },
+    ...(showAdminColumns ? [{ key: "whoCanReview", label: "Who can review" }] : []),
+    ...(showReferences ? [{ key: "references", label: "Reference documents" }] : []),
+    { key: "updated", label: "Last Updated" },
+    ...(showReceivedColumn ? [{ key: "received", label: "Received" }] : []),
+  ]);
+  const columnCount = (showReceivedColumn ? 1 : 0) + (showBulkActions ? 1 : 0) + (showDownloadTracking ? 12 : 9) - (showAdminColumns ? 0 : 2) + (showAdminColumns ? 1 : 0) + (showReferences ? 1 : 0);
 
   async function confirmReceived(id: string) {
     setReceiptBusyId(id);
@@ -198,7 +235,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
     }
 
     if (doc.status === "CANCELLED") {
-      return "Rejected";
+      return doc.rejectedByName ? `Rejected by ${doc.rejectedByName}` : "Rejected";
     }
 
     if (doc.status === "ARCHIVED") {
@@ -206,6 +243,20 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
     }
 
     return doc.currentApproverName || "Unassigned";
+  }
+
+  // A level that names a user type can have many eligible people, so a long list is shortened (full list on hover).
+  const MAX_APPROVER_NAMES = 3;
+  function renderCurrentApprover(doc: DocumentListItem) {
+    const names = doc.currentApproverNames ?? [];
+    const waiting = doc.status !== "APPROVED" && doc.status !== "CANCELLED" && doc.status !== "ARCHIVED";
+    if (!waiting || names.length <= MAX_APPROVER_NAMES) return getCurrentApproverDisplay(doc);
+    return (
+      <span title={names.join(", ")}>
+        {names.slice(0, MAX_APPROVER_NAMES).join(", ")}{" "}
+        <span className="text-xs font-medium text-slate-500">+{names.length - MAX_APPROVER_NAMES} more</span>
+      </span>
+    );
   }
 
   return (
@@ -221,6 +272,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
           <button type="button" onClick={() => handleBulkDownload("selected")} disabled={selectedDocuments.length === 0} className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
             Download selected
           </button>
+          <DownloadPackageButton ids={selectedDocuments.map((doc) => doc.id)} disabled={selectedDocuments.length === 0} label="Download package" compact />
           {allowBatchReview ? (
             <>
               <button
@@ -247,21 +299,24 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
           ) : null}
         </div>
       ) : null}
+      <div className="flex justify-end border-b border-slate-100 px-5 py-2">{picker}</div>
       <div className="overflow-x-auto">
       <table className="min-w-full text-left text-sm">
         <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
           <tr>
             {showBulkActions ? <th className="px-3 py-3 font-semibold"><input type="checkbox" checked={visibleDocuments.length > 0 && selectedIds.length === visibleDocuments.length} onChange={() => (selectedIds.length === visibleDocuments.length ? clearSelection() : selectAll())} className="h-4 w-4 rounded border-slate-300" /></th> : null}
-            <th className="px-5 py-3 font-semibold">Document Number</th>
-            <th className="px-5 py-3 font-semibold">Title</th>
-            <th className="px-5 py-3 font-semibold">Status</th>
-            {showAdminColumns ? <th className="px-5 py-3 font-semibold">Process Status</th> : null}
-            <th className="px-5 py-3 font-semibold">Project</th>
-            {showDownloadTracking ? <><th className="px-5 py-3 font-semibold">Download Status</th><th className="px-5 py-3 font-semibold">Download Timestamp</th><th className="px-5 py-3 font-semibold">Approval Date/Time</th></> : null}
-            {showAdminColumns ? <th className="px-5 py-3 font-semibold">Version</th> : null}
-            <th className="px-5 py-3 font-semibold">Current Approver</th>
-            <th className="px-5 py-3 font-semibold">Last Updated</th>
-            {showReceivedColumn ? <th className="px-5 py-3 font-semibold">Received</th> : null}
+            {isShown("number") ? <th className="px-5 py-3 font-semibold">Document Number</th> : null}
+            {isShown("title") ? <th className="px-5 py-3 font-semibold">Title</th> : null}
+            {isShown("status") ? <th className="px-5 py-3 font-semibold">Status</th> : null}
+            {showAdminColumns && isShown("process") ? <th className="px-5 py-3 font-semibold">Process Status</th> : null}
+            {isShown("project") ? <th className="px-5 py-3 font-semibold">Project</th> : null}
+            {showDownloadTracking && isShown("downloadStatus") ? <th className="px-5 py-3 font-semibold">Download Status</th> : null}{showDownloadTracking && isShown("downloadTime") ? <th className="px-5 py-3 font-semibold">Download Timestamp</th> : null}{showDownloadTracking && isShown("approvalDate") ? <th className="px-5 py-3 font-semibold">Approval Date/Time</th> : null}
+            {showAdminColumns && isShown("version") ? <th className="px-5 py-3 font-semibold">Version</th> : null}
+            {isShown("approver") ? <th className="px-5 py-3 font-semibold">Current Approver</th> : null}
+            {showAdminColumns && isShown("whoCanReview") ? <th className="px-5 py-3 font-semibold">Who can review</th> : null}
+            {showReferences && isShown("references") ? <th className="px-5 py-3 font-semibold">Reference documents</th> : null}
+            {isShown("updated") ? <th className="px-5 py-3 font-semibold">Last Updated</th> : null}
+            {showReceivedColumn && isShown("received") ? <th className="px-5 py-3 font-semibold">Received</th> : null}
             <th className="px-5 py-3 font-semibold">Actions</th>
           </tr>
         </thead>
@@ -288,7 +343,8 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                       />
                     </td>
                   ) : null}
-                  <td className="px-5 py-4 font-medium text-slate-900">
+                  {isShown("number") ? (
+<td className="px-5 py-4 font-medium text-slate-900">
                     <Link
                       href={detailUrl}
                       className="text-slate-900 hover:text-indigo-600 hover:underline"
@@ -296,7 +352,9 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                       {doc.documentNumber}
                     </Link>
                   </td>
-                  <td className="px-5 py-4 text-slate-700">
+) : null}
+                  {isShown("title") ? (
+<td className="px-5 py-4 text-slate-700">
                     <Link
                       href={detailUrl}
                       className="text-slate-800 hover:text-indigo-600 hover:underline"
@@ -307,28 +365,39 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                       <div className="mt-1 text-xs text-slate-500">{doc.rejectionComments}</div>
                     ) : null}
                   </td>
-                  <td className="px-5 py-4">
+) : null}
+                  {isShown("status") ? (
+<td className="px-5 py-4">
                     <StatusBadge status={doc.status} label={doc.statusLabel} downloaded={Boolean(doc.downloadedAt)} />
                   </td>
-                  {showAdminColumns ? (
+) : null}
+                  {showAdminColumns && isShown("process") ? (
                     <td className="px-5 py-4">
                       <StatusBadge status={doc.processStatus || "NONE"} label={doc.processStatusLabel || "No Process"} />
                     </td>
                   ) : null}
-                  <td className="px-5 py-4 text-slate-700">{doc.projectLabel || "—"}</td>
-                  {showDownloadTracking ? (
-                    <>
-                      <td className="px-5 py-4 text-slate-700">
-                        {doc.downloadedAt ? "Downloaded" : "Not Downloaded"}
-                      </td>
-                      <td className="px-5 py-4 text-slate-500">{formatDateTime(doc.downloadedAt)}</td>
-                      <td className="px-5 py-4 text-slate-500">{formatDateTime(doc.approvalDate)}</td>
-                    </>
+                  {isShown("project") ? (
+<td className="px-5 py-4 text-slate-700">{doc.projectLabel || "—"}</td>
+) : null}
+                  {showDownloadTracking && isShown("downloadStatus") ? (
+                    <td className="px-5 py-4 text-slate-700">{doc.downloadedAt ? "Downloaded" : "Not Downloaded"}</td>
                   ) : null}
-                  {showAdminColumns ? <td className="px-5 py-4 text-slate-700">V{doc.currentVersion}</td> : null}
-                  <td className="px-5 py-4 text-slate-700">{getCurrentApproverDisplay(doc)}</td>
-                  <td className="px-5 py-4 text-slate-500">{doc.dateLabel}</td>
-                  {showReceivedColumn ? (
+                  {showDownloadTracking && isShown("downloadTime") ? <td className="px-5 py-4 text-slate-500">{formatDateTime(doc.downloadedAt)}</td> : null}
+                  {showDownloadTracking && isShown("approvalDate") ? <td className="px-5 py-4 text-slate-500">{formatDateTime(doc.approvalDate)}</td> : null}
+                  {showAdminColumns && isShown("version") ? <td className="px-5 py-4 text-slate-700">V{doc.currentVersion}</td> : null}
+                  {isShown("approver") ? (
+<td className="px-5 py-4 text-slate-700">{renderCurrentApprover(doc)}</td>
+) : null}
+                  {showAdminColumns && isShown("whoCanReview") ? (
+                    <td className="px-5 py-4 align-top">
+                      {doc.whoCanReview && doc.whoCanReview.length > 0 ? <WhoCanAct people={doc.whoCanReview} label="Who can review" /> : ["PENDING", "ON_HOLD", "REVISION_REQUIRED"].includes(doc.status) ? <p className="text-xs font-medium text-amber-700">Nobody except admins</p> : <span className="text-slate-400">—</span>}
+                    </td>
+                  ) : null}
+                  {showReferences && isShown("references") ? <td className="px-5 py-4 align-top"><ReferenceCell items={doc.references ?? []} /></td> : null}
+                  {isShown("updated") ? (
+<td className="px-5 py-4 text-slate-500">{doc.dateLabel}</td>
+) : null}
+                  {showReceivedColumn && isShown("received") ? (
                     <td className="px-5 py-4 text-slate-700">
                       {!doc.receiptConfirmationRequired ? <span className="text-xs text-slate-400">Not required</span> : doc.receivedAt || receivedOverrides[doc.id] ? (
                         <span className="text-xs font-medium text-green-700">Received {formatDateTime(new Date(receivedOverrides[doc.id] ?? (doc.receivedAt as Date)))}</span>
@@ -355,6 +424,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                       >
                         Download
                       </a>
+                      <DownloadPackageButton ids={[doc.id]} label="Package" compact />
                       {allowReview && (doc.canReview ?? (doc.status === "PENDING" || doc.status === "ON_HOLD" || doc.status === "REVISION_REQUIRED")) ? (
                         <Link
                           href={`/approver/review/${doc.id}`}
@@ -372,13 +442,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
         </tbody>
       </table>
     </div>
-    {visibleCount < visibleDocuments.length ? (
-      <div className="border-t border-slate-200 px-5 py-4 text-center">
-        <button type="button" onClick={() => setVisibleCount((count) => count + 10)} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-          Load more
-        </button>
-      </div>
-    ) : null}
+    <Pager {...pagination} noun="documents" />
     </div>
   );
 }
