@@ -6,6 +6,7 @@ import DashboardShell from "@/components/dashboard-shell";
 import StatusBadge from "@/components/status-badge";
 import WorkflowJourneyChart from "@/components/workflow-journey-chart";
 import PurchaseOrderUpload from "@/components/purchase-order-upload";
+import ReceivingVoucherCell from "@/components/receiving-voucher-cell";
 import { requireAuth } from "@/lib/auth/guards";
 import { getDefaultRouteForRole } from "@/lib/auth/roles";
 import { canAccessDocument } from "@/lib/auth/resource-access";
@@ -13,6 +14,9 @@ import { isOmar } from "@/lib/po-access";
 import { isKsaViewer, KSA_USER_LOCATIONS } from "@/lib/ksa-viewer";
 import { canViewInvoicesForMr } from "@/lib/invoice-access";
 import { prisma } from "@/lib/prisma";
+import { getPendingApprover1LabelOverride, isAvkUploaderWorkflowDocument, isProjectDirectorApprover, PROJECT_DIRECTOR_STAGE_LABEL } from "@/lib/mohamed-document-workflow";
+import { redirectedStatusLabel } from "@/lib/document-redirect";
+import { getKsaProjectByName, ksaProjectDirectorEmail } from "@/lib/ksa-projects";
 
 export const dynamic = "force-dynamic";
 
@@ -79,7 +83,13 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
       },
       invoices: {
         orderBy: { uploadedAt: "desc" },
-        include: { uploadedBy: { select: { name: true } } },
+        include: {
+          uploadedBy: { select: { name: true } },
+          goodsReceivingVoucher: { select: { id: true, originalName: true } },
+        },
+      },
+      cashReceivingVoucher: {
+        select: { id: true, originalName: true, uploadedAt: true, uploadedBy: { select: { name: true } } },
       },
     },
   });
@@ -103,6 +113,9 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
     document.status !== DocumentStatus.REJECTED;
   const canViewDirectMrInvoices = document.documentType === "MATERIAL_REQUISITION"
     && await canViewInvoicesForMr(session, document.id);
+  // In the AVK MR flow the first approval stage is Ramzi, who acts as Project Director (not PMV Engineer).
+  const usesProjectDirectorStage = isProjectDirectorApprover(document.currentApprover)
+    || (document.documentType === "MATERIAL_REQUISITION" && isAvkUploaderWorkflowDocument(document.createdBy?.email, document.documentType, document.uploaderLocation) && !getKsaProjectByName(document.projectName));
   return (
     <DashboardShell
       role={session.role}
@@ -159,7 +172,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
           </div>
           <StatusBadge
             status={document.status}
-            label={(document.documentType === "MATERIAL_REQUISITION" || document.documentType === "COMPARISON") && document.projectName === "Ready Mix Khobar" && document.status === DocumentStatus.PENDING_APPROVER_1 ? "Pending Project Director" : undefined}
+            label={document.redirectedById ? redirectedStatusLabel(document.currentApprover?.name) : (() => { const ksaProject = getKsaProjectByName(document.projectName); return Boolean(ksaProject && ksaProjectDirectorEmail(ksaProject, document.documentType)); })() && document.status === DocumentStatus.PENDING_APPROVER_1 ? "Pending Project Director" : getPendingApprover1LabelOverride(document.status, document.currentApprover)}
           />
         </div>
 
@@ -236,7 +249,7 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <WorkflowJourneyChart status={document.status} lastActiveStage={document.lastActiveStage} downloadedAt={document.downloadRecords[0]?.downloadedAt ?? null} />
+        <WorkflowJourneyChart status={document.status} lastActiveStage={document.lastActiveStage} stageOneLabel={usesProjectDirectorStage ? PROJECT_DIRECTOR_STAGE_LABEL : undefined} downloadedAt={document.downloadRecords[0]?.downloadedAt ?? null} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr,0.8fr]">
@@ -366,15 +379,36 @@ export default async function DocumentDetailsPage({ params }: { params: Promise<
           {document.invoices.length === 0 ? <p className="px-5 py-6 text-sm text-slate-500">No invoices uploaded for this Cash MR.</p> : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-sm">
-                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3 font-semibold">Invoice</th><th className="px-5 py-3 font-semibold">Uploaded</th><th className="px-5 py-3 font-semibold">Uploaded By</th><th className="px-5 py-3 font-semibold">Action</th></tr></thead>
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3 font-semibold">Invoice</th><th className="px-5 py-3 font-semibold">Uploaded</th><th className="px-5 py-3 font-semibold">Uploaded By</th><th className="px-5 py-3 font-semibold">Action</th><th className="px-5 py-3 font-semibold">GRV</th></tr></thead>
                 <tbody>{document.invoices.map((invoice) => (
                   <tr key={invoice.id} className="border-t border-slate-100">
                     <td className="px-5 py-4 font-medium text-slate-900">{invoice.originalName}</td>
                     <td className="px-5 py-4 text-slate-600">{formatDate(invoice.uploadedAt)}</td>
                     <td className="px-5 py-4 text-slate-600">{invoice.uploadedBy.name}</td>
                     <td className="px-5 py-4"><a href={`/api/invoices/${invoice.id}/download`} className="font-medium text-cyan-700 hover:underline">Download</a></td>
+                    <td className="px-5 py-4"><ReceivingVoucherCell voucher={invoice.goodsReceivingVoucher} kind="GRV" canDelete={session.role === UserRole.ADMIN} /></td>
                   </tr>
                 ))}</tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {canViewDirectMrInvoices && document.mrType === "CASH" ? (
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4"><h3 className="text-base font-semibold text-slate-900">Cash Receiving Voucher</h3></div>
+          {!document.cashReceivingVoucher ? <p className="px-5 py-6 text-sm text-slate-500">No Cash Receiving Voucher uploaded for this Cash MR.</p> : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3 font-semibold">Voucher</th><th className="px-5 py-3 font-semibold">Uploaded</th><th className="px-5 py-3 font-semibold">Uploaded By</th></tr></thead>
+                <tbody>
+                  <tr className="border-t border-slate-100">
+                    <td className="px-5 py-4"><ReceivingVoucherCell voucher={document.cashReceivingVoucher} kind="CASH_RECEIVING_VOUCHER" canDelete={session.role === UserRole.ADMIN} /></td>
+                    <td className="px-5 py-4 text-slate-600">{formatDate(document.cashReceivingVoucher.uploadedAt)}</td>
+                    <td className="px-5 py-4 text-slate-600">{document.cashReceivingVoucher.uploadedBy.name}</td>
+                  </tr>
+                </tbody>
               </table>
             </div>
           )}

@@ -5,6 +5,8 @@ import { requireAuth } from "@/lib/auth/guards";
 import { hasRequiredRole } from "@/lib/auth/permissions";
 import { prisma } from "@/lib/prisma";
 import { isAvkUploaderWorkflowDocument, isRamziDocumentApprover } from "@/lib/mohamed-document-workflow";
+import { canRedirectDocuments, isRedirectedToUser } from "@/lib/document-redirect";
+import { isKsaProjectDirectorForDocument } from "@/lib/ksa-projects";
 
 export const dynamic = "force-dynamic";
 
@@ -22,26 +24,41 @@ export default async function ApproverDocumentReviewPage({ params }: { params: P
       documentType: true,
       projectName: true,
       status: true,
+      uploaderLocation: true,
       createdBy: { select: { email: true, location: true } },
       versions: { where: { versionNumber: { equals: 0 } }, select: { id: true } },
       createdById: true,
+      redirectedById: true,
+      redirectFallback: true,
+      redirectedBy: { select: { name: true } },
     },
   });
 
   if (!document) notFound();
   if (document.currentApproverId !== session.userId) redirect("/unauthorized");
-  const isReadyMixProjectDirector = session.email.trim().toLowerCase() === "elie.azzam@ahmadiah.com"
-    && (document.documentType === "MATERIAL_REQUISITION" || document.documentType === "COMPARISON")
-    && document.projectName === "Ready Mix Khobar"
-    && document.createdBy.email?.trim().toLowerCase() === "dispatcher.pmv@ahmadiah.com"
+  // Someone Marc redirected the document to can review it whatever their role.
+  const isRedirectTarget = isRedirectedToUser(document, session.userId);
+  // KSA project director stage (Ready Mix Khobar: Elie Azzam; WP03 MRs: Elias Nassar).
+  const isReadyMixProjectDirector = isKsaProjectDirectorForDocument(session.email, document)
     && document.status === "PENDING_APPROVER_1";
   const isMohamedWorkflowApproval = isRamziDocumentApprover(session.email)
     && document.documentType === "MATERIAL_REQUISITION"
-    && isAvkUploaderWorkflowDocument(document.createdBy.email, document.documentType)
+    && isAvkUploaderWorkflowDocument(document.createdBy.email, document.documentType, document.uploaderLocation)
     && document.status === "PENDING_APPROVER_1";
-  if (!hasRequiredRole(session, [UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]) && !isReadyMixProjectDirector && !isMohamedWorkflowApproval) {
+  if (!hasRequiredRole(session, [UserRole.APPROVER_1, UserRole.APPROVER_2, UserRole.APPROVER_3]) && !isReadyMixProjectDirector && !isMohamedWorkflowApproval && !isRedirectTarget) {
     redirect("/unauthorized");
   }
+
+  const canRedirect = !isRedirectTarget
+    && canRedirectDocuments(session.email)
+    && (document.status === "PENDING_APPROVER_1" || document.status === "PENDING_APPROVER_2" || document.status === "PENDING_APPROVER_3");
+  const redirectUsers = canRedirect
+    ? await prisma.user.findMany({
+        where: { id: { not: session.userId }, role: { not: UserRole.KSA_VIEWER } },
+        select: { id: true, name: true, email: true },
+        orderBy: [{ name: "asc" }, { email: "asc" }],
+      })
+    : [];
 
   const user = await prisma.user.findUnique({
     where: { id: session.userId },
@@ -63,8 +80,11 @@ export default async function ApproverDocumentReviewPage({ params }: { params: P
       title={document.title}
       hasSignature={Boolean(user?.signaturePath)}
       allowNoSignature={allowNoSignature || isGeorgeAvrOrAvkMr}
-      allowApprovalRouteSelection={session.role === UserRole.APPROVER_3}
-      returnUrl={isReadyMixProjectDirector ? "/errs?section=dashboard" : isMohamedWorkflowApproval ? "/approver/my-documents" : undefined}
+      allowApprovalRouteSelection={session.role === UserRole.APPROVER_3 && !isRedirectTarget}
+      redirectUsers={canRedirect ? redirectUsers : undefined}
+      redirectedByName={isRedirectTarget ? document.redirectedBy?.name ?? "" : null}
+      redirectFallback={isRedirectTarget ? document.redirectFallback : null}
+      returnUrl={isRedirectTarget ? "/redirected-documents" : isReadyMixProjectDirector ? "/errs?section=dashboard" : isMohamedWorkflowApproval ? "/approver/my-documents" : undefined}
     />
   );
 }

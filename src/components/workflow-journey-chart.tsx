@@ -4,6 +4,8 @@ type Props = {
   status: DocumentStatus;
   lastActiveStage?: DocumentStatus | null;
   downloadedAt?: Date | null;
+  /** Overrides the label of stage 1 (e.g. "Project Director" when Ramzi is the approver). */
+  stageOneLabel?: string;
 };
 
 const steps = [
@@ -14,10 +16,10 @@ const steps = [
   { label: "Completed", value: 4 },
 ];
 
-function getStageLabel(stage: DocumentStatus | null | undefined) {
+function getStageLabel(stage: DocumentStatus | null | undefined, stageOneLabel = "PMV Engineer") {
   switch (stage) {
     case DocumentStatus.PENDING_APPROVER_1:
-      return "PMV Engineer";
+      return stageOneLabel;
     case DocumentStatus.PENDING_APPROVER_2:
       return "Workshop Manager";
     case DocumentStatus.PENDING_APPROVER_3:
@@ -58,15 +60,15 @@ function resolveStepIndex(status: DocumentStatus, lastActiveStage?: DocumentStat
   }
 }
 
-export default function WorkflowJourneyChart({ status, lastActiveStage, downloadedAt }: Props) {
+export default function WorkflowJourneyChart({ status, lastActiveStage, downloadedAt, stageOneLabel = "PMV Engineer" }: Props) {
   const currentStep = resolveStepIndex(status, lastActiveStage);
   const isDownloaded = Boolean(downloadedAt);
   const isApproved = status === DocumentStatus.APPROVED || status === DocumentStatus.ARCHIVED;
   const stageLabel = isDownloaded
     ? "Downloaded"
     : status === DocumentStatus.REJECTED
-      ? `Rejected at ${getStageLabel(lastActiveStage)}`
-      : getStageLabel(status);
+      ? `Rejected at ${getStageLabel(lastActiveStage, stageOneLabel)}`
+      : getStageLabel(status, stageOneLabel);
   const progressColor = status === DocumentStatus.REJECTED
     ? "bg-rose-600"
     : isDownloaded
@@ -102,7 +104,8 @@ export default function WorkflowJourneyChart({ status, lastActiveStage, download
         />
 
         <div className="relative flex items-start justify-between gap-2">
-          {steps.map((step, index) => {
+          {steps.map((baseStep, index) => {
+            const step = index === 1 ? { ...baseStep, label: stageOneLabel } : baseStep;
             const isComplete = index < currentStep;
             const isReached = index <= currentStep;
             const isRejectedStep = status === DocumentStatus.REJECTED && index === currentStep;

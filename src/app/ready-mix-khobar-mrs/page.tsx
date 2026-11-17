@@ -72,6 +72,8 @@ export default async function ReadyMixKhobarMrsPage({ searchParams }: { searchPa
       downloadedAt: tracking.get(record.id).downloadedAt,
       approvalDate: tracking.get(record.id).approvalDate,
       dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(record.updatedAt),
+      lastUpdatedAt: record.updatedAt,
+      isRedirected: Boolean(record.redirectedById),
     }));
 
   const summaryCards = [

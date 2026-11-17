@@ -39,6 +39,8 @@ export default async function ApproverRejectedDocumentsPage({ searchParams }: an
         downloadedAt: docTracking.get(doc.id).downloadedAt,
         approvalDate: docTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+        lastUpdatedAt: doc.updatedAt,
+        isRedirected: Boolean(doc.redirectedById),
       })),
     ...data.errRejectedDocuments
       .map((doc) => ({
@@ -55,6 +57,7 @@ export default async function ApproverRejectedDocumentsPage({ searchParams }: an
         downloadedAt: errTracking.get(doc.id).downloadedAt,
         approvalDate: errTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+        lastUpdatedAt: doc.updatedAt,
       })),
   ];
 

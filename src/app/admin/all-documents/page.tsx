@@ -81,6 +81,8 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
     downloadedAt: docTracking.get(doc.id).downloadedAt,
     approvalDate: docTracking.get(doc.id).approvalDate,
     dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+    lastUpdatedAt: doc.updatedAt,
+    isRedirected: Boolean(doc.redirectedById),
       })),
     ...errDocuments
       .filter((doc) => !statusFilter || doc.status === statusFilter)
@@ -102,6 +104,7 @@ export default async function AdminAllDocumentsPage({ searchParams }: any) {
         downloadedAt: errTracking.get(doc.id).downloadedAt,
         approvalDate: errTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+        lastUpdatedAt: doc.updatedAt,
       })),
   ];
 

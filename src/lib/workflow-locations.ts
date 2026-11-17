@@ -83,7 +83,14 @@ export async function resolveWorkflowApproverIdsForUploader(
   tx: { user: { findFirst: (args: any) => Promise<any | null> } },
   uploaderEmail?: string | null,
 ) {
-  const location = resolveUserLocationFromEmail(uploaderEmail);
+  return resolveWorkflowApproverIdsForLocation(tx, resolveUserLocationFromEmail(uploaderEmail));
+}
+
+/** Same approvers as resolveWorkflowApproverIdsForUploader, chosen by location (e.g. Erro uploading to AVK). */
+export async function resolveWorkflowApproverIdsForLocation(
+  tx: { user: { findFirst: (args: any) => Promise<any | null> } },
+  location: UserLocation | null,
+) {
   const assignment = location ? LOCATION_APPROVER_ASSIGNMENTS[location] : null;
 
   if (!assignment) {

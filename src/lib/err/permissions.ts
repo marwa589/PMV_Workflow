@@ -42,6 +42,13 @@ export async function getErrAccess() {
     return null;
   }
 
+  // ERRs Marc redirected to this user and still waiting for them. Opens the ERR module for
+  // that ERR even when the user normally has no ERR access.
+  const redirectedErrCount = await prisma.err.count({
+    where: { redirectedById: { not: null }, currentApproverId: user.id, status: "PENDING" },
+  });
+  const hasRedirectedErrs = redirectedErrCount > 0;
+
   const accessEntries = user.errAccess;
   const roles = accessEntries.map((entry) => entry.role);
   const moduleVisibility = getModuleVisibility(user.name, user.role);
@@ -112,9 +119,12 @@ export async function getErrAccess() {
     isGlobalViewer,
     viewerProjectIds,
 
+    hasRedirectedErrs,
+
     canAccessErrModule:
-      (moduleVisibility !== "DOCUMENTS_ONLY" || isWorkshopManager || isUploader || isKsaViewerUser || isAvkDataViewer) &&
-      (isAdmin || isWorkshopManager || isPmvManager || roles.length > 0 || isUploader || isKsaViewerUser || isAvkDataViewer),
+      ((moduleVisibility !== "DOCUMENTS_ONLY" || isWorkshopManager || isUploader || isKsaViewerUser || isAvkDataViewer) &&
+      (isAdmin || isWorkshopManager || isPmvManager || roles.length > 0 || isUploader || isKsaViewerUser || isAvkDataViewer))
+      || hasRedirectedErrs,
   };
 }
 
@@ -158,6 +168,8 @@ export function getErrVisibilityWhere(
   }
 
   const conditions: Prisma.ErrWhereInput[] = [];
+  // ERRs Marc redirected to this user, while they are with them.
+  conditions.push({ redirectedById: { not: null }, currentApproverId: access.userId });
   if (access.isAvkDataViewer) {
     conditions.push({ createdBy: { location: "AVK" } });
   }
@@ -274,7 +286,7 @@ export async function canApproveErr(
   access: ErrAccess,
   errId: string,
 ): Promise<boolean> {
-  if (!access.canAccessErrModule || access.isKsaViewer || access.isWorkshopManager) {
+  if (!access.canAccessErrModule || access.isKsaViewer) {
     return false;
   }
 
@@ -292,6 +304,7 @@ export async function canApproveErr(
       currentApproverId: true,
       projectDirectorId: true,
       projectId: true,
+      redirectedById: true,
     },
   });
 
@@ -304,6 +317,15 @@ export async function canApproveErr(
   }
 
   if (err.currentApproverId !== access.userId) {
+    return false;
+  }
+
+  // Marc redirected this ERR to the user: they can act on it whatever their role.
+  if (err.redirectedById) {
+    return err.status === "PENDING";
+  }
+
+  if (access.isWorkshopManager) {
     return false;
   }
 

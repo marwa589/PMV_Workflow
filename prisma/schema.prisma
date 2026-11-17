@@ -31,6 +31,8 @@ model User {
   createdDocuments          Document[]               @relation("DocumentsCreatedBy")
   documentDownloads         DocumentDownload[]
   assignedDocuments         Document[]               @relation("CurrentApprover")
+  redirectedDocuments       Document[]               @relation("DocumentsRedirectedBy")
+  redirectedErrs            Err[]                    @relation("ErrsRedirectedBy")
   uploadedVersions          DocumentVersion[]        @relation("VersionsUploadedBy")
   emailNotificationEvents   EmailNotificationEvent[] @relation("EmailEventsForUser")
   notifications             Notification[]           @relation("NotificationsForUser")
@@ -50,6 +52,8 @@ model User {
   purchaseOrdersCreated     PurchaseOrder[]          @relation("PurchaseOrdersCreatedBy")
   purchaseOrdersReceived    PurchaseOrder[]          @relation("PurchaseOrdersReceivedBy")
   purchaseOrderInvoicesUploaded PurchaseOrderInvoice[] @relation("PurchaseOrderInvoicesUploadedBy")
+  goodsReceivingVouchersUploaded GoodsReceivingVoucher[] @relation("GoodsReceivingVouchersUploadedBy")
+  cashReceivingVouchersUploaded  CashReceivingVoucher[]  @relation("CashReceivingVouchersUploadedBy")
   purchaseOrderLinksCreated PurchaseOrderMrLink[]     @relation("PurchaseOrderLinksCreatedBy")
   roleAssignments           UserRoleAssignment[]     @relation("UserRoleAssignmentsForUser")
 }
@@ -104,20 +108,25 @@ model Document {
   mrNumber                  String?
   relatedComparisonId       String?
   lastActiveStage           DocumentStatus?
+  redirectedById            String?
+  redirectFallback          RedirectFallback?
   approvals                 ApprovalHistory[]
   deletionRequests          DeletionRequest[] @relation("DeletionRequests")
   createdBy                 User              @relation("DocumentsCreatedBy", fields: [createdById], references: [id])
   currentApprover           User?             @relation("CurrentApprover", fields: [currentApproverId], references: [id])
+  redirectedBy              User?             @relation("DocumentsRedirectedBy", fields: [redirectedById], references: [id])
   workflowTemplate          DocumentWorkflowTemplate? @relation(fields: [workflowTemplateId], references: [id], onDelete: SetNull)
   relatedComparison         Document?         @relation("MRToComparison", fields: [relatedComparisonId], references: [id])
   linkedMRs                 Document[]        @relation("MRToComparison")
   versions                  DocumentVersion[]
   purchaseOrderLinks        PurchaseOrderMrLink[]
   invoices                  PurchaseOrderInvoice[]
+  cashReceivingVoucher      CashReceivingVoucher?
   downloadRecords           DocumentDownload[]
 
   @@index([createdById])
   @@index([currentApproverId])
+  @@index([redirectedById])
   @@index([workflowTemplateId])
   @@index([relatedComparisonId])
   @@index([status])
@@ -247,9 +256,44 @@ model PurchaseOrderInvoice {
   purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   document      Document?      @relation(fields: [documentId], references: [id], onDelete: Cascade)
   uploadedBy    User          @relation("PurchaseOrderInvoicesUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  goodsReceivingVoucher GoodsReceivingVoucher?
 
   @@index([purchaseOrderId, uploadedAt])
   @@index([documentId, uploadedAt])
+  @@index([uploadedById])
+}
+
+model GoodsReceivingVoucher {
+  id           String   @id @default(cuid())
+  invoiceId    String   @unique
+  originalName String
+  filePath     String   @unique
+  mimeType     String
+  fileSize     Int
+  uploadedAt   DateTime @default(now())
+  uploadedById String
+
+  invoice    PurchaseOrderInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  uploadedBy User                 @relation("GoodsReceivingVouchersUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([uploadedAt])
+  @@index([uploadedById])
+}
+
+model CashReceivingVoucher {
+  id           String   @id @default(cuid())
+  documentId   String   @unique
+  originalName String
+  filePath     String   @unique
+  mimeType     String
+  fileSize     Int
+  uploadedAt   DateTime @default(now())
+  uploadedById String
+
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy User     @relation("CashReceivingVouchersUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([uploadedAt])
   @@index([uploadedById])
 }
 
@@ -413,6 +457,12 @@ enum ApprovalActionType {
   APPROVED
   REJECTED
   REQUESTED_REVISION
+  REDIRECTED
+}
+
+enum RedirectFallback {
+  FULLY_APPROVE
+  BACK_TO_REDIRECTOR
 }
 
 enum DeletionRequestStatus {
@@ -460,6 +510,7 @@ enum ErrType {
   RENTAL_EXTERNAL
   RENEWAL
   PURCHASE
+  RFD
 }
 
 enum ErrStatus {
@@ -499,6 +550,8 @@ model Err {
   projectDirectorId         String
   currentApproverId         String?
   currentApproverAssignedAt DateTime?
+  // Set while Marc has redirected the ERR to another user; cleared when it comes back.
+  redirectedById            String?
 
   revisionNumber Int @default(1)
   lockVersion    Int @default(0)
@@ -511,6 +564,7 @@ model Err {
   createdBy       User                 @relation("ErrCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   projectDirector User                 @relation("ErrProjectDirector", fields: [projectDirectorId], references: [id], onDelete: Restrict)
   currentApprover User?                @relation("ErrCurrentApprover", fields: [currentApproverId], references: [id], onDelete: Restrict)
+  redirectedBy    User?                @relation("ErrsRedirectedBy", fields: [redirectedById], references: [id], onDelete: SetNull)
   files           ErrFile[]
   approvalHistory ErrApprovalHistory[]
   notifications   ErrNotification[]
@@ -527,6 +581,7 @@ model Err {
   @@index([status, currentStage])
   @@index([createdAt])
   @@index([projectId, status])
+  @@index([redirectedById])
 }
 
 model ErrDownload {
@@ -596,6 +651,8 @@ enum ErrAction {
   COMMENTED
   RELEASE_VOUCHER_ADDED
   RECEIPT_VOUCHER_ADDED
+  REDIRECTED
+  REDIRECT_APPROVED
 }
 
 model ErrApprovalHistory {

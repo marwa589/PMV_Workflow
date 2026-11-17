@@ -36,6 +36,8 @@ export default async function AdminApprovedDocumentsPage({ searchParams }: any) 
         downloadedAt: docTracking.get(doc.id).downloadedAt,
         approvalDate: docTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+        lastUpdatedAt: doc.updatedAt,
+        isRedirected: Boolean(doc.redirectedById),
       })),
     ...data.errApprovedDocuments
       .filter((doc) => !documentTypeFilter || documentTypeFilter === "ERR")
@@ -53,6 +55,7 @@ export default async function AdminApprovedDocumentsPage({ searchParams }: any) 
         downloadedAt: errTracking.get(doc.id).downloadedAt,
         approvalDate: errTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+        lastUpdatedAt: doc.updatedAt,
       })),
   ];
 

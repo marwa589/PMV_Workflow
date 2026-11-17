@@ -34,6 +34,7 @@ export default async function ApproverDashboardPage() {
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     uploadedAt: string;
+    lastUpdatedAt: Date;
     relatedComparisonId: string | null;
     relatedComparisonDocumentNumber: string | null;
   }[] = [];
@@ -45,6 +46,7 @@ export default async function ApproverDashboardPage() {
     mrType?: "CASH" | "CREDIT" | null;
     currentVersion: number;
     uploadedAt: string;
+    lastUpdatedAt: Date;
     relatedComparisonId: string | null;
     relatedComparisonDocumentNumber: string | null;
   }[] = [];
@@ -109,7 +111,7 @@ export default async function ApproverDashboardPage() {
             ],
           },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: { updatedAt: "desc" },
         include: { relatedComparison: { select: { id: true, documentNumber: true } } },
         take: 10,
       }),
@@ -118,7 +120,7 @@ export default async function ApproverDashboardPage() {
           currentApproverId: session.userId,
           status: DocumentStatus.REVISION_REQUIRED,
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: { updatedAt: "desc" },
         include: { relatedComparison: { select: { id: true, documentNumber: true } } },
         take: 10,
       }),
@@ -171,6 +173,7 @@ export default async function ApproverDashboardPage() {
             documentNumber: true,
             title: true,
             createdAt: true,
+            updatedAt: true,
             files: {
               where: { kind: "QUOTATION" },
               orderBy: { versionNumber: "desc" },
@@ -178,7 +181,7 @@ export default async function ApproverDashboardPage() {
               select: { originalName: true },
             },
           },
-          orderBy: { createdAt: "desc" },
+          orderBy: { updatedAt: "desc" },
         })
       : [];
     pendingCount = pending + errPendingDocuments.length;
@@ -194,6 +197,7 @@ export default async function ApproverDashboardPage() {
       mrType: doc.mrType,
       currentVersion: doc.currentVersion,
       uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+      lastUpdatedAt: doc.updatedAt,
       relatedComparisonId: doc.relatedComparison?.id || null,
       relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
       })),
@@ -205,14 +209,17 @@ export default async function ApproverDashboardPage() {
         mrType: null,
         currentVersion: 1,
         uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+        lastUpdatedAt: doc.updatedAt,
         relatedComparisonId: null,
         relatedComparisonDocumentNumber: null,
         quotationFileName: doc.files[0]?.originalName ?? null,
       })),
     ];
-    if (session.role === UserRole.APPROVER_3) {
-      pendingDocuments.sort((left, right) => Number(right.documentType === "ERR") - Number(left.documentType === "ERR"));
-    }
+    // Newest activity first; the PMV Manager keeps ERRs grouped at the top.
+    pendingDocuments.sort((left, right) => (
+      (session.role === UserRole.APPROVER_3 ? Number(right.documentType === "ERR") - Number(left.documentType === "ERR") : 0)
+      || right.lastUpdatedAt.getTime() - left.lastUpdatedAt.getTime()
+    ));
     revisionRequiredDocuments = revisionRequiredDocs.map((doc) => ({
       id: doc.id,
       documentNumber: doc.documentNumber,
@@ -221,6 +228,7 @@ export default async function ApproverDashboardPage() {
       mrType: doc.mrType,
       currentVersion: doc.currentVersion,
       uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+      lastUpdatedAt: doc.updatedAt,
       relatedComparisonId: doc.relatedComparison?.id || null,
       relatedComparisonDocumentNumber: doc.relatedComparison?.documentNumber || null,
     }));
@@ -283,7 +291,7 @@ export default async function ApproverDashboardPage() {
           </div>
         </div>
         <div className="px-1 py-4">
-          <ApproverPendingTable documents={pendingDocuments} showQuotation={session.role === UserRole.APPROVER_3} />
+          <ApproverPendingTable documents={pendingDocuments} showQuotation={session.role === UserRole.APPROVER_3} keepOrder />
         </div>
       </section>
 

@@ -7,6 +7,8 @@ import { READY_MIX_KHOBAR_PROJECT_NAME } from "@/lib/ready-mix-mr-access";
 import { isKsaViewer, KSA_USER_LOCATIONS } from "@/lib/ksa-viewer";
 import { isRamziDocumentApprover } from "@/lib/mohamed-document-workflow";
 import { isAvkMrViewer } from "@/lib/avk-access";
+import { getKsaProjectByName, ksaProjectsDirectedBy } from "@/lib/ksa-projects";
+import { documentLocationWhere, effectiveDocumentLocation } from "@/lib/document-location";
 
 export { READY_MIX_KHOBAR_PROJECT_NAME } from "@/lib/ready-mix-mr-access";
 
@@ -31,12 +33,25 @@ export function isOmar(user: { email?: string | null }): boolean {
   return user.email?.trim().toLowerCase() === "omar.merzek@ahmadiah.com";
 }
 
+export function isErro(user: { email?: string | null }): boolean {
+  return user.email?.trim().toLowerCase() === ERRO_EMAIL;
+}
+
 export function isMuneer(user: { email?: string | null }): boolean {
   return user.email?.trim().toLowerCase() === MUNEER_EMAIL;
 }
 
+/**
+ * KSA project directors (Elie Azzam for Ready Mix Khobar, Elias Nassar for WP03) see only the purchase
+ * orders of their own projects' MRs. Kept under its original name because the PO pages use it.
+ */
 export function isReadyMixKhobarDirector(user: { email?: string | null }): boolean {
-  return user.email?.trim().toLowerCase() === READY_MIX_KHOBAR_DIRECTOR_EMAIL;
+  return ksaProjectsDirectedBy(user.email).length > 0;
+}
+
+/** Project names whose POs a KSA project director can see. */
+export function directorPurchaseOrderProjectNames(user: { email?: string | null }): string[] {
+  return ksaProjectsDirectedBy(user.email).map((project) => project.name);
 }
 
 export function isGlobalPurchaseOrderViewer(user: { role: UserRole; email?: string | null }): boolean {
@@ -58,12 +73,13 @@ type PoAccessDb = Pick<Prisma.TransactionClient, "purchaseOrderMrLink" | "user">
 async function resolvePurchaseOrderRecipientIds(tx: PoAccessDb, poId: string) {
   const links = await tx.purchaseOrderMrLink.findMany({
     where: { purchaseOrderId: poId },
-    select: { document: { select: { projectName: true, createdBy: { select: { email: true, location: true } } } } },
+    select: { document: { select: { projectName: true, uploaderLocation: true, createdBy: { select: { email: true, location: true } } } } },
   });
   if (links.length === 0) return [];
 
+  // The MR's own location (an AVK MR uploaded by Erro counts as AVK, not as his account's AVR).
   const hasKuwaitMr = links.some(({ document }) =>
-    document.projectName !== READY_MIX_KHOBAR_PROJECT_NAME && document.createdBy.location === "KUWAIT",
+    !getKsaProjectByName(document.projectName) && effectiveDocumentLocation(document) === "KUWAIT",
   );
   const workshopManagers = hasKuwaitMr
     ? await tx.user.findMany({
@@ -76,7 +92,7 @@ async function resolvePurchaseOrderRecipientIds(tx: PoAccessDb, poId: string) {
   }
 
   const emails = new Set<string>();
-  const hasAvkMr = links.some(({ document }) => document.createdBy.location === "AVK");
+  const hasAvkMr = links.some(({ document }) => !getKsaProjectByName(document.projectName) && effectiveDocumentLocation(document) === "AVK");
   if (hasAvkMr) {
     const avkUsers = await tx.user.findMany({
       where: { location: "AVK" },
@@ -88,18 +104,28 @@ async function resolvePurchaseOrderRecipientIds(tx: PoAccessDb, poId: string) {
   }
 
   for (const link of links) {
-    const { email: uploaderEmail, location } = link.document.createdBy;
+    const { email: uploaderEmail } = link.document.createdBy;
+    const location = effectiveDocumentLocation(link.document);
     if (!uploaderEmail) throw new Error("A related MR uploader could not be resolved.");
 
+    const ksaProject = getKsaProjectByName(link.document.projectName);
     if (link.document.projectName === READY_MIX_KHOBAR_PROJECT_NAME) {
       emails.add(ERRO_EMAIL);
       emails.add(READY_MIX_KHOBAR_DIRECTOR_EMAIL);
+      emails.add(normalizeEmail(uploaderEmail));
+    } else if (ksaProject) {
+      // Other KSA projects follow the Ready Mix Khobar rule: the MR's uploader and the project director.
+      emails.add(normalizeEmail(uploaderEmail));
+      if (ksaProject.mrDirectorEmail) emails.add(ksaProject.mrDirectorEmail);
     } else if (location === "KUWAIT") {
       emails.add(MUNEER_EMAIL);
       emails.add("mohamed.mahmoud@ahmadiah.com");
     } else if (location === "AVR") {
       emails.add(ERRO_EMAIL);
       emails.add("mohammad.mehieddine@ahmadiah.com");
+    } else if (location === "AVK" && normalizeEmail(uploaderEmail) === ERRO_EMAIL) {
+      // Erro's AVK MRs get the same recipients as Bernabie's / Mohamed Mahran's AVK MRs.
+      for (const email of GROUP_B_RECIPIENT_EMAILS) emails.add(normalizeEmail(email));
     } else {
       for (const email of recipientEmailsForUploader(uploaderEmail)) emails.add(normalizeEmail(email));
     }
@@ -131,12 +157,13 @@ export async function canViewPurchaseOrder(user: { userId: string; role: UserRol
       where: { purchaseOrderId: poId },
       select: { document: { select: { projectName: true } } },
     });
-    return linkedMrs.some((link) => link.document.projectName === READY_MIX_KHOBAR_PROJECT_NAME);
+    const projectNames = directorPurchaseOrderProjectNames(user);
+    return linkedMrs.some((link) => Boolean(link.document.projectName && projectNames.includes(link.document.projectName)));
   }
 
   if (isRamziDocumentApprover(user.email)) {
     const linkedAvkMr = await prisma.purchaseOrderMrLink.findFirst({
-      where: { purchaseOrderId: poId, document: { createdBy: { location: "AVK" } } },
+      where: { purchaseOrderId: poId, document: documentLocationWhere("AVK") },
       select: { id: true },
     });
     return Boolean(linkedAvkMr);
@@ -148,7 +175,7 @@ export async function canViewPurchaseOrder(user: { userId: string; role: UserRol
     prisma.user.findUnique({ where: { id: user.userId }, select: { location: true } }),
     prisma.purchaseOrderMrLink.findMany({
       where: { purchaseOrderId: poId },
-      select: { document: { select: { createdBy: { select: { location: true } } } } },
+      select: { document: { select: { uploaderLocation: true, createdBy: { select: { location: true } } } } },
     }),
   ]);
 
@@ -156,19 +183,25 @@ export async function canViewPurchaseOrder(user: { userId: string; role: UserRol
     return isRestrictedClerk(user) && (await getPurchaseOrderRecipientIds(poId)).includes(user.userId);
   }
 
-  if (isAvkMrViewer({ email: user.email, location: viewer.location, role: user.role })) {
-    return linkedMrs.some((link) => link.document.createdBy.location === "AVK");
+  // ERRO (dispatcher.pmv) is on the AVK MR viewer list for AVK documents, but his own POs are AVR / Ready Mix,
+  // so he must see both AVR and AVK purchase orders instead of being narrowed to AVK only.
+  if (isErro(user)) {
+    return linkedMrs.some((link) => effectiveDocumentLocation(link.document) === "AVR" || effectiveDocumentLocation(link.document) === "AVK");
   }
 
-  return linkedMrs.some((link) => link.document.createdBy.location === viewer.location);
+  if (isAvkMrViewer({ email: user.email, location: viewer.location, role: user.role })) {
+    return linkedMrs.some((link) => effectiveDocumentLocation(link.document) === "AVK");
+  }
+
+  return linkedMrs.some((link) => effectiveDocumentLocation(link.document) === viewer.location);
 }
 
 export async function getPurchaseOrderLocations(poId: string) {
   const links = await prisma.purchaseOrderMrLink.findMany({
     where: { purchaseOrderId: poId },
-    select: { document: { select: { createdBy: { select: { location: true } } } } },
+    select: { document: { select: { uploaderLocation: true, createdBy: { select: { location: true } } } } },
   });
-  return new Set(links.map((link) => link.document.createdBy.location).filter((location): location is NonNullable<typeof location> => Boolean(location)));
+  return new Set(links.map((link) => effectiveDocumentLocation(link.document)).filter((location): location is NonNullable<typeof location> => Boolean(location)));
 }
 
 export async function resolvePurchaseOrderRecipients(tx: PoAccessDb, poId: string) {

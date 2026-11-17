@@ -31,6 +31,8 @@ export default async function AdminArchivePage() {
       downloadedAt: docTracking.get(doc.id).downloadedAt,
       approvalDate: docTracking.get(doc.id).approvalDate,
       dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+      lastUpdatedAt: doc.updatedAt,
+      isRedirected: Boolean(doc.redirectedById),
     }));
 
   return (

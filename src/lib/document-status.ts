@@ -13,7 +13,7 @@ export function getPoStatus(documentType: string, mrType: string | null | undefi
   if (documentType !== "MATERIAL_REQUISITION" || mrType !== "CREDIT") return "NOT_APPLICABLE";
   return hasPurchaseOrder ? "UPLOADED" : "PENDING";
 }
-export type ErrTypeFilter = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "RENEWAL" | "PURCHASE" | "";
+export type ErrTypeFilter = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "RENEWAL" | "PURCHASE" | "RFD" | "";
 export type ErrStatusFilter = "PENDING" | "ON_HOLD" | "REVISION_REQUIRED" | "REJECTED" | "APPROVED" | "";
 export type DocumentStatusFilterValue =
   | "PENDING_APPROVER_1"
@@ -89,7 +89,7 @@ export function parsePoStatusFilter(value: unknown): PoStatusFilter {
 }
 
 export function parseErrTypeFilter(value: unknown): ErrTypeFilter {
-  if (value === "RENTAL_ACTC" || value === "RENTAL_EXTERNAL" || value === "RENEWAL" || value === "PURCHASE") {
+  if (value === "RENTAL_ACTC" || value === "RENTAL_EXTERNAL" || value === "RENEWAL" || value === "PURCHASE" || value === "RFD") {
     return value;
   }
 

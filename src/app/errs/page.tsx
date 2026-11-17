@@ -19,6 +19,7 @@ import {
 } from "@/lib/document-status";
 import { isErrUploaderAccount } from "@/lib/err/uploader-access";
 import ErrListTable from "@/components/err-list-table";
+import { ksaProjectsDirectedBy } from "@/lib/ksa-projects";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,7 @@ const typeLabels: Record<ErrType, string> = {
   RENTAL_EXTERNAL: "Rental External",
   RENEWAL: "Renewal",
   PURCHASE: "Purchase",
+  RFD: "RFD (Request for Diesel)",
 };
 
 const statusLabels: Record<ErrStatus, string> = {
@@ -200,7 +202,9 @@ export default async function ErrPage({ searchParams }: PageProps) {
       status: true,
       currentStage: true,
       currentApproverId: true,
+      redirectedById: true,
       createdAt: true,
+      updatedAt: true,
       downloadRecords: { where: { userId: access.userId }, select: { downloadedAt: true }, take: 1 },
       files: {
         where: { kind: "QUOTATION" },
@@ -219,8 +223,9 @@ export default async function ErrPage({ searchParams }: PageProps) {
         },
       },
     },
+    // Most recently updated first, so a just-approved/rejected ERR is at the top of its list.
     orderBy: [
-      { createdAt: "desc" },
+      { updatedAt: "desc" },
       { id: "desc" },
     ],
     skip: (page - 1) * PAGE_SIZE,
@@ -228,15 +233,17 @@ export default async function ErrPage({ searchParams }: PageProps) {
   });
 
   const isUploaderUser = access.isUploader || isErrUploaderAccount(access.name, access.role);
-  const isReadyMixDirector = access.email.trim().toLowerCase() === "elie.azzam@ahmadiah.com";
+  // KSA project directors (Elie Azzam: Ready Mix Khobar, Elias Nassar: WP03) review their project's documents here.
+  const directedProjects = ksaProjectsDirectedBy(access.email);
+  const isReadyMixDirector = directedProjects.length > 0;
+  const directedProjectLabel = directedProjects.map((project) => project.name).join(" / ");
   const readyMixDocuments = isReadyMixDirector
     ? await prisma.document.findMany({
         where: {
           currentApproverId: access.userId,
           documentType: { in: ["MATERIAL_REQUISITION", "COMPARISON"] },
-          projectName: "Ready Mix Khobar",
+          projectName: { in: directedProjects.map((project) => project.name) },
           status: DocumentStatus.PENDING_APPROVER_1,
-          createdBy: { email: "dispatcher.pmv@ahmadiah.com" },
         },
         select: {
           id: true,
@@ -249,7 +256,7 @@ export default async function ErrPage({ searchParams }: PageProps) {
           mrType: true,
           createdAt: true,
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: { updatedAt: "desc" },
       })
     : [];
 
@@ -280,11 +287,11 @@ export default async function ErrPage({ searchParams }: PageProps) {
       {isDashboardView && isReadyMixDirector ? (
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4">
-            <h2 className="text-base font-semibold text-slate-900">Ready Mix Khobar Documents</h2>
+            <h2 className="text-base font-semibold text-slate-900">{directedProjectLabel} Documents</h2>
             <p className="mt-1 text-sm text-slate-500">Material requisitions and comparison sheets awaiting your Project Director review.</p>
           </div>
           {readyMixDocuments.length === 0 ? (
-            <p className="px-5 py-6 text-sm text-slate-500">No Ready Mix Khobar documents are waiting for your review.</p>
+            <p className="px-5 py-6 text-sm text-slate-500">No {directedProjectLabel} documents are waiting for your review.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-sm">
@@ -362,6 +369,7 @@ export default async function ErrPage({ searchParams }: PageProps) {
             ...err,
             downloadedAt: err.downloadRecords[0]?.downloadedAt ?? null,
             createdAt: err.createdAt.toISOString(),
+            updatedAt: err.updatedAt.toISOString(),
           }))}
           userId={access.userId}
           canDelete={access.isAdmin}

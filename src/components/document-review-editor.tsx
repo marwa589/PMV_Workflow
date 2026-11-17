@@ -24,6 +24,66 @@ async function loadPdfJs() {
   return pdfjs;
 }
 
+type RedirectUserOption = { id: string; name: string; email: string };
+
+function RedirectUserSearch({ users, value, onChange, disabled }: { users: RedirectUserOption[]; value: string; onChange: (userId: string) => void; disabled?: boolean }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const selected = users.find((user) => user.id === value) || null;
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const matches = needle
+      ? users.filter((user) => user.name.toLowerCase().includes(needle) || user.email.toLowerCase().includes(needle))
+      : users;
+    return matches.slice(0, 50);
+  }, [query, users]);
+
+  return (
+    <div className="relative">
+      <input
+        id="review-redirect-user"
+        type="text"
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
+        autoComplete="off"
+        disabled={disabled}
+        value={open ? query : selected ? `${selected.name} (${selected.email})` : ""}
+        onFocus={() => { setQuery(""); setOpen(true); }}
+        onBlur={() => setOpen(false)}
+        onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setOpen(false);
+          if (event.key === "Enter" && open && filtered[0]) {
+            event.preventDefault();
+            onChange(filtered[0].id);
+            setOpen(false);
+          }
+        }}
+        placeholder="Search by name or email"
+        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+      />
+      {open ? (
+        <ul role="listbox" className="absolute z-40 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 text-sm shadow-lg">
+          {filtered.length === 0 ? <li className="px-3 py-2 text-slate-500">No users match "{query}".</li> : filtered.map((user) => (
+            <li key={user.id} role="option" aria-selected={user.id === value}>
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => { onChange(user.id); setQuery(""); setOpen(false); }}
+                className={`flex w-full flex-col items-start px-3 py-2 text-left hover:bg-slate-100 ${user.id === value ? "bg-slate-50" : ""}`}
+              >
+                <span className="font-medium text-slate-900">{user.name}</span>
+                <span className="text-xs text-slate-500">{user.email}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 type DocumentReviewEditorProps = {
   documentId: string;
   documentNumber: string;
@@ -33,6 +93,15 @@ type DocumentReviewEditorProps = {
   allowNoSignature?: boolean;
   allowQuotationUpload?: boolean;
   allowApprovalRouteSelection?: boolean;
+  /** Users Marc can redirect the document to; when set, the "Redirect Document" decision is offered. */
+  redirectUsers?: RedirectUserOption[];
+  /** Set when the document was redirected to the current reviewer. */
+  redirectedByName?: string | null;
+  redirectFallback?: "FULLY_APPROVE" | "BACK_TO_REDIRECTOR" | null;
+  /** ERRs: a redirected ERR always comes back to Marc, so no "Fallback to" choice is shown. */
+  redirectBackToRedirectorOnly?: boolean;
+  /** Hide the ERR approval path (the person Marc redirected an ERR to does not pick it). */
+  hideApprovalRoute?: boolean;
   downloadUrl?: string;
   actionUrl?: string;
   returnUrl?: string;
@@ -55,6 +124,11 @@ export default function DocumentReviewEditor({
   allowNoSignature = false,
   allowQuotationUpload = false,
   allowApprovalRouteSelection = false,
+  redirectUsers,
+  redirectedByName = null,
+  redirectFallback = null,
+  redirectBackToRedirectorOnly = false,
+  hideApprovalRoute = false,
   downloadUrl = `/api/documents/${documentId}/download`,
   actionUrl = `/api/documents/${documentId}/actions`,
   returnUrl = "/approver/pending-approvals",
@@ -88,7 +162,11 @@ export default function DocumentReviewEditor({
   const [textBoxFontSize, setTextBoxFontSize] = useState(12);
   const [selectedTextBoxId, setSelectedTextBoxId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [decision, setDecision] = useState<"APPROVE" | "REJECT" | "COMMENT" | "HOLD">("APPROVE");
+  const [decision, setDecision] = useState<"APPROVE" | "REJECT" | "COMMENT" | "HOLD" | "REDIRECT">("APPROVE");
+  const [redirectToUserId, setRedirectToUserId] = useState("");
+  const [redirectFallbackChoice, setRedirectFallbackChoice] = useState<"" | "FULLY_APPROVE" | "BACK_TO_REDIRECTOR">("");
+  const allowRedirect = Boolean(redirectUsers && !batchMode);
+  const itemLabel = errStage ? "ERR" : "document";
   const [approvalRoute, setApprovalRoute] = useState<"FINALIZE" | "ACTING_CEO" | "ACTING_CEO_THEN_CEO" | "CEO" | "MANAGING_DIRECTOR">("FINALIZE");
   const [comments, setComments] = useState("");
   const [quotationFile, setQuotationFile] = useState<File | null>(null);
@@ -365,6 +443,16 @@ export default function DocumentReviewEditor({
 
   const submit = useCallback(async (batchSubmission = false, batchDecision?: "APPROVE" | "REJECT" | "COMMENT"): Promise<boolean> => {
     const actionDecision = batchSubmission ? batchDecision ?? "APPROVE" : decision;
+    if (actionDecision === "REDIRECT") {
+      if (!redirectToUserId) {
+        setError(`Choose the user to redirect this ${itemLabel} to.`);
+        return false;
+      }
+      if (!redirectBackToRedirectorOnly && !redirectFallbackChoice) {
+        setError("Choose a \"Fallback to\" option: Fully approve or Back to me.");
+        return false;
+      }
+    }
     const requiresSignature = actionDecision === "APPROVE" && !(allowNoSignature && placements.length === 0);
     if (actionDecision === "APPROVE" && placements.length === 0 && !allowNoSignature) {
       setError("Click Sign and place at least one signature before approving.");
@@ -376,9 +464,13 @@ export default function DocumentReviewEditor({
     try {
       const formData = new FormData();
       formData.set("decision", actionDecision);
-      if (errStage || allowApprovalRouteSelection) formData.set("approvalRoute", approvalRoute);
+      if ((errStage || allowApprovalRouteSelection) && actionDecision !== "REDIRECT") formData.set("approvalRoute", approvalRoute);
       formData.set("comments", comments);
-      if (allowQuotationUpload && quotationFile) formData.set("quotation", quotationFile);
+      if (actionDecision === "REDIRECT") {
+        formData.set("redirectToUserId", redirectToUserId);
+        formData.set("redirectFallback", redirectBackToRedirectorOnly ? "BACK_TO_REDIRECTOR" : redirectFallbackChoice);
+      }
+      if (allowQuotationUpload && quotationFile && actionDecision !== "REDIRECT") formData.set("quotation", quotationFile);
       if (actionDecision === "APPROVE") {
         const pdfBytes = pdfBytesRef.current;
         const coordinatePdf = pdfJsDocumentRef.current;
@@ -486,7 +578,7 @@ export default function DocumentReviewEditor({
     } finally {
       setSaving(false);
     }
-  }, [actionUrl, allowApprovalRouteSelection, allowHold, allowNoSignature, allowQuotationUpload, approvalRoute, circles, comments, decision, documentId, errStage, placements, quotationFile, returnUrl, router, signatureUrl, textBoxes, title]);
+  }, [actionUrl, allowApprovalRouteSelection, allowHold, allowNoSignature, allowQuotationUpload, approvalRoute, circles, comments, decision, documentId, errStage, itemLabel, placements, quotationFile, redirectBackToRedirectorOnly, redirectFallbackChoice, redirectToUserId, returnUrl, router, signatureUrl, textBoxes, title]);
 
   useEffect(() => {
     if (!batchMode || !onBatchAction) return;
@@ -501,6 +593,14 @@ export default function DocumentReviewEditor({
           <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Document Review</p><h1 className="mt-2 text-2xl font-semibold">{documentNumber}</h1><p className="mt-1 text-sm text-slate-600">{title}</p></div>
           <div className="flex flex-wrap gap-2"><button type="button" onClick={() => router.back()} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><ArrowLeft className="h-4 w-4" />Back</button><a href={downloadUrl} download className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium"><Download className="h-4 w-4" />Download</a></div>
         </div> : <h2 className="mb-3 text-lg font-semibold">{documentNumber} <span className="font-normal text-slate-600">{title}</span></h2>}
+        {!batchMode && redirectedByName !== null ? (
+          <div className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-900">
+            <span className="font-semibold">{redirectedByName || "The PMV Manager"}</span> redirected this {itemLabel} to you.{" "}
+            {redirectFallback === "FULLY_APPROVE"
+              ? `When you approve it, the ${itemLabel} will be fully approved.`
+              : `When you approve it, the ${itemLabel} goes back to ${redirectedByName || "the PMV Manager"} for the final decision.`}
+          </div>
+        ) : null}
         {!batchMode ? <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-52 flex-1">
@@ -510,9 +610,28 @@ export default function DocumentReviewEditor({
                 <option value="REJECT">Reject</option>
                 <option value="COMMENT">Revision Required</option>
                 {allowHold ? <option value="HOLD">On Hold</option> : null}
+                {allowRedirect ? <option value="REDIRECT">Redirect Document</option> : null}
               </select>
             </div>
-            {errStage === "PMV_MANAGER" ? (
+            {allowRedirect && decision === "REDIRECT" ? (
+              <>
+                <div className="min-w-72 flex-[2]">
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600" htmlFor="review-redirect-user">Redirect to</label>
+                  <RedirectUserSearch users={redirectUsers ?? []} value={redirectToUserId} onChange={setRedirectToUserId} disabled={saving} />
+                </div>
+                {redirectBackToRedirectorOnly ? (
+                  <p className="min-w-52 flex-1 self-center text-sm text-slate-600">When they approve, it comes back to you.</p>
+                ) : <div className="min-w-52 flex-1">
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600" htmlFor="review-redirect-fallback">Fallback to</label>
+                  <select id="review-redirect-fallback" value={redirectFallbackChoice} onChange={(event) => setRedirectFallbackChoice(event.target.value as typeof redirectFallbackChoice)} disabled={saving} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                    <option value="">Select…</option>
+                    <option value="FULLY_APPROVE">Fully approve</option>
+                    <option value="BACK_TO_REDIRECTOR">Back to me</option>
+                  </select>
+                </div>}
+              </>
+            ) : null}
+            {errStage === "PMV_MANAGER" && !hideApprovalRoute && decision !== "REDIRECT" ? (
               <div className="min-w-60 flex-1">
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Approval path</label>
                 <select value={approvalRoute} onChange={(event) => setApprovalRoute(event.target.value as typeof approvalRoute)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
@@ -523,7 +642,7 @@ export default function DocumentReviewEditor({
                 </select>
               </div>
             ) : null}
-            {allowApprovalRouteSelection && !errStage ? (
+            {allowApprovalRouteSelection && !errStage && decision !== "REDIRECT" ? (
               <div className="min-w-60 flex-1">
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Approval path</label>
                 <select value={approvalRoute} onChange={(event) => setApprovalRoute(event.target.value as typeof approvalRoute)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
@@ -532,7 +651,7 @@ export default function DocumentReviewEditor({
                 </select>
               </div>
             ) : null}
-            {allowQuotationUpload ? (
+            {allowQuotationUpload && decision !== "REDIRECT" ? (
               <div className="min-w-60 flex-1">
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600" htmlFor="review-quotation">Additional quotation</label>
                 <input

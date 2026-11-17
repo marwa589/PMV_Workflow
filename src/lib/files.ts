@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, unlink, writeFile } from "fs/promises";
 import { PDFDocument } from "pdf-lib";
 import path from "path";
 import { randomUUID } from "node:crypto";
-import { documentStorageFolder, purchaseOrderInvoiceStorageFolder } from "@/lib/storage-layout";
+import { documentStorageFolder, linkedAttachmentStorageFolder, purchaseOrderInvoiceStorageFolder } from "@/lib/storage-layout";
 
 export function getUploadRoot(): string {
   const uploadPath = process.env.UPLOAD_PATH?.trim();
@@ -170,6 +170,29 @@ export async function savePurchaseOrderInvoiceFile(file: File, purchaseOrderFile
   const fileName = `${baseName}-${randomUUID()}.${validation.extension}`;
   const saved = await saveStoredFile({
     relativePath: `${purchaseOrderInvoiceStorageFolder(purchaseOrderFilePath)}/${fileName}`,
+    bytes: new Uint8Array(await file.arrayBuffer()),
+  });
+
+  return { relativePath: saved.relativePath };
+}
+
+/** Saves a GRV or Cash Receiving Voucher next to the file it is linked to (invoice or Cash MR). */
+export async function saveReceivingVoucherFile(
+  file: File,
+  parentFilePath: string,
+  kind: "GRV" | "CASH_RECEIVING_VOUCHER",
+): Promise<{ relativePath: string }> {
+  const validation = ensureAllowedFile(file);
+  if (!validation.ok || !validation.extension) {
+    throw new Error(validation.message || "Invalid voucher file.");
+  }
+
+  const folderName = kind === "GRV" ? "GRVs" : "Cash Receiving Vouchers";
+  const fallbackName = kind === "GRV" ? "GRV" : "Cash-Receiving-Voucher";
+  const baseName = safeFileName(file.name.replace(/\.[^.]+$/, "")) || fallbackName;
+  const fileName = `${baseName}-${randomUUID()}.${validation.extension}`;
+  const saved = await saveStoredFile({
+    relativePath: `${linkedAttachmentStorageFolder(parentFilePath, folderName)}/${fileName}`,
     bytes: new Uint8Array(await file.arrayBuffer()),
   });
 

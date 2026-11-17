@@ -6,11 +6,12 @@ import { prisma } from "@/lib/prisma";
 import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 import { createNotification } from "@/lib/notifications";
 import { runInBackground } from "@/lib/background";
-import { resolveWorkflowApproverIdsForUploader } from "@/lib/workflow-locations";
+import { resolveWorkflowApproverIdsForLocation, resolveWorkflowApproverIdsForUploader } from "@/lib/workflow-locations";
 import { resolveDocumentWorkflowForSubmission } from "@/lib/document-workflow-config";
 import { documentStorageFolder } from "@/lib/storage-layout";
 import { isErroUser } from "@/lib/auth/resource-access";
 import { isAvkUploaderWorkflowDocument, MARC_PMV_MANAGER_EMAIL, RAMZI_DOCUMENT_APPROVER_EMAIL } from "@/lib/mohamed-document-workflow";
+import { BERNABIE_UPLOADER_EMAIL, getKsaProjectByKey, ksaProjectDirectorEmail, workflowRouteOptionsForUploader } from "@/lib/ksa-projects";
 
 export const runtime = "nodejs";
 
@@ -45,6 +46,8 @@ export async function POST(request: Request) {
   }
 
   const isDispatcher = session.userId === "cmtzdt5fx000uastr7kdqoe5c" || isErroUser(session);
+  // Erro and Bernabie see every approved comparison when linking one to an MR.
+  const seesAllComparisons = isDispatcher || session.email?.trim().toLowerCase() === BERNABIE_UPLOADER_EMAIL;
 
   const formData = await request.formData();
   const title = String(formData.get("title") || "").trim();
@@ -97,33 +100,48 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  const isErroAvrUploader = uploader.email.trim().toLowerCase() === "dispatcher.pmv@ahmadiah.com"
-    && uploader.location === UserLocation.AVR;
-  const isReadyMixKhobarMr = documentType === "MATERIAL_REQUISITION"
-    && isErroAvrUploader
-    && mrWorkflowLocation === "READY_MIX_KHOBAR";
-  const isReadyMixKhobarComparison = documentType === "COMPARISON"
-    && isErroAvrUploader
-    && comparisonWorkflowLocation === "READY_MIX_KHOBAR";
+  // Erro (AVR) and Bernabie (AVK) pick a "location / project" route for every MR and comparison:
+  // their own location keeps today's flow, a KSA project (Ready Mix Khobar, WP03, Tachalih KSA) uses that project's chain.
+  // Erro can also pick AVK: the document is then an AVK document (same chain as Bernabie's AVK uploads).
+  const routeOptions = workflowRouteOptionsForUploader(uploader);
+  const allowedRoutes = routeOptions.map((option) => option.value);
+  const usesWorkflowRoutes = allowedRoutes.length > 0;
+  const routeLabels = routeOptions.map((option) => option.label).join(", ");
 
-  if (comparisonWorkflowLocation && (documentType !== "COMPARISON" || !isErroAvrUploader)) {
-    return NextResponse.json({ message: "This comparison route is only available to the AVR ERRO uploader." }, { status: 403 });
+  if (comparisonWorkflowLocation && (documentType !== "COMPARISON" || !usesWorkflowRoutes)) {
+    return NextResponse.json({ message: "This comparison route is not available for your account." }, { status: 403 });
   }
 
-  if (documentType === "COMPARISON" && isErroAvrUploader && !["AVR", "READY_MIX_KHOBAR"].includes(comparisonWorkflowLocation)) {
-    return NextResponse.json({ message: "Select AVR or Ready Mix Khobar for this comparison." }, { status: 400 });
+  if (documentType === "COMPARISON" && usesWorkflowRoutes && !allowedRoutes.includes(comparisonWorkflowLocation)) {
+    return NextResponse.json({ message: `Select one of: ${routeLabels} for this comparison.` }, { status: 400 });
   }
 
-  if (mrWorkflowLocation && (documentType !== "MATERIAL_REQUISITION" || !isErroAvrUploader)) {
-    return NextResponse.json({ message: "This MR route is only available to the AVR ERRO uploader." }, { status: 403 });
+  if (mrWorkflowLocation && (documentType !== "MATERIAL_REQUISITION" || !usesWorkflowRoutes)) {
+    return NextResponse.json({ message: "This MR route is not available for your account." }, { status: 403 });
   }
 
-  if (documentType === "MATERIAL_REQUISITION" && isErroAvrUploader && !["AVR", "READY_MIX_KHOBAR"].includes(mrWorkflowLocation)) {
-    return NextResponse.json({ message: "Select AVR or Ready Mix Khobar for this MR." }, { status: 400 });
+  if (documentType === "MATERIAL_REQUISITION" && usesWorkflowRoutes && !allowedRoutes.includes(mrWorkflowLocation)) {
+    return NextResponse.json({ message: `Select one of: ${routeLabels} for this MR.` }, { status: 400 });
   }
 
-  const isReadyMixKhobarWorkflow = isReadyMixKhobarMr || isReadyMixKhobarComparison;
-  const isAvkUploaderWorkflow = isAvkUploaderWorkflowDocument(uploader.email, documentType);
+  const selectedRoute = documentType === "MATERIAL_REQUISITION"
+    ? mrWorkflowLocation
+    : documentType === "COMPARISON"
+      ? comparisonWorkflowLocation
+      : "";
+  const ksaProject = usesWorkflowRoutes ? getKsaProjectByKey(selectedRoute) : null;
+  // Erro's AVK route: the document is stored, routed and filed as AVK although his account is AVR.
+  const isErroAvkRoute = usesWorkflowRoutes && selectedRoute === UserLocation.AVK && uploader.location !== UserLocation.AVK;
+  const documentLocation = isErroAvkRoute ? UserLocation.AVK : uploader.location;
+  // Erro's own account project (AVR side) is not carried onto his AVK documents.
+  const documentProjectName = ksaProject ? ksaProject.name : isErroAvkRoute ? null : uploader.projectName ?? null;
+  const ksaProjectDirector = ksaProject ? ksaProjectDirectorEmail(ksaProject, documentType) : null;
+  // Project director first (Ready Mix Khobar MRs + comparisons, WP03 MRs), then the PMV Manager.
+  const isKsaDirectorWorkflow = Boolean(ksaProject && ksaProjectDirector);
+  // No project director for this type: Workshop Manager (George), then the PMV Manager.
+  const isKsaWorkshopWorkflow = Boolean(ksaProject && !ksaProjectDirector);
+  const isKsaProjectMr = documentType === "MATERIAL_REQUISITION" && Boolean(ksaProject);
+  const isAvkUploaderWorkflow = !ksaProject && isAvkUploaderWorkflowDocument(uploader.email, documentType, documentLocation);
   const isAvkMrWorkflow = isAvkUploaderWorkflow && documentType === "MATERIAL_REQUISITION";
   const isAvkComparisonWorkflow = isAvkUploaderWorkflow && documentType === "COMPARISON";
 
@@ -131,7 +149,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Custody files can only be submitted by an AVR uploader." }, { status: 403 });
   }
 
-  const configuredWorkflow = documentType === "CUSTODY" || isReadyMixKhobarWorkflow || isAvkUploaderWorkflow ? null : await resolveDocumentWorkflowForSubmission(prisma, {
+  const configuredWorkflow = documentType === "CUSTODY" || ksaProject || isAvkUploaderWorkflow ? null : await resolveDocumentWorkflowForSubmission(prisma, {
     uploaderLocation: uploader.location,
     documentType,
     documentSubtype: documentType === "COMPARISON" ? comparisonType : mrType,
@@ -145,12 +163,17 @@ export async function POST(request: Request) {
       })
     : null;
 
-  const workflowApprovers = isReadyMixKhobarWorkflow
-    ? { approver1Id: null, approver2Id: null, approver3Id: null, location: uploader.location }
+  const workflowApprovers = isKsaDirectorWorkflow
+    ? { approver1Id: null, approver2Id: null, approver3Id: null, location: documentLocation }
+    : isKsaWorkshopWorkflow
+      ? { ...(await resolveWorkflowApproverIdsForUploader(prisma, uploader.email)), approver1Id: null }
     : isAvkMrWorkflow
-      ? { approver1Id: null, approver2Id: null, approver3Id: mohamedPmvManager?.id ?? null, location: uploader.location }
+      ? { approver1Id: null, approver2Id: null, approver3Id: mohamedPmvManager?.id ?? null, location: documentLocation }
       : isAvkComparisonWorkflow
-        ? await resolveWorkflowApproverIdsForUploader(prisma, uploader.email)
+        // AVK comparison chain (PMV Engineer Joemar, Workshop Manager, PMV Manager); Erro's AVK route uses the AVK chain too.
+        ? isErroAvkRoute
+          ? await resolveWorkflowApproverIdsForLocation(prisma, UserLocation.AVK)
+          : await resolveWorkflowApproverIdsForUploader(prisma, uploader.email)
     : configuredWorkflow
     ? { approver1Id: null, approver2Id: null, approver3Id: null, location: uploader.location }
     : await resolveWorkflowApproverIdsForUploader(prisma, uploader.email);
@@ -161,7 +184,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "User location is not configured for this workflow." }, { status: 400 });
   }
 
-  const requiresApprover1 = !isReadyMixKhobarWorkflow && !isAvkMrWorkflow && (Boolean(configuredWorkflow?.approverId && configuredWorkflow.status === DocumentStatus.PENDING_APPROVER_1) || Boolean(approver1Id));
+  const requiresApprover1 = !isKsaDirectorWorkflow && !isAvkMrWorkflow && (Boolean(configuredWorkflow?.approverId && configuredWorkflow.status === DocumentStatus.PENDING_APPROVER_1) || Boolean(approver1Id));
   const approver1 = configuredWorkflow?.status === DocumentStatus.PENDING_APPROVER_1
     ? configuredWorkflow.approver
     : approver1Id ? await prisma.user.findUnique({ where: { id: approver1Id }, select: { id: true, email: true, name: true } }) : null;
@@ -176,25 +199,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Approver 1 account is missing for the configured location." }, { status: 400 });
   }
 
-  const requiresApprover2 = !isReadyMixKhobarWorkflow && !isAvkMrWorkflow && documentType !== "CUSTODY" && (configuredWorkflow?.status === DocumentStatus.PENDING_APPROVER_2 || requiresApprover1 || location === UserLocation.KUWAIT || documentType === "MATERIAL_REQUISITION" || (documentType === "COMPARISON" && comparisonType === "SPARE_PARTS"));
+  const requiresApprover2 = !isKsaDirectorWorkflow && !isAvkMrWorkflow && documentType !== "CUSTODY" && (isKsaWorkshopWorkflow || configuredWorkflow?.status === DocumentStatus.PENDING_APPROVER_2 || requiresApprover1 || location === UserLocation.KUWAIT || documentType === "MATERIAL_REQUISITION" || (documentType === "COMPARISON" && comparisonType === "SPARE_PARTS"));
 
   if (requiresApprover2 && !approver2) {
     return NextResponse.json({ message: "Approver 2 account is missing for this workflow." }, { status: 400 });
   }
 
-  if (!isReadyMixKhobarWorkflow && !approver3) {
+  if (!isKsaDirectorWorkflow && !approver3) {
     return NextResponse.json({ message: "PMV Manager account is missing." }, { status: 400 });
   }
 
-  const readyMixDirector = isReadyMixKhobarWorkflow
+  const readyMixDirector = isKsaDirectorWorkflow && ksaProjectDirector
     ? await prisma.user.findUnique({
-        where: { email: "elie.azzam@ahmadiah.com" },
+        where: { email: ksaProjectDirector },
         select: { id: true, email: true, name: true },
       })
     : null;
 
-  if (isReadyMixKhobarWorkflow && !readyMixDirector) {
-    return NextResponse.json({ message: "Elie Azzam's account is not available for this workflow." }, { status: 400 });
+  if (isKsaDirectorWorkflow && !readyMixDirector) {
+    return NextResponse.json({ message: `The ${ksaProject?.name} project director account (${ksaProjectDirector}) is not available for this workflow.` }, { status: 400 });
   }
 
   const mohamedWorkflowApprover = isAvkMrWorkflow
@@ -212,12 +235,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Marc Baddour's PMV Manager account is not available for this workflow." }, { status: 400 });
   }
 
-  const initialApprover = isReadyMixKhobarWorkflow
+  const initialApprover = isKsaDirectorWorkflow
     ? readyMixDirector
     : isAvkMrWorkflow
       ? mohamedWorkflowApprover
     : configuredWorkflow?.approverId ? configuredWorkflow.approver : requiresApprover1 ? approver1 : requiresApprover2 ? approver2 : approver3;
-  const initialStatus = isReadyMixKhobarWorkflow
+  const initialStatus = isKsaDirectorWorkflow
     ? DocumentStatus.PENDING_APPROVER_1
     : isAvkMrWorkflow
       ? DocumentStatus.PENDING_APPROVER_1
@@ -235,20 +258,14 @@ export async function POST(request: Request) {
             id: relatedComparisonId,
             documentType: DocumentType.COMPARISON,
             status: DocumentStatus.APPROVED,
-            ...(isDispatcher ? {
-              OR: [
-                { createdById: session.userId },
-                { versions: { some: { uploadedById: session.userId } } },
-              ],
-            } : {}),
           },
           select: { id: true, projectName: true },
         });
         if (!comparison) {
           throw new Error("The selected comparison is no longer available or is not approved.");
         }
-        if (!isDispatcher && isReadyMixKhobarMr && comparison.projectName !== "Ready Mix Khobar") {
-          throw new Error("Ready Mix Khobar MRs can only link an approved Ready Mix Khobar comparison.");
+        if (!seesAllComparisons && isKsaProjectMr && ksaProject && comparison.projectName !== ksaProject.name) {
+          throw new Error(`${ksaProject.name} MRs can only link an approved ${ksaProject.name} comparison.`);
         }
       }
 
@@ -275,8 +292,8 @@ export async function POST(request: Request) {
           lastActiveStage: initialStatus,
           currentApproverId: initialApprover.id,
           currentApproverAssignedAt: new Date(),
-          uploaderLocation: uploader.location,
-          projectName: isReadyMixKhobarWorkflow ? "Ready Mix Khobar" : uploader.projectName ?? null,
+          uploaderLocation: documentLocation,
+          projectName: documentProjectName,
           workflowTemplateId: isAvkUploaderWorkflow ? null : configuredWorkflow?.templateId ?? null,
           currentWorkflowStep: isAvkUploaderWorkflow ? null : configuredWorkflow?.stepNumber ?? null,
           documentType: normalizedDocumentType,
@@ -295,8 +312,8 @@ export async function POST(request: Request) {
         const isMrLinked = normalizedDocumentType === DocumentType.MATERIAL_REQUISITION && !!relatedComparisonId;
         const storageFolder = documentStorageFolder({
           uploaderEmail: uploader.email,
-          location: uploader.location,
-          projectName: isReadyMixKhobarWorkflow ? "Ready Mix Khobar" : uploader.projectName,
+          location: documentLocation,
+          projectName: documentProjectName,
           documentType: normalizedDocumentType,
           mrType: normalizedMrType === MrType.CREDIT ? "CREDIT" : normalizedMrType === MrType.CASH ? "CASH" : null,
           hasLinkedComparison: isMrLinked,
@@ -311,7 +328,7 @@ export async function POST(request: Request) {
           hasLinkedComparison: isMrLinked,
           uploaderEmail: uploader.email,
           mrType: normalizedMrType === MrType.CREDIT ? "CREDIT" : normalizedMrType === MrType.CASH ? "CASH" : null,
-          projectName: isReadyMixKhobarWorkflow ? "Ready Mix Khobar" : uploader.projectName,
+          projectName: documentProjectName,
           storageFolder,
         });
 

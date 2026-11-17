@@ -5,8 +5,9 @@ import { ArrowLeft, Download, FileText } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
 import PurchaseOrderDeleteButton from "@/components/purchase-order-delete-button";
 import InvoiceDeleteButton from "@/components/invoice-delete-button";
+import ReceivingVoucherCell from "@/components/receiving-voucher-cell";
 import { requireAuth } from "@/lib/auth/guards";
-import { canViewPurchaseOrder, isReadyMixKhobarDirector, READY_MIX_KHOBAR_PROJECT_NAME } from "@/lib/po-access";
+import { canViewPurchaseOrder, directorPurchaseOrderProjectNames, isReadyMixKhobarDirector } from "@/lib/po-access";
 import { canViewInvoicesForPurchaseOrder } from "@/lib/invoice-access";
 import { prisma } from "@/lib/prisma";
 import { isKsaViewer, KSA_USER_LOCATIONS } from "@/lib/ksa-viewer";
@@ -25,6 +26,7 @@ export default async function PurchaseOrderDetailsPage({ params }: { params: Pro
   const { id } = await params;
   if (!(await canViewPurchaseOrder(session, id))) redirect("/unauthorized");
   const isReadyMixViewer = isReadyMixKhobarDirector(session);
+  const directorProjectNames = directorPurchaseOrderProjectNames(session);
 
   const po = await prisma.purchaseOrder.findUnique({
     where: { id },
@@ -36,7 +38,10 @@ export default async function PurchaseOrderDetailsPage({ params }: { params: Pro
       },
       invoices: {
         orderBy: { uploadedAt: "desc" },
-        include: { uploadedBy: { select: { name: true } } },
+        include: {
+          uploadedBy: { select: { name: true } },
+          goodsReceivingVoucher: { select: { id: true, originalName: true } },
+        },
       },
     },
   });
@@ -45,7 +50,7 @@ export default async function PurchaseOrderDetailsPage({ params }: { params: Pro
   const visibleMrLinks = isKsaViewer(session)
     ? po.mrLinks.filter((link) => KSA_USER_LOCATIONS.includes(link.document.createdBy.location as typeof KSA_USER_LOCATIONS[number]))
     : isReadyMixViewer
-      ? po.mrLinks.filter((link) => link.document.projectName === READY_MIX_KHOBAR_PROJECT_NAME)
+      ? po.mrLinks.filter((link) => directorProjectNames.includes(link.document.projectName ?? ""))
       : po.mrLinks;
 
   return (
@@ -113,7 +118,7 @@ export default async function PurchaseOrderDetailsPage({ params }: { params: Pro
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                  <tr><th className="px-5 py-3 font-semibold">Invoice</th><th className="px-5 py-3 font-semibold">Uploaded</th><th className="px-5 py-3 font-semibold">Uploaded By</th><th className="px-5 py-3 font-semibold">Action</th></tr>
+                  <tr><th className="px-5 py-3 font-semibold">Invoice</th><th className="px-5 py-3 font-semibold">Uploaded</th><th className="px-5 py-3 font-semibold">Uploaded By</th><th className="px-5 py-3 font-semibold">Action</th><th className="px-5 py-3 font-semibold">GRV</th></tr>
                 </thead>
                 <tbody>
                   {po.invoices.map((invoice) => (
@@ -126,6 +131,9 @@ export default async function PurchaseOrderDetailsPage({ params }: { params: Pro
                             <a href={`/api/invoices/${invoice.id}/download`} className="font-medium text-cyan-700 hover:underline">Download</a>
                             {session.role === UserRole.ADMIN ? <InvoiceDeleteButton invoiceId={invoice.id} /> : null}
                           </div>
+                        </td>
+                        <td className="px-5 py-4">
+                          <ReceivingVoucherCell voucher={invoice.goodsReceivingVoucher} kind="GRV" canDelete={session.role === UserRole.ADMIN} />
                         </td>
                     </tr>
                   ))}

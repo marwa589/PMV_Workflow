@@ -5,11 +5,13 @@ import PurchaseOrderListTable from "@/components/purchase-order-list-table";
 import PurchaseOrderInvoiceUpload from "@/components/purchase-order-invoice-upload";
 import PurchaseOrderUpload from "@/components/purchase-order-upload";
 import { requireAuth } from "@/lib/auth/guards";
-import { canViewPurchaseOrder, canViewPurchaseOrdersSidebar, isGlobalPurchaseOrderViewer, isMuneer, isOmar, isReadyMixKhobarDirector, READY_MIX_KHOBAR_PROJECT_NAME } from "@/lib/po-access";
+import { canViewPurchaseOrder, canViewPurchaseOrdersSidebar, isGlobalPurchaseOrderViewer, isErro, isMuneer, isOmar, isReadyMixKhobarDirector, directorPurchaseOrderProjectNames } from "@/lib/po-access";
 import { prisma } from "@/lib/prisma";
-import { canUploadInvoices, getInvoiceScopeForUser, invoiceScopeMrWhere, resolveInvoiceScopeForMrs } from "@/lib/invoice-access";
+import { getReceivingUploadOptions } from "@/lib/receiving-upload-options";
+import { canUploadInvoices, getInvoiceScopeForUser, resolveInvoiceScopeForMrs } from "@/lib/invoice-access";
 import { isKsaViewer, KSA_USER_LOCATIONS } from "@/lib/ksa-viewer";
 import { isRamziDocumentApprover } from "@/lib/mohamed-document-workflow";
+import { documentLocationWhere, effectiveDocumentLocation } from "@/lib/document-location";
 import { isAvkMrViewer } from "@/lib/avk-access";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +20,7 @@ export default async function PurchaseOrdersPage({ searchParams }: { searchParam
   const session = await requireAuth();
   if (!canViewPurchaseOrdersSidebar(session)) redirect("/unauthorized");
   const isReadyMixViewer = isReadyMixKhobarDirector(session);
+  const directorProjectNames = directorPurchaseOrderProjectNames(session);
   const isRamziAvkViewer = isRamziDocumentApprover(session.email);
   const isKsaReadOnlyViewer = isKsaViewer(session);
   const invoiceScope = isKsaReadOnlyViewer ? null : getInvoiceScopeForUser(session);
@@ -25,7 +28,7 @@ export default async function PurchaseOrdersPage({ searchParams }: { searchParam
   const viewer = await prisma.user.findUnique({ where: { id: session.userId }, select: { location: true } });
   const isAvkDataViewer = isAvkMrViewer({ email: session.email, location: viewer?.location, role: session.role });
   const requestedLocation = resolvedSearchParams.location === "AVR" || resolvedSearchParams.location === "AVK" || resolvedSearchParams.location === "KUWAIT" ? resolvedSearchParams.location : "";
-  const locationFilter = isKsaReadOnlyViewer ? "" : isRamziAvkViewer || (isAvkDataViewer && !isGlobalPurchaseOrderViewer(session)) ? "AVK" : isGlobalPurchaseOrderViewer(session) ? requestedLocation : viewer?.location ?? "";
+  const locationFilter = isKsaReadOnlyViewer ? "" : isRamziAvkViewer || (isAvkDataViewer && !isGlobalPurchaseOrderViewer(session) && !isErro(session)) ? "AVK" : isErro(session) ? "" : isGlobalPurchaseOrderViewer(session) ? requestedLocation : viewer?.location ?? "";
 
   const [approvedMrs, purchaseOrders] = await Promise.all([
     prisma.document.findMany({
@@ -33,10 +36,10 @@ export default async function PurchaseOrdersPage({ searchParams }: { searchParam
       documentType: "MATERIAL_REQUISITION",
       status: DocumentStatus.APPROVED,
       ...(isReadyMixViewer
-        ? { projectName: READY_MIX_KHOBAR_PROJECT_NAME }
+        ? { projectName: { in: directorProjectNames } }
         : isKsaReadOnlyViewer
           ? { createdBy: { location: { in: [...KSA_USER_LOCATIONS] } } }
-        : isOmar(session) && locationFilter ? { createdBy: { location: locationFilter } } : {}),
+        : isOmar(session) && locationFilter ? documentLocationWhere(locationFilter) : {}),
     },
     select: {
       id: true,
@@ -57,7 +60,7 @@ export default async function PurchaseOrdersPage({ searchParams }: { searchParam
         uploadedBy: { select: { name: true } },
         receivedBy: { select: { name: true, email: true } },
         _count: { select: { invoices: true } },
-        mrLinks: { include: { document: { select: { id: true, documentNumber: true, title: true, projectName: true, createdBy: { select: { location: true } } } } } },
+        mrLinks: { include: { document: { select: { id: true, documentNumber: true, title: true, projectName: true, uploaderLocation: true, createdBy: { select: { location: true } } } } } },
       },
     }),
   ]);
@@ -67,7 +70,7 @@ export default async function PurchaseOrdersPage({ searchParams }: { searchParam
       purchaseOrder,
       visible: (isKsaReadOnlyViewer
         ? purchaseOrder.mrLinks.some((link) => KSA_USER_LOCATIONS.includes(link.document.createdBy.location as typeof KSA_USER_LOCATIONS[number]))
-        : locationFilter ? purchaseOrder.mrLinks.some((link) => link.document.createdBy.location === locationFilter) : true)
+        : locationFilter ? purchaseOrder.mrLinks.some((link) => effectiveDocumentLocation(link.document) === locationFilter) : true)
         && await canViewPurchaseOrder(session, purchaseOrder.id),
     })),
   )).filter((item) => item.visible).map((item) => item.purchaseOrder);
@@ -81,21 +84,13 @@ export default async function PurchaseOrdersPage({ searchParams }: { searchParam
         .map((purchaseOrder) => ({
           id: purchaseOrder.id,
           poNumber: purchaseOrder.poNumber,
+          originalName: purchaseOrder.originalName,
           relatedMrLabels: purchaseOrder.mrLinks.map((link) => link.document.documentNumber),
         }))
     : [];
-  const invoiceUploadCashMrs = invoiceScope && canUploadInvoices(session, invoiceScope)
-    ? await prisma.document.findMany({
-        where: {
-          documentType: "MATERIAL_REQUISITION",
-          mrType: "CASH",
-          status: DocumentStatus.APPROVED,
-          ...invoiceScopeMrWhere(invoiceScope),
-        },
-        select: { id: true, documentNumber: true, title: true },
-        orderBy: { updatedAt: "desc" },
-      })
-    : [];
+  const receivingUploadOptions = invoiceScope && canUploadInvoices(session, invoiceScope)
+    ? await getReceivingUploadOptions(session, { purchaseOrders: invoiceUploadPurchaseOrders })
+    : null;
 
   const canAdminDelete = session.role === UserRole.ADMIN;
   const canRequestDeletion = session.role === UserRole.ADMIN || isOmar(session);
@@ -121,10 +116,12 @@ export default async function PurchaseOrdersPage({ searchParams }: { searchParam
           </div>
         </section>
       ) : null}
-      {invoiceScope && canUploadInvoices(session, invoiceScope) ? (
+      {receivingUploadOptions ? (
         <PurchaseOrderInvoiceUpload
-          purchaseOrders={invoiceUploadPurchaseOrders}
-          cashMrs={invoiceUploadCashMrs}
+          purchaseOrders={receivingUploadOptions.purchaseOrders}
+          cashMrs={receivingUploadOptions.cashMrs}
+          grvInvoices={receivingUploadOptions.grvInvoices}
+          voucherCashMrs={receivingUploadOptions.voucherCashMrs}
         />
       ) : null}
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -147,7 +144,7 @@ export default async function PurchaseOrdersPage({ searchParams }: { searchParam
               linkedMrs: po.mrLinks
                 .filter((link) => isKsaReadOnlyViewer
                   ? KSA_USER_LOCATIONS.includes(link.document.createdBy.location as typeof KSA_USER_LOCATIONS[number])
-                  : !isReadyMixViewer || link.document.projectName === READY_MIX_KHOBAR_PROJECT_NAME)
+                  : !isReadyMixViewer || directorProjectNames.includes(link.document.projectName ?? ""))
                 .map((link) => ({
                 id: link.document.id,
                 documentNumber: link.document.documentNumber,

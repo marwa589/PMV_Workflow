@@ -3,6 +3,7 @@ import { UserRole } from "@prisma/client";
 import { redirect } from "next/navigation";
 import DashboardShell from "@/components/dashboard-shell";
 import InvoiceDeleteButton from "@/components/invoice-delete-button";
+import ReceivingVoucherCell from "@/components/receiving-voucher-cell";
 import { requireAuth } from "@/lib/auth/guards";
 import { getInvoiceScopeForUser, invoiceScopeMatchesMr, invoiceScopeMrWhere, resolveInvoiceScopeForMrs } from "@/lib/invoice-access";
 import { prisma } from "@/lib/prisma";
@@ -23,6 +24,7 @@ export default async function InvoicesPage() {
     },
     include: {
       uploadedBy: { select: { name: true } },
+      goodsReceivingVoucher: { select: { id: true, originalName: true } },
       purchaseOrder: {
         select: {
           id: true,
@@ -90,6 +92,7 @@ export default async function InvoicesPage() {
                   <th className="px-5 py-3 font-semibold">Uploaded</th>
                   <th className="px-5 py-3 font-semibold">Uploaded By</th>
                   <th className="px-5 py-3 font-semibold">Action</th>
+                  <th className="px-5 py-3 font-semibold">GRV</th>
                 </tr>
               </thead>
               <tbody>
@@ -118,6 +121,9 @@ export default async function InvoicesPage() {
                         <a href={`/api/invoices/${invoice.id}/download`} className="font-medium text-cyan-700 hover:underline">Download</a>
                         {session.role === UserRole.ADMIN ? <InvoiceDeleteButton invoiceId={invoice.id} /> : null}
                       </div>
+                    </td>
+                    <td className="px-5 py-4">
+                      <ReceivingVoucherCell voucher={invoice.goodsReceivingVoucher} kind="GRV" canDelete={session.role === UserRole.ADMIN} />
                     </td>
                   </tr>
                 ))}

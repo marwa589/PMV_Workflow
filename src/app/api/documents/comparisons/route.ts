@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { canAccessMrModuleForSession, isErroUser, isRestrictedClerk } from "@/lib/auth/resource-access";
-import { READY_MIX_KHOBAR_PROJECT_NAME } from "@/lib/ready-mix-mr-access";
+import { BERNABIE_UPLOADER_EMAIL, getKsaProjectByKey, workflowRouteOptionsForUploader } from "@/lib/ksa-projects";
 import { KSA_USER_LOCATIONS, isKsaViewer } from "@/lib/ksa-viewer";
 
 export const runtime = "nodejs";
@@ -26,23 +26,23 @@ export async function GET(request: Request) {
   const search = searchParams.get("search")?.trim() || "";
   const workflowLocation = searchParams.get("workflowLocation") || "";
 
-  if (workflowLocation && (!isDispatcher || !["AVR", "READY_MIX_KHOBAR"].includes(workflowLocation))) {
+  const routeUploader = workflowLocation
+    ? await prisma.user.findUnique({ where: { id: session.userId }, select: { email: true, location: true } })
+    : null;
+  const allowedRoutes = routeUploader ? workflowRouteOptionsForUploader(routeUploader).map((option) => option.value) : [];
+  if (workflowLocation && !allowedRoutes.includes(workflowLocation)) {
     return NextResponse.json({ message: "Invalid comparison workflow scope." }, { status: 403 });
   }
+  const routeProject = getKsaProjectByKey(workflowLocation);
+  // Erro and Bernabie can link any approved comparison (any uploader, location or project) to their MRs.
+  const seesAllComparisons = isDispatcher || session.email?.trim().toLowerCase() === BERNABIE_UPLOADER_EMAIL;
 
   const comparisons = await prisma.document.findMany({
     where: {
       documentType: "COMPARISON",
       status: "APPROVED",
       AND: [
-        ...(isRestricted
-          ? [isDispatcher
-            ? { OR: [
-              { createdById: session.userId },
-              { versions: { some: { uploadedById: session.userId } } },
-            ] }
-            : { createdById: session.userId }]
-          : []),
+        ...(isRestricted && !seesAllComparisons ? [{ createdById: session.userId }] : []),
         {
           OR: [
             { documentNumber: { contains: search, mode: "insensitive" } },
@@ -51,7 +51,7 @@ export async function GET(request: Request) {
         },
       ],
       ...(isKsaViewer(session) ? { createdBy: { location: { in: [...KSA_USER_LOCATIONS] } } } : {}),
-      ...(workflowLocation === "READY_MIX_KHOBAR" && !isDispatcher ? { projectName: READY_MIX_KHOBAR_PROJECT_NAME } : {}),
+      ...(routeProject && !seesAllComparisons ? { projectName: routeProject.name } : {}),
     },
     select: {
       id: true,

@@ -34,6 +34,7 @@ const typeLabels = {
   RENTAL_EXTERNAL: "Rental External",
   RENEWAL: "Renewal",
   PURCHASE: "Purchase",
+  RFD: "RFD (Request for Diesel)",
 };
 
 const statusLabels = {
@@ -58,6 +59,8 @@ const actionLabels: Record<string, string> = {
   COMMENTED: "Commented",
   RELEASE_VOUCHER_ADDED: "Release voucher added",
   RECEIPT_VOUCHER_ADDED: "Receipt voucher added",
+  REDIRECTED: "Redirected",
+  REDIRECT_APPROVED: "Approved (redirected) - sent back to PMV Manager",
 };
 
 function formatDate(date: Date) {
@@ -101,6 +104,7 @@ export default async function ErrDetailsPage({ params }: Props) {
       currentApprover: {
         select: { name: true },
       },
+      redirectedById: true,
       files: {
         orderBy: [
           { kind: "asc" },
@@ -141,7 +145,9 @@ export default async function ErrDetailsPage({ params }: Props) {
   }
 
   const statusText =
-    err.status === "PENDING"
+    err.status === "PENDING" && err.redirectedById
+      ? `Redirected to ${err.currentApprover?.name ?? "another user"}`
+      : err.status === "PENDING"
       ? `Pending ${stageLabels[err.currentStage]}`
       : err.status === "ON_HOLD"
         ? `On Hold — ${stageLabels[err.currentStage]}`

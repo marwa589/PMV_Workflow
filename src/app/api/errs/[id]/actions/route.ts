@@ -21,12 +21,13 @@ import { isErrUploaderAccount } from "@/lib/err/uploader-access";
 import { queueWorkflowEmailEvents } from "@/lib/workflow-email-batching";
 import { MOHAMED_AVK_WORKFLOW_UPLOADER_EMAIL } from "@/lib/mohamed-document-workflow";
 import { GLOBAL_ERR_UPLOADER_EMAILS } from "@/lib/err/uploader-access";
+import { canRedirectDocuments } from "@/lib/document-redirect";
 
 export const runtime = "nodejs";
 
 class ErrActionError extends Error {}
 
-type Decision = "APPROVE" | "REJECT" | "COMMENT" | "HOLD";
+type Decision = "APPROVE" | "REJECT" | "COMMENT" | "HOLD" | "REDIRECT";
 type ApprovalRoute = "FINALIZE" | "ACTING_CEO" | "ACTING_CEO_THEN_CEO" | "CEO";
 
 export async function POST(
@@ -90,10 +91,25 @@ export async function POST(
   const quotationValue = formData.get("quotation");
   const quotationFile = quotationValue instanceof File && quotationValue.size > 0 ? quotationValue : null;
   const signatureCount = Number(formData.get("signatureCount") || 0);
+  const redirectToUserId = String(formData.get("redirectToUserId") || "").trim();
 
-  if (decision !== "APPROVE" && decision !== "REJECT" && decision !== "COMMENT" && decision !== "HOLD") {
+  if (decision !== "APPROVE" && decision !== "REJECT" && decision !== "COMMENT" && decision !== "HOLD" && decision !== "REDIRECT") {
     return NextResponse.json(
       { message: "Decision must be APPROVE, REJECT, or COMMENT." },
+      { status: 400 },
+    );
+  }
+
+  if (decision === "REDIRECT" && quotationFile) {
+    return NextResponse.json(
+      { message: "Add the quotation when you approve, not when redirecting." },
+      { status: 400 },
+    );
+  }
+
+  if (decision === "REDIRECT" && !redirectToUserId) {
+    return NextResponse.json(
+      { message: "Choose the user to redirect this ERR to." },
       { status: 400 },
     );
   }
@@ -199,6 +215,7 @@ export async function POST(
           projectId: true,
           revisionNumber: true,
           lockVersion: true,
+          redirectedById: true,
           files: {
             where: { kind: "ERR_PDF" },
             orderBy: [{ versionNumber: "desc" }, { createdAt: "desc" }],
@@ -221,6 +238,74 @@ export async function POST(
 
       if (err.currentApproverId !== access.userId) {
         throw new ErrActionError("This ERR is not assigned to you.");
+      }
+
+      // Set while Marc has redirected the ERR to the current user.
+      const isRedirectTarget = Boolean(err.redirectedById);
+
+      if (isRedirectTarget && savedQuotation) {
+        throw new ErrActionError("Quotations can only be added by the PMV Manager.");
+      }
+
+      if (isRedirectTarget && decision === "HOLD") {
+        throw new ErrActionError("A redirected ERR cannot be put on hold. Approve, reject, or request a revision.");
+      }
+
+      if (decision === "REDIRECT") {
+        if (isRedirectTarget || !canRedirectDocuments(access.email)) {
+          throw new ErrActionError("Only the PMV Manager can redirect an ERR.");
+        }
+        if (err.currentStage !== "PMV_MANAGER") {
+          throw new ErrActionError("An ERR can only be redirected at the PMV Manager stage.");
+        }
+        if (redirectToUserId === access.userId) {
+          throw new ErrActionError("Choose another user to redirect this ERR to.");
+        }
+
+        const target = await tx.user.findUnique({
+          where: { id: redirectToUserId },
+          select: { id: true, name: true, role: true },
+        });
+        if (!target || target.role === UserRole.KSA_VIEWER) {
+          throw new ErrActionError("The selected user cannot receive this ERR.");
+        }
+
+        const redirectedAt = new Date();
+        await tx.err.update({
+          where: { id: err.id },
+          data: {
+            currentApproverId: target.id,
+            currentApproverAssignedAt: redirectedAt,
+            redirectedById: access.userId,
+            lockVersion: { increment: 1 },
+          },
+        });
+
+        await tx.errApprovalHistory.create({
+          data: {
+            errId: err.id,
+            performedById: access.userId,
+            action: "REDIRECTED",
+            stage: err.currentStage,
+            comments: comments ? `Redirected to ${target.name}: ${comments}` : `Redirected to ${target.name}`,
+            revisionNumber: err.revisionNumber,
+            inputFileId: err.files[0]?.id ?? null,
+          },
+        });
+
+        await tx.errNotification.create({
+          data: {
+            errId: err.id,
+            recipientId: target.id,
+            type: "APPROVAL_PENDING",
+            eventKey: `err:${err.id}:redirect:${randomUUID()}`,
+            title: "ERR redirected to you",
+            message: `${err.documentNumber}: ${err.title}`,
+            emailEnabled: false,
+          },
+        });
+
+        return { status: "PENDING", message: `ERR redirected to ${target.name}.` };
       }
 
       if (savedQuotation && err.currentStage !== "PMV_MANAGER") {
@@ -335,6 +420,46 @@ export async function POST(
             uploadedById: access.userId,
               },
             });
+
+        // Redirected ERR approved: it goes back to Marc at his stage for his own decision.
+        if (isRedirectTarget && err.redirectedById) {
+          await tx.err.update({
+            where: { id: err.id },
+            data: {
+              currentApproverId: err.redirectedById,
+              currentApproverAssignedAt: now,
+              redirectedById: null,
+              lockVersion: { increment: 1 },
+            },
+          });
+
+          await tx.errApprovalHistory.create({
+            data: {
+              errId: err.id,
+              performedById: access.userId,
+              action: "REDIRECT_APPROVED",
+              stage: err.currentStage,
+              comments: comments || null,
+              revisionNumber: err.revisionNumber,
+              inputFileId: latestErrPdf?.id ?? null,
+              outputFileId: outputFile.id,
+            },
+          });
+
+          await tx.errNotification.create({
+            data: {
+              errId: err.id,
+              recipientId: err.redirectedById,
+              type: "APPROVAL_PENDING",
+              eventKey: `err:${err.id}:redirect-approved:${randomUUID()}`,
+              title: "Redirected ERR approved and returned to you",
+              message: `${err.documentNumber}: ${err.title}`,
+              emailEnabled: false,
+            },
+          });
+
+          return { status: "PENDING", message: "ERR approved and sent back to the PMV Manager." };
+        }
 
         const nextStage = err.currentStage === "PMV_MANAGER"
           ? selectedRoute === "ACTING_CEO" || selectedRoute === "ACTING_CEO_THEN_CEO"
@@ -468,6 +593,7 @@ export async function POST(
             status: "REJECTED",
             currentApproverId: null,
             currentApproverAssignedAt: null,
+            redirectedById: null,
             lockVersion: { increment: 1 },
           },
         });
@@ -508,6 +634,7 @@ export async function POST(
           status: "REVISION_REQUIRED",
           currentApproverId: err.createdById,
           currentApproverAssignedAt: now,
+          redirectedById: null,
           lockVersion: { increment: 1 },
         },
       });
@@ -672,9 +799,16 @@ export async function POST(
               select: { id: true },
             })
           : [];
+        // Tayyab is copied on approved KSA (non-Kuwait) ERRs only.
+        const ksaApprovedExtraRecipients = result.status === "APPROVED" && errForEmail.createdBy.location !== "KUWAIT"
+          ? await prisma.user.findMany({
+              where: { email: { equals: "mohamad.tayyab@ahmadiah.com", mode: "insensitive" } },
+              select: { id: true, email: true },
+            })
+          : [];
         const recipients = Array.from(
           new Map(
-            [...eligibleUploaders.filter((user) => user.id === errForEmail.createdById), ...globalRecipients, ...locationRecipients, ...nextApprover, ...workshopManagers]
+            [...eligibleUploaders.filter((user) => user.id === errForEmail.createdById), ...globalRecipients, ...locationRecipients, ...nextApprover, ...workshopManagers, ...ksaApprovedExtraRecipients]
               .filter((recipient) => "email" in recipient ? Boolean(recipient.email) : true)
               .filter((recipient) => result.status === "APPROVED" || result.status === "REJECTED" || !finalApprovalOnlyRecipientIds.has(recipient.id))
               .map((recipient) => [recipient.id, recipient]),

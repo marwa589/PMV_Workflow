@@ -60,7 +60,11 @@ export function getErrViewWhere(
         filter = {
           status: "PENDING",
           currentApproverId: access.userId,
-          currentStage: { in: stages },
+          // ERRs Marc redirected to this user count as pending for them at any stage.
+          OR: [
+            { currentStage: { in: stages } },
+            { redirectedById: { not: null } },
+          ],
         };
         break;
 

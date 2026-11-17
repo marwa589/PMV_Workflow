@@ -8,10 +8,10 @@ import { getPoStatus } from "@/lib/document-status";
 import { getPurchaseOrderStatuses } from "@/lib/document-queries";
 import { prisma } from "@/lib/prisma";
 import { KSA_USER_LOCATIONS } from "@/lib/ksa-viewer";
+import { documentLocationWhere } from "@/lib/document-location";
+import { getKsaProjectByKey } from "@/lib/ksa-projects";
 
 export const dynamic = "force-dynamic";
-
-const READY_MIX_KHOBAR_PROJECT_NAME = "Ready Mix Khobar";
 
 export default async function KsaViewerPage({ searchParams }: { searchParams: Promise<{ location?: string; documentType?: string; project?: string }> }) {
   const session = await requireAuth();
@@ -22,14 +22,15 @@ export default async function KsaViewerPage({ searchParams }: { searchParams: Pr
   const documentType = params.documentType === "MATERIAL_REQUISITION" || params.documentType === "COMPARISON"
     ? params.documentType
     : "";
-  const showReadyMixMrs = params.project === "READY_MIX_KHOBAR" && documentType === "MATERIAL_REQUISITION";
+  // KSA project MR pages (Ready Mix Khobar, WP03, Tachalih KSA).
+  const ksaProject = documentType === "MATERIAL_REQUISITION" ? getKsaProjectByKey(params.project) : null;
 
   const records = await prisma.document.findMany({
     where: {
       documentType: documentType || { in: ["MATERIAL_REQUISITION", "COMPARISON"] },
       createdBy: { location: { in: [...KSA_USER_LOCATIONS] } },
-      ...(location ? { createdBy: { location } } : {}),
-      ...(showReadyMixMrs ? { projectName: READY_MIX_KHOBAR_PROJECT_NAME } : {}),
+      ...(location ? documentLocationWhere(location) : {}),
+      ...(ksaProject ? { projectName: ksaProject.name } : {}),
     },
     include: {
       currentApprover: { select: { name: true } },
@@ -53,11 +54,13 @@ export default async function KsaViewerPage({ searchParams }: { searchParams: Pr
     relatedComparisonDocumentNumber: record.relatedComparison?.documentNumber ?? null,
     downloadedAt: record.downloadRecords[0]?.downloadedAt ?? null,
     dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(record.updatedAt),
+    lastUpdatedAt: record.updatedAt,
+    isRedirected: Boolean(record.redirectedById),
   }));
   const materialRequisitions = documents.filter((document) => document.documentType === "MATERIAL_REQUISITION");
   const comparisons = documents.filter((document) => document.documentType === "COMPARISON");
-  const pageTitle = showReadyMixMrs
-    ? "MRs - Ready Mix Khobar"
+  const pageTitle = ksaProject
+    ? ksaProject.navLabel
     : documentType === "COMPARISON"
       ? "Comparison Sheets"
       : location

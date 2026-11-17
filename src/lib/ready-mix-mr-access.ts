@@ -6,6 +6,8 @@ const READY_MIX_KHOBAR_VIEWER_EMAILS = new Set([
   "dispatcher.pmv@ahmadiah.com",
   "elie.azzam@ahmadiah.com",
   "omar.merzek@ahmadiah.com",
+  // Bernabie can now upload Ready Mix Khobar documents too.
+  "bernabie.rocha@ahmadiah.com",
 ]);
 
 export function canViewReadyMixKhobarMrs(user: { role: UserRole; email?: string | null }): boolean {

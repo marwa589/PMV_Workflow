@@ -82,6 +82,7 @@ export default function DocumentStatusFilter({ value = "", title = "Status", doc
             <option value="RENTAL_EXTERNAL">Rental External</option>
             <option value="RENEWAL">Renewal</option>
             <option value="PURCHASE">Purchase</option>
+            <option value="RFD">RFD (Request for Diesel)</option>
           </select>
         </div>
       ) : null}

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { getKsaProjectByName } from "@/lib/ksa-projects";
 
 const KSA_AVR_UPLOADER = "dispatcher.pmv@ahmadiah.com";
 const KSA_AVK_UPLOADERS = new Set([
@@ -98,8 +99,9 @@ export function documentStorageFolder(params: {
     return "Custody Files/AVR";
   }
 
-  const baseFolder = params.projectName === "Ready Mix Khobar"
-    ? "MRs/KSA/Ready Mix Khobar"
+  const ksaProject = getKsaProjectByName(params.projectName);
+  const baseFolder = ksaProject
+    ? ksaProject.storageFolder
     : location === "KSA" && group ? `MRs/${location}/${group}` : `MRs/${location}`;
 
   if (params.documentType === "COMPARISON") {
@@ -117,23 +119,34 @@ export function documentStorageFolder(params: {
   return `${baseFolder}/MRs`;
 }
 
-export function purchaseOrderStorageFolder(uploaderEmail: string, projectName?: string | null): string {
-  const location = resolveStorageLocationFromUser(null, uploaderEmail);
-  const group = resolveStorageGroupFromUser(null, uploaderEmail);
+/** `mrLocation` overrides the uploader-based folder (used for AVK MRs uploaded by Erro, whose account is AVR). */
+export function purchaseOrderStorageFolder(uploaderEmail: string, projectName?: string | null, mrLocation?: string | null): string {
+  const location = resolveStorageLocationFromUser(mrLocation ?? null, uploaderEmail);
+  const group = resolveStorageGroupFromUser(mrLocation ?? null, uploaderEmail);
 
   if (!location) return "POs";
-  const baseFolder = projectName === "Ready Mix Khobar"
-    ? "MRs/KSA/Ready Mix Khobar"
+  const ksaProject = getKsaProjectByName(projectName);
+  const baseFolder = ksaProject
+    ? ksaProject.storageFolder
     : location === "KSA" && group ? `MRs/${location}/${group}` : `MRs/${location}`;
   return `${baseFolder}/POs`;
 }
 
 export function purchaseOrderInvoiceStorageFolder(purchaseOrderFilePath: string): string {
-  const directory = path.posix.dirname(purchaseOrderFilePath.replaceAll("\\", "/"));
-  const invoiceParent = path.posix.basename(directory).toLowerCase() === "pos"
+  return linkedAttachmentStorageFolder(purchaseOrderFilePath, "Invoices");
+}
+
+/**
+ * Folder for a file attached to a PO, Cash MR or invoice: a sibling folder named `folderName`
+ * next to the parent's "POs"/"Invoices" folder (or next to the parent file itself).
+ */
+export function linkedAttachmentStorageFolder(parentFilePath: string, folderName: string): string {
+  const directory = path.posix.dirname(parentFilePath.replaceAll("\\", "/"));
+  const baseName = path.posix.basename(directory).toLowerCase();
+  const attachmentParent = baseName === "pos" || baseName === "invoices"
     ? path.posix.dirname(directory)
     : directory;
-  return path.posix.join(invoiceParent === "." ? "" : invoiceParent, "Invoices");
+  return path.posix.join(attachmentParent === "." ? "" : attachmentParent, folderName);
 }
 
 export function folderFromStoredPath(filePath?: string | null): string | null {

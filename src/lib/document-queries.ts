@@ -2,7 +2,9 @@ import { ApprovalActionType, DocumentStatus, DocumentType, ErrStatus, UserLocati
 import { prisma } from "@/lib/prisma";
 import { getModuleVisibility } from "@/lib/auth/module-visibility";
 import { isRestrictedClerk } from "@/lib/auth/resource-access";
-import { AVK_WORKFLOW_UPLOADER_EMAILS, isRamziDocumentApprover } from "@/lib/mohamed-document-workflow";
+import { avkUploaderWorkflowCreatorWhere, isRamziDocumentApprover } from "@/lib/mohamed-document-workflow";
+import { documentLocationWhere } from "@/lib/document-location";
+import { KSA_PROJECT_NAMES } from "@/lib/ksa-projects";
 import { isAvkMrViewer } from "@/lib/avk-access";
 
 export async function getPurchaseOrderStatuses(documentIds: string[]) {
@@ -56,7 +58,7 @@ export async function getDocumentsForClerk(userId: string) {
     ? {
         OR: [
           { createdById: userId },
-          ...(canViewAvkMrs ? [{ documentType: { in: [DocumentType.MATERIAL_REQUISITION, DocumentType.COMPARISON] }, createdBy: { location: UserLocation.AVK } }] : []),
+          ...(canViewAvkMrs ? [{ documentType: { in: [DocumentType.MATERIAL_REQUISITION, DocumentType.COMPARISON] }, ...documentLocationWhere(UserLocation.AVK) }] : []),
         ],
       }
     : {};
@@ -98,7 +100,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
   const canViewAvkMrs = isAvkMrViewer({ email: userEmail, location: viewer?.location, role });
   const avkMrScope: Prisma.DocumentWhereInput = {
     documentType: { in: [DocumentType.MATERIAL_REQUISITION, DocumentType.COMPARISON] },
-    createdBy: { location: UserLocation.AVK },
+    ...documentLocationWhere(UserLocation.AVK),
   };
   const canQueryErrs = !isRamziWorkflowApprover && getModuleVisibility(userName, role) !== "DOCUMENTS_ONLY";
   const isGeorgeAzzi = userEmail?.trim().toLowerCase() === "george.azzi@ahmadiah.com";
@@ -199,7 +201,8 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
           { currentApproverId: userId },
           { approvals: { some: { performedById: userId } } },
           ...(canViewAvkMrs ? [avkMrScope] : []),
-          ...(isRamziWorkflowApprover ? [{ documentType: { in: [DocumentType.MATERIAL_REQUISITION, DocumentType.COMPARISON] }, createdBy: { email: { in: [...AVK_WORKFLOW_UPLOADER_EMAILS] } } }] : []),
+          // Ramzi's AVK scope; KSA project documents (e.g. Bernabie's WP03 MRs) are not his.
+          ...(isRamziWorkflowApprover ? [{ documentType: { in: [DocumentType.MATERIAL_REQUISITION, DocumentType.COMPARISON] }, AND: [avkUploaderWorkflowCreatorWhere(), { OR: [{ projectName: null }, { projectName: { notIn: KSA_PROJECT_NAMES } }] }] }] : []),
         ],
       },
       include: {
@@ -221,7 +224,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
         ...(isRamziWorkflowApprover ? {
           document: {
             documentType: { in: [DocumentType.MATERIAL_REQUISITION, DocumentType.COMPARISON] },
-            createdBy: { email: { in: [...AVK_WORKFLOW_UPLOADER_EMAILS] } },
+            ...avkUploaderWorkflowCreatorWhere(),
           },
         } : {}),
       },
@@ -243,6 +246,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
         currentApproverId: true,
         currentApprover: { select: { name: true } },
         createdAt: true,
+        updatedAt: true,
         files: {
           where: { kind: "QUOTATION" },
           orderBy: { versionNumber: "desc" },
@@ -266,6 +270,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
         currentApproverId: true,
         currentApprover: { select: { name: true } },
         createdAt: true,
+        updatedAt: true,
       },
       orderBy: { createdAt: "desc" },
     }) : Promise.resolve([]),
@@ -286,6 +291,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
         type: true,
         currentApprover: { select: { name: true } },
         createdAt: true,
+        updatedAt: true,
       },
       orderBy: { createdAt: "desc" },
     }) : Promise.resolve([]),
@@ -306,6 +312,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
         type: true,
         currentApprover: { select: { name: true } },
         createdAt: true,
+        updatedAt: true,
       },
       orderBy: { createdAt: "desc" },
     }) : Promise.resolve([]),
@@ -329,6 +336,7 @@ export async function getDocumentsForApprover(userId: string, role: UserRole, us
         currentApproverId: true,
         currentApprover: { select: { name: true } },
         createdAt: true,
+        updatedAt: true,
       },
       orderBy: { createdAt: "desc" },
     }) : Promise.resolve([]),
@@ -440,6 +448,7 @@ export async function getDocumentsForAdmin() {
         type: true,
         currentApprover: { select: { name: true } },
         createdAt: true,
+        updatedAt: true,
       },
       orderBy: { createdAt: "desc" },
     }),
@@ -453,6 +462,7 @@ export async function getDocumentsForAdmin() {
         type: true,
         currentApprover: { select: { name: true } },
         createdAt: true,
+        updatedAt: true,
       },
       orderBy: { createdAt: "desc" },
     }),
@@ -466,6 +476,7 @@ export async function getDocumentsForAdmin() {
         type: true,
         currentApprover: { select: { name: true } },
         createdAt: true,
+        updatedAt: true,
       },
       orderBy: { createdAt: "desc" },
     }),
@@ -479,6 +490,7 @@ export async function getDocumentsForAdmin() {
         type: true,
         currentApprover: { select: { name: true } },
         createdAt: true,
+        updatedAt: true,
       },
       orderBy: { createdAt: "desc" },
     }),
@@ -492,6 +504,7 @@ export async function getDocumentsForAdmin() {
         type: true,
         currentApprover: { select: { name: true } },
         createdAt: true,
+        updatedAt: true,
       },
       orderBy: { createdAt: "desc" },
     }),

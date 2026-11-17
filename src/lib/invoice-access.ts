@@ -160,3 +160,42 @@ export async function canUploadInvoicesForMr(user: InvoiceUser, documentId: stri
     && canUploadInvoices(user, mrScope),
   );
 }
+export async function getInvoiceScopeForInvoice(invoiceId: string): Promise<InvoiceScopePolicy | null> {
+  const invoice = await prisma.purchaseOrderInvoice.findUnique({
+    where: { id: invoiceId },
+    select: { purchaseOrderId: true, documentId: true },
+  });
+  if (!invoice) return null;
+  if (invoice.purchaseOrderId) return getInvoiceScopeForPurchaseOrder(invoice.purchaseOrderId);
+  if (invoice.documentId) return getInvoiceScopeForMr(invoice.documentId);
+  return null;
+}
+
+/** GRVs follow the visibility of the invoice they are linked to. */
+export async function canViewGrvForInvoice(user: InvoiceUser, invoiceId: string): Promise<boolean> {
+  const viewerScope = getInvoiceScopeForUser(user);
+  if (!viewerScope) return false;
+  if (viewerScope.global) return true;
+  const invoiceScope = await getInvoiceScopeForInvoice(invoiceId);
+  return Boolean(invoiceScope && viewerScope.key === invoiceScope.key);
+}
+
+/** GRVs can be uploaded by the invoice uploaders of the invoice's scope. */
+export async function canUploadGrvForInvoice(user: InvoiceUser, invoiceId: string): Promise<boolean> {
+  const invoiceScope = await getInvoiceScopeForInvoice(invoiceId);
+  return Boolean(
+    invoiceScope
+    && getInvoiceScopeForUser(user)?.key === invoiceScope.key
+    && canUploadInvoices(user, invoiceScope),
+  );
+}
+
+/** Cash Receiving Vouchers use the same rules as Cash MR invoices (approved Cash MRs in scope). */
+export const canViewCashReceivingVoucherForMr = canViewInvoicesForMr;
+export const canUploadCashReceivingVoucherForMr = canUploadInvoicesForMr;
+
+/** True when the user uploads invoices (and GRVs / Cash Receiving Vouchers) in any scope. */
+export function isInvoiceUploader(user: InvoiceUser): boolean {
+  const scope = getInvoiceScopeForUser(user);
+  return Boolean(scope && !scope.global && canUploadInvoices(user, scope));
+}

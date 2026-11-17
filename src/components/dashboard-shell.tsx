@@ -26,6 +26,7 @@ import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 import { getModuleVisibility } from "@/lib/auth/module-visibility";
 import { isErrUploaderAccount } from "@/lib/err/uploader-access";
 import type { UserRole } from "@prisma/client";
+import { KSA_PROJECTS } from "@/lib/ksa-projects";
 
 type NavItem = {
   label: string;
@@ -52,9 +53,12 @@ type SidebarCounts = {
     AVR: number;
     AVK: number;
     READY_MIX_KHOBAR: number;
+    WP03?: number;
+    TACHALIH_KSA?: number;
   };
   comparisons: number;
   pendingApprovals: number;
+  mrPendingApprovals: number;
   errs: number;
   isErrUploader: boolean;
   isAvkDataViewer: boolean;
@@ -62,14 +66,20 @@ type SidebarCounts = {
   canViewPurchaseOrders: boolean;
   canViewReadyMixMrs: boolean;
   canViewInvoices: boolean;
+  /** Invoice uploaders also upload GRVs and Cash Receiving Vouchers from New Document. */
+  canUploadInvoices?: boolean;
   canViewMrApprovals: boolean;
+  redirectedToMe: number;
+  /** MR pages of the KSA projects other than Ready Mix Khobar that this user can open. */
+  ksaProjectNav?: Array<{ key: string; label: string; href: string }>;
 };
 
 const emptySidebarCounts: SidebarCounts = {
   materialRequisitions: 0,
-  materialRequisitionsByLocation: { KUWAIT: 0, AVR: 0, AVK: 0, READY_MIX_KHOBAR: 0 },
+  materialRequisitionsByLocation: { KUWAIT: 0, AVR: 0, AVK: 0, READY_MIX_KHOBAR: 0, WP03: 0, TACHALIH_KSA: 0 },
   comparisons: 0,
   pendingApprovals: 0,
+  mrPendingApprovals: 0,
   errs: 0,
   isErrUploader: false,
   isAvkDataViewer: false,
@@ -77,7 +87,10 @@ const emptySidebarCounts: SidebarCounts = {
   canViewPurchaseOrders: false,
   canViewReadyMixMrs: false,
   canViewInvoices: false,
+  canUploadInvoices: false,
   canViewMrApprovals: false,
+  redirectedToMe: 0,
+  ksaProjectNav: [],
 };
 let lastSidebarCounts: { key: string; counts: SidebarCounts } | null = null;
 
@@ -100,6 +113,8 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
     { label: "MRs - AVR", href: "/ksa-viewer?location=AVR&documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "MRs - AVK", href: "/ksa-viewer?location=AVK&documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "MRs - Ready Mix Khobar", href: "/ksa-viewer?project=READY_MIX_KHOBAR&documentType=MATERIAL_REQUISITION", icon: FileText },
+    { label: "MRs - WP03", href: "/ksa-viewer?project=WP03&documentType=MATERIAL_REQUISITION", icon: FileText },
+    { label: "MRs - Tachalih KSA", href: "/ksa-viewer?project=TACHALIH_KSA&documentType=MATERIAL_REQUISITION", icon: FileText },
     { label: "Comparison Sheets", href: "/ksa-viewer?documentType=COMPARISON", icon: FileText },
     { label: "ERRs", href: "/errs", icon: FileText },
     { label: "Purchase Orders", href: "/purchase-orders", icon: FileText },
@@ -184,19 +199,38 @@ const navItemsByRole: Record<AppRole, NavItem[]> = {
   ],
 };
 
-function getVisibleNavItems(role: AppRole, userName: string, userLocation: SidebarCounts["userLocation"], isUploader?: boolean, canViewPurchaseOrders = false, canViewReadyMixMrs = false, canViewInvoices = false, userEmail?: string, canViewAvkData = false, canViewMrApprovals = false): NavItem[] {
+const RECEIVING_NAV_ITEMS: NavItem[] = [
+  { label: "Invoices", href: "/invoices", icon: FileText },
+  { label: "GRVs", href: "/grvs", icon: FileText },
+  { label: "Cash Receiving Vouchers", href: "/cash-receiving-vouchers", icon: FileText },
+];
+
+/** Adds "New Document" for invoice uploaders whose role does not already show it. */
+function withReceivingUploadNav(items: NavItem[], canUploadInvoices?: boolean): NavItem[] {
+  if (!canUploadInvoices || items.some((item) => item.href === "/new-document")) return items;
+  const newDocumentItem: NavItem = { label: "New Document", href: "/new-document", icon: FilePlus2 };
+  const dashboardIndex = items.findIndex((item) => item.label === "Dashboard");
+  return dashboardIndex === -1
+    ? [newDocumentItem, ...items]
+    : [...items.slice(0, dashboardIndex + 1), newDocumentItem, ...items.slice(dashboardIndex + 1)];
+}
+
+function getVisibleNavItems(role: AppRole, userName: string, userLocation: SidebarCounts["userLocation"], isUploader?: boolean, canViewPurchaseOrders = false, canViewReadyMixMrs = false, canViewInvoices = false, userEmail?: string, canViewAvkData = false, canViewMrApprovals = false, ksaProjectNavItems: NavItem[] = []): NavItem[] {
   if (role === "KSA_VIEWER") return navItemsByRole.KSA_VIEWER;
   const visibility = getModuleVisibility(userName, role);
 
   if (visibility === "ERR_ONLY") {
-    const showMrApprovals = canViewMrApprovals || userEmail?.trim().toLowerCase() === "ramzi@ahmadiah.com";
+    const isRamzi = userEmail?.trim().toLowerCase() === "ramzi@ahmadiah.com";
+    const showMrApprovals = canViewMrApprovals || isRamzi;
     const canUpload = isUploader ?? isErrUploaderAccount(userName, role);
     const items: NavItem[] = [
-      ...(showMrApprovals ? [{ label: "MR / Comparison Approvals", href: "/approver/my-documents", icon: ClipboardCheck }] : []),
+      // Ramzi already has the dedicated AVK MR entry below; hide the duplicate unfiltered approvals tab.
+      ...(showMrApprovals && !isRamzi ? [{ label: "MR / Comparison Approvals", href: "/approver/my-documents", icon: ClipboardCheck }] : []),
       ...(showMrApprovals ? [{ label: "MRs - AVK", href: "/approver/my-documents?documentType=MATERIAL_REQUISITION&location=AVK", icon: FileText }] : []),
       { label: "Dashboard", href: "/errs?view=all&section=dashboard", icon: LayoutDashboard },
       { label: "My Documents", href: "/errs?view=all&section=my-documents", icon: FileText },
       ...(canViewReadyMixMrs ? [{ label: "MRs - Ready Mix Khobar", href: "/ready-mix-khobar-mrs", icon: FileText }] : []),
+      ...ksaProjectNavItems,
       ...(canUpload ? [{ label: "New Document", href: "/new-document", icon: FilePlus2 }] : []),
       ...(canUpload ? [{ label: "ERR - Marc Only", href: "/errs/new?marcOnly=1", icon: FilePlus2 }] : []),
       { label: "ERRs", href: "/errs", icon: FileText },
@@ -207,7 +241,7 @@ function getVisibleNavItems(role: AppRole, userName: string, userLocation: Sideb
       { label: "Approved Documents", href: "/errs?view=approved", icon: CheckCircle2 },
       { label: "Rejected Documents", href: "/errs?view=rejected", icon: FileCheck2 },
       ...(canViewPurchaseOrders ? [{ label: "Purchase Orders", href: "/purchase-orders", icon: FileText }] : []),
-      ...(canViewInvoices ? [{ label: "Invoices", href: "/invoices", icon: FileText }] : []),
+      ...(canViewInvoices ? RECEIVING_NAV_ITEMS : []),
       ...(canViewReadyMixMrs ? [{ label: "MRs - Ready Mix Khobar", href: "/ready-mix-khobar-mrs", icon: FileText }] : []),
       { label: "Account Settings", href: "/errs/settings", icon: Settings },
     ];
@@ -247,10 +281,11 @@ function getVisibleNavItems(role: AppRole, userName: string, userLocation: Sideb
     ? [
         ...visibleLocationMrItems,
         ...(canViewReadyMixMrs ? [{ label: "MRs - Ready Mix Khobar", href: "/ready-mix-khobar-mrs", icon: FileText }] : []),
+        ...ksaProjectNavItems,
       ]
     : [item]);
   const navItemsWithInvoices = navItemsWithLocationMrs.flatMap((item) => item.label === "Purchase Orders" && canViewInvoices
-    ? [item, { label: "Invoices", href: "/invoices", icon: FileText }]
+    ? [item, ...RECEIVING_NAV_ITEMS]
     : [item]);
   const navItemsWithErrUpload = role === "APPROVER_1" && isUploader
     ? [
@@ -296,7 +331,11 @@ function Sidebar({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const navItems = getVisibleNavItems(role, userName, counts.userLocation, isUploader, counts.canViewPurchaseOrders, counts.canViewReadyMixMrs, counts.canViewInvoices, userEmail, counts.isAvkDataViewer, counts.canViewMrApprovals);
+  const redirectedNavItem: NavItem = { label: "Redirected to Me", href: "/redirected-documents", icon: ClipboardCheck };
+  const navItems = [
+    ...((counts.redirectedToMe ?? 0) > 0 || pathname === redirectedNavItem.href ? [redirectedNavItem] : []),
+    ...withReceivingUploadNav(getVisibleNavItems(role, userName, counts.userLocation, isUploader, counts.canViewPurchaseOrders, counts.canViewReadyMixMrs, counts.canViewInvoices, userEmail, counts.isAvkDataViewer, counts.canViewMrApprovals, (counts.ksaProjectNav ?? []).map((item) => ({ label: item.label, href: item.href, icon: FileText }))), counts.canUploadInvoices),
+  ];
   const settingsItem = navItems.find((item) => item.href.endsWith("/settings"));
   const primaryNavItems = navItems.filter((item) => item !== settingsItem);
   const renderNavItem = (item: NavItem) => {
@@ -311,7 +350,10 @@ function Sidebar({
             ? counts.materialRequisitionsByLocation.AVK
             : item.label === "MRs - Ready Mix Khobar"
               ? counts.materialRequisitionsByLocation.READY_MIX_KHOBAR
-              : 0;
+              : (() => {
+                  const ksaProject = KSA_PROJECTS.find((project) => project.navLabel === item.label);
+                  return ksaProject ? counts.materialRequisitionsByLocation[ksaProject.key] ?? 0 : 0;
+                })();
     const itemUrl = new URL(item.href, "http://localhost");
     const itemDocumentType = itemUrl.searchParams.get("documentType");
     const itemLocation = itemUrl.searchParams.get("location");
@@ -369,6 +411,16 @@ function Sidebar({
           {item.label === "ERRs" && counts.errs > 0 ? (
             <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"}`}>
               {counts.errs}
+            </span>
+          ) : null}
+          {item.label === "MR / Comparison Approvals" && counts.mrPendingApprovals > 0 ? (
+            <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"}`}>
+              {counts.mrPendingApprovals}
+            </span>
+          ) : null}
+          {item.label === "Redirected to Me" && (counts.redirectedToMe ?? 0) > 0 ? (
+            <span className={`min-w-6 rounded-full px-1.5 py-0.5 text-center text-xs font-semibold ${active ? "bg-white/20 text-white" : "bg-violet-100 text-violet-800"}`}>
+              {counts.redirectedToMe}
             </span>
           ) : null}
           {item.label === "Pending Approvals" && counts.pendingApprovals > 0 ? (
@@ -460,6 +512,7 @@ function Sidebar({
 export default function DashboardShell({
   role,
   userName,
+  userEmail,
   title,
   subtitle,
   isUploader,
@@ -474,7 +527,7 @@ export default function DashboardShell({
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const sidebarCountsKey = `${role}:${userName.trim().toLowerCase()}`;
+  const sidebarCountsKey = `${role}:${userEmail?.trim().toLowerCase() || userName.trim().toLowerCase()}`;
   const [sidebarCounts, setSidebarCounts] = useState<SidebarCounts>(
     lastSidebarCounts?.key === sidebarCountsKey ? lastSidebarCounts.counts : emptySidebarCounts,
   );
@@ -524,10 +577,15 @@ export default function DashboardShell({
     try {
       const response = await fetch("/api/notifications", { cache: "no-store" });
       if (!response.ok) return;
-      const data = (await response.json()) as { notifications?: NotificationItem[] };
+      const data = (await response.json()) as { notifications?: NotificationItem[]; unreadCount?: number };
       const nextNotifications = data.notifications ?? [];
       setNotifications(nextNotifications);
-      setUnreadCount(nextNotifications.filter((item) => !item.isRead).length);
+      // Use the server's full unread total; the displayed list is capped at 25.
+      setUnreadCount(
+        typeof data.unreadCount === "number"
+          ? data.unreadCount
+          : nextNotifications.filter((item) => !item.isRead).length,
+      );
     } catch {
       // Ignore notification fetch errors and keep the shell functional.
     }
@@ -607,13 +665,13 @@ export default function DashboardShell({
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-0 h-80 bg-gradient-to-br from-slate-200 via-slate-100 to-cyan-100" />
       <div className="relative z-10 flex min-h-screen">
         <div className="hidden lg:block">
-              <Sidebar role={role} userName={userName} counts={sidebarCounts} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader || sidebarCounts.isErrUploader} />
+              <Sidebar role={role} userName={userName} userEmail={userEmail} counts={sidebarCounts} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader || sidebarCounts.isErrUploader} />
         </div>
 
         {menuOpen && (
           <div className="fixed inset-0 z-40 flex lg:hidden">
             <div className="h-full shadow-2xl">
-              <Sidebar role={role} userName={userName} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader || sidebarCounts.isErrUploader} />
+              <Sidebar role={role} userName={userName} userEmail={userEmail} counts={sidebarCounts} closeMenu={() => setMenuOpen(false)} combinedErrLayout={role === "APPROVER_3"} isUploader={isUploader || sidebarCounts.isErrUploader} />
             </div>
             <button
               type="button"

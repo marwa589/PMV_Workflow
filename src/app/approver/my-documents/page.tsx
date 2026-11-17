@@ -87,6 +87,8 @@ export default async function ApproverMyDocumentsPage({ searchParams }: any) {
     downloadedAt: docTracking.get(doc.id).downloadedAt,
     approvalDate: docTracking.get(doc.id).approvalDate,
     dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.updatedAt),
+    lastUpdatedAt: doc.updatedAt,
+    isRedirected: Boolean(doc.redirectedById),
       })),
     ...data.errMyDocuments
       .filter((doc) => !statusFilter || doc.status === statusFilter)
@@ -109,6 +111,7 @@ export default async function ApproverMyDocumentsPage({ searchParams }: any) {
         downloadedAt: errTracking.get(doc.id).downloadedAt,
         approvalDate: errTracking.get(doc.id).approvalDate,
         dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+        lastUpdatedAt: doc.updatedAt,
       })),
   ];
 
@@ -120,7 +123,13 @@ export default async function ApproverMyDocumentsPage({ searchParams }: any) {
 
   const summaryCounts = {
     total: documents.length,
-    pending: documents.filter((doc) => doc.status === DocumentStatus.PENDING_APPROVER_1 || doc.status === DocumentStatus.PENDING_APPROVER_2 || doc.status === DocumentStatus.PENDING_APPROVER_3).length,
+    pending: documents.filter((doc) =>
+      doc.canReview &&
+      (doc.status === DocumentStatus.PENDING_APPROVER_1 ||
+        doc.status === DocumentStatus.PENDING_APPROVER_2 ||
+        doc.status === DocumentStatus.PENDING_APPROVER_3 ||
+        doc.status === "PENDING")
+    ).length,
     approved: documents.filter((doc) => doc.status === DocumentStatus.APPROVED).length,
     rejected: documents.filter((doc) => doc.status === DocumentStatus.REJECTED).length,
   };

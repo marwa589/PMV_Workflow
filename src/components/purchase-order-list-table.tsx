@@ -34,9 +34,11 @@ export default function PurchaseOrderListTable({
   const [message, setMessage] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(10);
   const searchParams = useSearchParams();
-  const [receivedIds, setReceivedIds] = useState(() => new Set(
-    purchaseOrders.filter((po) => po.receivedAt).map((po) => po.id),
-  ));
+  const [receivedAtById, setReceivedAtById] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      purchaseOrders.filter((po) => po.receivedAt).map((po) => [po.id, po.receivedAt as string]),
+    ),
+  );
   const searchQuery = (searchParams.get("search") || "").trim().toLowerCase();
   const visiblePurchaseOrders = useMemo(() => {
     const terms = searchQuery.split(/\s+/).filter(Boolean);
@@ -112,9 +114,9 @@ export default function PurchaseOrderListTable({
         method: "POST",
         headers: { "x-csrf-token": getCsrfTokenFromBrowser() },
       });
-      const result = (await response.json()) as { message?: string };
+      const result = (await response.json()) as { message?: string; receivedAt?: string };
       if (!response.ok) throw new Error(result.message || "Unable to confirm PO receipt.");
-      setReceivedIds((current) => new Set(current).add(id));
+      setReceivedAtById((current) => ({ ...current, [id]: result.receivedAt ?? new Date().toISOString() }));
       setMessage("PO receipt confirmed.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to confirm PO receipt.");
@@ -188,6 +190,7 @@ export default function PurchaseOrderListTable({
               <th className="px-5 py-3 font-semibold">Uploaded</th>
               <th className="px-5 py-3 font-semibold">Uploaded By</th>
               <th className="px-5 py-3 font-semibold">Received by Muneer</th>
+              {canMarkReceived ? <th className="px-5 py-3 font-semibold">Date Received</th> : null}
               <th className="px-5 py-3 font-semibold">Invoices</th>
               <th className="px-5 py-3 font-semibold">Linked MRs</th>
               <th className="px-5 py-3 font-semibold">Actions</th>
@@ -216,7 +219,7 @@ export default function PurchaseOrderListTable({
                 </td>
                 <td className="px-5 py-4 text-slate-600">{po.uploadedByName}</td>
                 <td className="px-5 py-4 text-slate-600">
-                  {receivedIds.has(po.id) ? (
+                  {receivedAtById[po.id] ? (
                     <span title={po.receivedByEmail || undefined}>
                       Received by {po.receivedByName || "Muneer"}
                     </span>
@@ -235,6 +238,13 @@ export default function PurchaseOrderListTable({
                     "Not confirmed"
                   )}
                 </td>
+                {canMarkReceived ? (
+                  <td className="whitespace-nowrap px-5 py-4 text-slate-600">
+                    {receivedAtById[po.id]
+                      ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(receivedAtById[po.id]))
+                      : "—"}
+                  </td>
+                ) : null}
                 <td className="px-5 py-4">
                   {po.invoiceCount > 0 ? (
                     <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 ring-1 ring-emerald-200">
@@ -268,7 +278,7 @@ export default function PurchaseOrderListTable({
             ))}
             {visiblePurchaseOrders.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-5 py-8 text-center text-sm text-slate-500">
+                <td colSpan={canMarkReceived ? 11 : 10} className="px-5 py-8 text-center text-sm text-slate-500">
                   No matching purchase orders.
                 </td>
               </tr>

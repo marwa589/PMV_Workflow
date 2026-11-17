@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getModuleVisibility } from "@/lib/auth/module-visibility";
 import { hasUserRole } from "@/lib/user-capabilities";
 import { canViewReadyMixKhobarMrs, isReadyMixKhobarWorkflowDocument } from "@/lib/ready-mix-mr-access";
+import { canViewKsaProject, getKsaProjectByName } from "@/lib/ksa-projects";
 import { isKsaViewer, KSA_USER_LOCATIONS } from "@/lib/ksa-viewer";
 import { isAvkUploaderWorkflowDocument, isRamziDocumentApprover } from "@/lib/mohamed-document-workflow";
 import { isAvkMrViewer } from "@/lib/avk-access";
@@ -65,6 +66,7 @@ export async function canAccessDocument(
       id: true,
       createdById: true,
       currentApproverId: true,
+      redirectedById: true,
       documentType: true,
       projectName: true,
       uploaderLocation: true,
@@ -79,6 +81,11 @@ export async function canAccessDocument(
 
   if (!document) {
     return false;
+  }
+
+  // The user Marc redirected the document to must be able to open it, whatever their role.
+  if (document.redirectedById && document.currentApproverId === session.userId) {
+    return true;
   }
 
   if (
@@ -98,7 +105,7 @@ export async function canAccessDocument(
       || (
         document.currentApproverId === session.userId
         && document.documentType === "MATERIAL_REQUISITION"
-        && isAvkUploaderWorkflowDocument(document.createdBy.email, document.documentType)
+        && isAvkUploaderWorkflowDocument(document.createdBy.email, document.documentType, document.uploaderLocation)
       )
     )
   ) {
@@ -115,6 +122,16 @@ export async function canAccessDocument(
   }
 
   if (canViewReadyMixKhobarMrs(session) && isReadyMixKhobarWorkflowDocument(document)) {
+    return true;
+  }
+
+  // Same rule for the other KSA projects (WP03, Tachalih KSA): the project's viewers see its MRs and comparisons.
+  const ksaProject = getKsaProjectByName(document.projectName);
+  if (
+    ksaProject
+    && (document.documentType === "MATERIAL_REQUISITION" || document.documentType === "COMPARISON")
+    && canViewKsaProject(session, ksaProject)
+  ) {
     return true;
   }
 

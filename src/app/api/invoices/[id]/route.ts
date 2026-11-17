@@ -16,13 +16,13 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   const { id } = await params;
   const invoice = await prisma.purchaseOrderInvoice.findUnique({
     where: { id },
-    select: { id: true, filePath: true },
+    select: { id: true, filePath: true, goodsReceivingVoucher: { select: { filePath: true } } },
   });
   if (!invoice) return NextResponse.json({ message: "Invoice not found." }, { status: 404 });
 
   await prisma.purchaseOrderInvoice.delete({ where: { id } });
   try {
-    await deleteDocumentFiles({ filePaths: [invoice.filePath] });
+    await deleteDocumentFiles({ filePaths: [invoice.filePath, ...(invoice.goodsReceivingVoucher ? [invoice.goodsReceivingVoucher.filePath] : [])] });
   } catch (error) {
     console.error("Invoice record deleted but its stored file could not be removed.", error);
   }

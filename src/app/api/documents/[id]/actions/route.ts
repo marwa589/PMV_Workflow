@@ -15,6 +15,9 @@ import { appConfig } from "@/lib/env";
 import { isKsaViewer } from "@/lib/ksa-viewer";
 import { resolveWorkflowApproverIdsForUploader } from "@/lib/workflow-locations";
 import { isAvkUploaderWorkflowDocument, isRamziDocumentApprover, MARC_PMV_MANAGER_EMAIL, MOHAMED_AVK_WORKFLOW_UPLOADER_EMAIL } from "@/lib/mohamed-document-workflow";
+import { canRedirectDocuments, isRedirectedToUser, isRedirectTargetRole, parseRedirectFallback } from "@/lib/document-redirect";
+import { getKsaProjectByName, isKsaProjectDirector, isKsaProjectDirectorForDocument } from "@/lib/ksa-projects";
+import { effectiveDocumentLocation } from "@/lib/document-location";
 
 export const runtime = "nodejs";
 
@@ -28,7 +31,7 @@ function escapeEmailHtml(value: string | null | undefined): string {
     .replace(/\n/g, "<br />");
 }
 
-type Decision = "APPROVE" | "REJECT" | "COMMENT";
+type Decision = "APPROVE" | "REJECT" | "COMMENT" | "REDIRECT";
 type ApprovalRoute = "FINALIZE" | "MANAGING_DIRECTOR";
 
 export async function POST(
@@ -44,22 +47,30 @@ export async function POST(
     return NextResponse.json({ message: "KSA Viewer access is read-only." }, { status: 403 });
   }
 
-  const isReadyMixDirectorAccount = session.email.trim().toLowerCase() === "elie.azzam@ahmadiah.com";
+  const { id: documentId } = await params;
+  // KSA project directors (Elie Azzam for Ready Mix Khobar, Elias Nassar for WP03 MRs).
+  const isReadyMixDirectorAccount = isKsaProjectDirector(session.email);
   const isRamziAccount = isRamziDocumentApprover(session.email);
-  if ((!isApproverRole(session.role) || !canAccessMrModuleForSession(session)) && !isReadyMixDirectorAccount && !isRamziAccount) {
+  // A user Marc redirected a document to may act on that document whatever their role.
+  const isRedirectTargetAccount = Boolean(await prisma.document.findFirst({
+    where: { id: documentId, currentApproverId: session.userId, redirectedById: { not: null } },
+    select: { id: true },
+  }));
+  if ((!isApproverRole(session.role) || !canAccessMrModuleForSession(session)) && !isReadyMixDirectorAccount && !isRamziAccount && !isRedirectTargetAccount) {
     return NextResponse.json({ message: "Only approvers can perform this action." }, { status: 403 });
   }
 
-  const { id: documentId } = await params;
   const formData = await request.formData();
   const decision = String(formData.get("decision") || "").trim().toUpperCase() as Decision;
   const approvalRoute = String(formData.get("approvalRoute") || "").trim().toUpperCase() as ApprovalRoute | "";
   const comments = String(formData.get("comments") || "").trim();
   const fileValue = formData.get("file");
   const signatureCount = Number(formData.get("signatureCount") || 0);
+  const redirectToUserId = String(formData.get("redirectToUserId") || "").trim();
+  const redirectFallback = parseRedirectFallback(String(formData.get("redirectFallback") || "").trim().toUpperCase());
 
-  if (decision !== "APPROVE" && decision !== "REJECT" && decision !== "COMMENT") {
-    return NextResponse.json({ message: "Decision must be APPROVE, REJECT, or COMMENT." }, { status: 400 });
+  if (decision !== "APPROVE" && decision !== "REJECT" && decision !== "COMMENT" && decision !== "REDIRECT") {
+    return NextResponse.json({ message: "Decision must be APPROVE, REJECT, COMMENT, or REDIRECT." }, { status: 400 });
   }
 
   const workflow = isApproverRole(session.role) ? APPROVER_WORKFLOW[session.role] : null;
@@ -75,6 +86,7 @@ export async function POST(
           title: true,
           status: true,
           projectName: true,
+          uploaderLocation: true,
           currentVersion: true,
           currentApproverId: true,
           createdById: true,
@@ -88,6 +100,8 @@ export async function POST(
           comparisonType: true,
           mrNumber: true,
           relatedComparisonId: true,
+          redirectedById: true,
+          redirectFallback: true,
           workflowTemplate: {
             select: {
               id: true,
@@ -110,22 +124,40 @@ export async function POST(
         throw new Error("Document not found.");
       }
 
-      const isReadyMixDirectorAction = isReadyMixDirectorAccount
-        && (document.documentType === "MATERIAL_REQUISITION" || document.documentType === "COMPARISON")
-        && document.projectName === "Ready Mix Khobar"
-        && document.createdBy?.email?.trim().toLowerCase() === "dispatcher.pmv@ahmadiah.com";
-      const isMohamedWorkflowAction = isRamziAccount
+      // The document is with the person Marc redirected it to: their decision replaces Marc's
+      // stage, so none of the role-based routing below applies to it.
+      const isRedirectedAction = isRedirectedToUser(document, session.userId);
+      const isReadyMixDirectorAction = !isRedirectedAction
+        && isReadyMixDirectorAccount
+        && isKsaProjectDirectorForDocument(session.email, document);
+      const isMohamedWorkflowAction = !isRedirectedAction
+        && isRamziAccount
         && document.documentType === "MATERIAL_REQUISITION"
-        && isAvkUploaderWorkflowDocument(document.createdBy?.email, document.documentType)
+        && isAvkUploaderWorkflowDocument(document.createdBy?.email, document.documentType, document.uploaderLocation)
         && document.status === DocumentStatus.PENDING_APPROVER_1;
 
       if (document.currentApproverId !== session.userId) {
         throw new Error("This document is not assigned to you.");
       }
 
-      if (isReadyMixDirectorAction) {
+      if (isRedirectedAction) {
+        if (decision === "REDIRECT") {
+          throw new Error("This document was redirected to you and cannot be redirected again.");
+        }
+      } else if (decision === "REDIRECT") {
+        if (!canRedirectDocuments(session.email)) {
+          throw new Error("You are not allowed to redirect documents.");
+        }
+        if (
+          document.status !== DocumentStatus.PENDING_APPROVER_1
+          && document.status !== DocumentStatus.PENDING_APPROVER_2
+          && document.status !== DocumentStatus.PENDING_APPROVER_3
+        ) {
+          throw new Error("Only documents pending your approval can be redirected.");
+        }
+      } else if (isReadyMixDirectorAction) {
         if (document.status !== DocumentStatus.PENDING_APPROVER_1 || decision === "COMMENT") {
-          throw new Error("This Ready Mix Khobar document is not available for your approval action.");
+          throw new Error(`This ${document.projectName ?? "project"} document is not available for your approval action.`);
         }
       } else if (!isMohamedWorkflowAction) {
         if (!workflow || !canAccessMrModuleForSession(session)) {
@@ -157,6 +189,78 @@ export async function POST(
         throw new Error("Current document version not found.");
       }
 
+      if (decision === "REDIRECT") {
+        if (!redirectToUserId) {
+          throw new Error("Choose the user to redirect this document to.");
+        }
+        if (!redirectFallback) {
+          throw new Error("Choose what happens after the document is approved (Fully approve or Back to me).");
+        }
+        if (redirectToUserId === session.userId) {
+          throw new Error("You cannot redirect a document to yourself.");
+        }
+
+        const redirectTarget = await tx.user.findUnique({
+          where: { id: redirectToUserId },
+          select: { id: true, name: true, email: true, role: true },
+        });
+
+        if (!redirectTarget || !isRedirectTargetRole(redirectTarget.role)) {
+          throw new Error("The selected user cannot review documents.");
+        }
+
+        await tx.document.update({
+          where: { id: document.id },
+          data: {
+            currentApproverId: redirectTarget.id,
+            currentApproverAssignedAt: new Date(),
+            redirectedById: session.userId,
+            redirectFallback,
+          },
+        });
+
+        await tx.approvalHistory.create({
+          data: {
+            documentId: document.id,
+            versionId: currentVersionRecord.id,
+            action: ApprovalActionType.REDIRECTED,
+            comments: comments || null,
+            performedById: session.userId,
+          },
+        });
+
+        await writeAuditLog({
+          documentId: document.id,
+          performedById: session.userId,
+          action: "DOCUMENT_REDIRECTED",
+          details: JSON.stringify({
+            decision,
+            comments: comments || null,
+            approverRole: session.role,
+            status: document.status,
+            redirectedToUserId: redirectTarget.id,
+            redirectedToEmail: redirectTarget.email,
+            redirectFallback,
+          }),
+        });
+
+        runInBackground(async () => {
+          await createNotification({
+            userId: redirectTarget.id,
+            type: "PENDING_APPROVAL",
+            title: "Document redirected to you for review",
+            message: `${document.documentNumber} - ${document.title}`,
+            documentId: document.id,
+          });
+        });
+
+        return {
+          status: document.status,
+          currentVersion: document.currentVersion,
+          emailRecipientId: redirectTarget.id,
+        };
+      }
+
       if (decision === "REJECT") {
         const uploader = document.createdBy ?? await tx.user.findUnique({
           where: { id: document.createdById },
@@ -175,6 +279,8 @@ export async function POST(
             currentApproverId: uploader.id,
             currentApproverAssignedAt: new Date(),
             lastActiveStage: document.status,
+            redirectedById: null,
+            redirectFallback: null,
           },
         });
 
@@ -196,6 +302,7 @@ export async function POST(
             decision,
             comments: comments || null,
             approverRole: session.role,
+            redirectedAction: isRedirectedAction,
             previousStatus: document.status,
             returnedToUploaderId: uploader.id,
             returnedToUploaderEmail: uploader.email,
@@ -220,7 +327,8 @@ export async function POST(
       }
 
       if (decision === "COMMENT") {
-        const sparePartsRevision = session.role === UserRole.APPROVER_3
+        // A redirected reviewer requests revision on Marc's behalf, so it routes like Marc's.
+        const sparePartsRevision = (session.role === UserRole.APPROVER_3 || isRedirectedAction)
           && document.documentType === "COMPARISON"
           && document.comparisonType === "SPARE_PARTS";
         const routing = sparePartsRevision
@@ -263,7 +371,7 @@ export async function POST(
             mrNumber: document.mrNumber,
             hasLinkedComparison: !!document.relatedComparisonId,
             uploaderEmail: document.createdBy?.email ?? undefined,
-            location: document.createdBy?.location ?? undefined,
+            location: effectiveDocumentLocation(document) ?? undefined,
             projectName: document.projectName,
             mrType: document.mrType ?? undefined,
           });
@@ -292,6 +400,8 @@ export async function POST(
             currentApproverId: assignedApproverId,
             currentApproverAssignedAt: new Date(),
             lastActiveStage: routing.status,
+            redirectedById: null,
+            redirectFallback: null,
           },
         });
 
@@ -313,6 +423,7 @@ export async function POST(
             decision,
             comments: comments || null,
             approverRole: session.role,
+            redirectedAction: isRedirectedAction,
             targetRole: routing.targetRole,
             previousStatus: document.status,
           }),
@@ -351,15 +462,23 @@ export async function POST(
         mrNumber: document.mrNumber,
         hasLinkedComparison: !!document.relatedComparisonId,
         uploaderEmail: document.createdBy?.email ?? undefined,
-        location: document.createdBy?.location ?? undefined,
+        location: effectiveDocumentLocation(document) ?? undefined,
         projectName: document.projectName,
         mrType: document.mrType ?? undefined,
       });
 
+      // Redirected document: "Fully approve" finishes the workflow now, "Back to me" returns it
+      // to Marc (the redirector) at the same stage for his own decision.
+      const redirectFullyApproves = isRedirectedAction && document.redirectFallback === "FULLY_APPROVE";
+      const redirectBackToRedirector = isRedirectedAction && !redirectFullyApproves;
+      const isFinalApprovalForMerge = isRedirectedAction
+        ? redirectFullyApproves
+        : !workflow?.nextApproverRole && !isReadyMixDirectorAction;
+
       let finalFilePath = saved.relativePath;
       let finalOriginalName = fileValue.name;
       let mergedSourcePaths: string[] = [];
-      if (!workflow?.nextApproverRole && !isReadyMixDirectorAction && document.documentType === "MATERIAL_REQUISITION" && document.relatedComparisonId) {
+      if (isFinalApprovalForMerge && document.documentType === "MATERIAL_REQUISITION" && document.relatedComparisonId) {
         const comparison = await tx.document.findUnique({
           where: { id: document.relatedComparisonId },
           select: {
@@ -381,7 +500,7 @@ export async function POST(
             fileName: `${document.mrNumber || document.documentNumber} - ${document.title} + ${comparison.title}`,
             storageFolder: saved.storageFolder || documentStorageFolder({
               uploaderEmail: document.createdBy?.email ?? "",
-              location: document.createdBy?.location ?? undefined,
+              location: effectiveDocumentLocation(document) ?? undefined,
               projectName: document.projectName,
               documentType: "MATERIAL_REQUISITION",
               mrType: document.mrType ?? null,
@@ -412,7 +531,9 @@ export async function POST(
         },
       });
 
-      const nextApproverRole = isReadyMixDirectorAction
+      const nextApproverRole = isRedirectedAction
+        ? (redirectBackToRedirector ? UserRole.APPROVER_3 : null)
+        : isReadyMixDirectorAction
         ? UserRole.APPROVER_3
         : isMohamedWorkflowAction
           ? UserRole.APPROVER_3
@@ -420,7 +541,9 @@ export async function POST(
           ? UserRole.APPROVER_3
           : workflow?.nextApproverRole ?? null;
       let nextApproverId: string | null = null;
-      let nextStatus = isReadyMixDirectorAction
+      let nextStatus = isRedirectedAction
+        ? (redirectBackToRedirector ? document.status : DocumentStatus.APPROVED)
+        : isReadyMixDirectorAction
         ? DocumentStatus.PENDING_APPROVER_3
         : isMohamedWorkflowAction
           ? DocumentStatus.PENDING_APPROVER_3
@@ -430,7 +553,13 @@ export async function POST(
       let nextWorkflowStep: number | null = null;
       const templateTransition = resolveNextWorkflowStepForApproval(document.workflowTemplate, document.currentWorkflowStep);
 
-      if (isReadyMixDirectorAction) {
+      if (isRedirectedAction) {
+        if (redirectBackToRedirector && !document.redirectedById) {
+          throw new Error("The user who redirected this document is not available.");
+        }
+        nextApproverId = redirectBackToRedirector ? document.redirectedById : null;
+        nextWorkflowStep = document.currentWorkflowStep;
+      } else if (isReadyMixDirectorAction) {
         const avrApprovers = await resolveWorkflowApproverIdsForUploader(tx, document.createdBy?.email);
         if (!avrApprovers.approver3Id) {
           throw new Error("The AVR PMV Manager account is missing.");
@@ -461,7 +590,7 @@ export async function POST(
         }
       }
 
-      if (!isReadyMixDirectorAction && document.workflowTemplate && document.workflowTemplate.steps.length > 0 && templateTransition.currentStep) {
+      if (!isRedirectedAction && !isReadyMixDirectorAction && document.workflowTemplate && document.workflowTemplate.steps.length > 0 && templateTransition.currentStep) {
         const fallbackApprover = templateTransition.nextStep?.approverUserId ?? templateTransition.nextStep?.approver?.id ?? null;
         if (templateTransition.nextStep) {
           nextApproverId = fallbackApprover ?? null;
@@ -472,7 +601,7 @@ export async function POST(
           nextStatus = DocumentStatus.APPROVED;
           nextWorkflowStep = templateTransition.currentStep.stepNumber;
         }
-      } else if (!isReadyMixDirectorAction && !isMohamedWorkflowAction && nextApproverRole) {
+      } else if (!isRedirectedAction && !isReadyMixDirectorAction && !isMohamedWorkflowAction && nextApproverRole) {
         const nextApprover = await tx.user.findFirst({
           where: { role: nextApproverRole },
           select: { id: true },
@@ -494,6 +623,7 @@ export async function POST(
           currentApproverAssignedAt: nextApproverId ? new Date() : null,
           currentWorkflowStep: nextWorkflowStep,
           lastActiveStage: nextStatus,
+          ...(isRedirectedAction ? { redirectedById: null, redirectFallback: null } : {}),
         },
       });
 
@@ -525,6 +655,8 @@ export async function POST(
           nextStatus,
           previousStatus: document.status,
           nextApproverRole,
+          redirectedAction: isRedirectedAction,
+          redirectFallback: isRedirectedAction ? document.redirectFallback : null,
           signatureCount: Number.isFinite(signatureCount) ? signatureCount : 0,
         }),
       });
@@ -602,6 +734,8 @@ export async function POST(
         status: true,
         documentType: true,
         mrType: true,
+        projectName: true,
+        uploaderLocation: true,
         createdAt: true,
         currentApprover: { select: { id: true, name: true, email: true } },
         createdBy: { select: { id: true, name: true, email: true, location: true } },
@@ -727,7 +861,10 @@ export async function POST(
         : [...workflowRecipientEmails];
 
       const avkCompletionEmails = result.status === DocumentStatus.APPROVED
-        && documentForEmail?.createdBy?.location === "AVK"
+        && documentForEmail != null
+        && effectiveDocumentLocation(documentForEmail) === "AVK"
+        // KSA project documents (e.g. uploaded by Bernabie) follow the project's emails, like Ready Mix Khobar.
+        && !getKsaProjectByName(documentForEmail.projectName)
         && (documentForEmail.documentType === "MATERIAL_REQUISITION" || documentForEmail.documentType === "COMPARISON")
         ? [
           ...(creatorEmail ? [creatorEmail] : []),

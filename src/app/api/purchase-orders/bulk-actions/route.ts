@@ -34,7 +34,7 @@ export async function POST(request: Request) {
 
     const rows = await prisma.purchaseOrder.findMany({
       where: { id: { in: accessibleIds } },
-      select: { id: true, filePath: true, invoices: { select: { filePath: true } } },
+      select: { id: true, filePath: true, invoices: { select: { filePath: true, goodsReceivingVoucher: { select: { filePath: true } } } } },
     });
 
     await prisma.$transaction(async (tx) => {
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
       await tx.purchaseOrder.deleteMany({ where: { id: { in: accessibleIds } } });
     });
 
-    await deleteDocumentFiles({ filePaths: rows.flatMap((row) => [row.filePath, ...row.invoices.map((invoice) => invoice.filePath)]) });
+    await deleteDocumentFiles({ filePaths: rows.flatMap((row) => [row.filePath, ...row.invoices.flatMap((invoice) => [invoice.filePath, ...(invoice.goodsReceivingVoucher ? [invoice.goodsReceivingVoucher.filePath] : [])])]) });
     return NextResponse.json({ message: `${accessibleIds.length} PO(s) deleted.` });
   }
 

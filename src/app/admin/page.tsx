@@ -9,6 +9,7 @@ import { formatWaitingTime, getAgeBucket, getWaitingHours } from "@/lib/document
 import { prisma } from "@/lib/prisma";
 import { getErrAccess } from "@/lib/err/permissions";
 import { getErrCounts } from "@/lib/err/queries";
+import { isProjectDirectorApprover } from "@/lib/mohamed-document-workflow";
 
 export const dynamic = "force-dynamic";
 
@@ -255,7 +256,7 @@ export default async function AdminDashboardPage() {
         currentApproverEmail: doc.currentApprover?.email || null,
         status: doc.status,
         statusLabel: stageKey === "APPROVER_1"
-          ? "PMV Engineer"
+          ? (isProjectDirectorApprover(doc.currentApprover) ? "Project Director" : "PMV Engineer")
           : stageKey === "APPROVER_2"
             ? "Workshop Manager"
             : stageKey === "APPROVER_3"

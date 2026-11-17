@@ -26,7 +26,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
       id: true,
       filePath: true,
       uploadedById: true,
-      invoices: { select: { filePath: true } },
+      invoices: { select: { filePath: true, goodsReceivingVoucher: { select: { filePath: true } } } },
     },
   });
 
@@ -45,7 +45,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
       await tx.purchaseOrder.delete({ where: { id } });
     });
 
-    await deleteDocumentFiles({ filePaths: [purchaseOrder.filePath, ...purchaseOrder.invoices.map((invoice) => invoice.filePath)] });
+    await deleteDocumentFiles({ filePaths: [purchaseOrder.filePath, ...purchaseOrder.invoices.flatMap((invoice) => [invoice.filePath, ...(invoice.goodsReceivingVoucher ? [invoice.goodsReceivingVoucher.filePath] : [])])] });
     return NextResponse.json({ message: "Purchase order deleted." }, { status: 200 });
   } catch (error) {
     console.error("PO delete failed.", error);

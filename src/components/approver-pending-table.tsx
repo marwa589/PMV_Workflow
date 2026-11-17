@@ -15,11 +15,25 @@ type PendingDocument = {
   relatedComparisonId?: string | null;
   relatedComparisonDocumentNumber?: string | null;
   quotationFileName?: string | null;
+  /** When the document (or ERR) last changed; rows are ordered by this, newest first. */
+  lastUpdatedAt?: Date | string | null;
 };
 
-export default function ApproverPendingTable({ documents, showQuotation }: { documents: PendingDocument[]; showQuotation: boolean }) {
+function formatDateTime(value?: Date | string | null): string {
+  return value ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—";
+}
+
+export default function ApproverPendingTable({ documents, showQuotation, keepOrder = false }: { documents: PendingDocument[]; showQuotation: boolean; /** Rows are already ordered by the page. */ keepOrder?: boolean }) {
   const router = useRouter();
   const [visibleCount, setVisibleCount] = useState(10);
+  const sortedDocuments = keepOrder ? documents : documents
+    .map((document, index) => ({ document, index }))
+    .sort((left, right) => {
+      const leftTime = left.document.lastUpdatedAt ? new Date(left.document.lastUpdatedAt).getTime() : 0;
+      const rightTime = right.document.lastUpdatedAt ? new Date(right.document.lastUpdatedAt).getTime() : 0;
+      return rightTime - leftTime || left.index - right.index;
+    })
+    .map(({ document }) => document);
 
   if (documents.length === 0) {
     return <div className="px-5 py-6 text-sm text-slate-500">No pending approvals assigned to you.</div>;
@@ -49,12 +63,13 @@ export default function ApproverPendingTable({ documents, showQuotation }: { doc
             {showQuotation ? <th className="px-5 py-3 font-semibold">Quotation</th> : null}
             <th className="px-5 py-3 font-semibold">Related Comparison</th>
             <th className="px-5 py-3 font-semibold">Current Version</th>
-            <th className="px-5 py-3 font-semibold">Date</th>
+            <th className="px-5 py-3 font-semibold">Uploaded</th>
+            <th className="px-5 py-3 font-semibold">Last Updated</th>
             <th className="px-5 py-3 font-semibold">Actions</th>
           </tr>
         </thead>
         <tbody>
-          {documents.slice(0, visibleCount).map((document) => {
+          {sortedDocuments.slice(0, visibleCount).map((document) => {
             const detailUrl =
               document.documentType === "ERR"
                 ? `/errs/${document.id}`
@@ -103,6 +118,7 @@ export default function ApproverPendingTable({ documents, showQuotation }: { doc
                 </td>
                 <td className="px-5 py-4 text-slate-700">V{document.currentVersion}</td>
                 <td className="px-5 py-4 text-slate-500">{document.uploadedAt}</td>
+                <td className="px-5 py-4 text-slate-500">{formatDateTime(document.lastUpdatedAt)}</td>
                 <td className="px-5 py-4">
                   <div className="flex gap-2">
                     <a

@@ -13,12 +13,20 @@ import {
   XCircle,
 } from "lucide-react";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
+import PurchaseOrderInvoiceUpload, { RECEIVING_UPLOAD_KIND_LABELS, type ReceivingUploadKind } from "@/components/purchase-order-invoice-upload";
+import type { ReceivingUploadOptions } from "@/lib/receiving-upload-options";
 
 type FileKind = "pdf" | "docx" | "xlsx" | "image" | "unknown";
-type DocumentTypeOption = "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR";
+type DocumentTypeOption = "COMPARISON" | "MATERIAL_REQUISITION" | "CUSTODY" | "ERR" | ReceivingUploadKind;
+
+const RECEIVING_UPLOAD_KINDS: ReceivingUploadKind[] = ["INVOICE", "GRV", "CASH_RECEIVING_VOUCHER"];
+
+function isReceivingUploadKind(value: DocumentTypeOption | null): value is ReceivingUploadKind {
+  return value !== null && (RECEIVING_UPLOAD_KINDS as string[]).includes(value);
+}
 type MrTypeOption = "CASH" | "CREDIT";
 type ComparisonTypeOption = "SPARE_PARTS" | "OTHER";
-type ErrTypeOption = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "RENEWAL" | "PURCHASE";
+type ErrTypeOption = "RENTAL_ACTC" | "RENTAL_EXTERNAL" | "RENEWAL" | "PURCHASE" | "RFD";
 
 const ACCEPTED_EXTENSIONS = ["pdf", "doc", "docx", "xls", "xlsx", "jpg", "jpeg", "png"];
 const ACCEPTED_MIME_TYPES = [
@@ -77,7 +85,8 @@ function FileTypeIcon({ file }: { file: File | null }) {
 
 type ErrDirector = { projectId: string; directorId?: string; name: string; projectName: string; country?: string; accessRole?: "PROJECT_DIRECTOR" | "PROJECT_MANAGER" };
 
-export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDirectors = [], errOnly = false, marcOnly = false, allowErroReadyMixMr = false }: { defaultRedirectPath?: string; errDirectors?: ErrDirector[]; errOnly?: boolean; marcOnly?: boolean; allowErroReadyMixMr?: boolean }) {
+export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDirectors = [], errOnly = false, marcOnly = false, workflowRouteOptions = [], receivingUpload = null, attachmentOnly = false }: { defaultRedirectPath?: string; errDirectors?: ErrDirector[]; errOnly?: boolean; marcOnly?: boolean; /** "Location / Project" choices for MRs and comparisons (Erro and Bernabie). */ workflowRouteOptions?: Array<{ value: string; label: string }>; /** Invoice / GRV / Cash Receiving Voucher upload choices; set only for invoice uploaders. */ receivingUpload?: ReceivingUploadOptions | null; /** Show only the invoice / GRV / voucher types (uploaders who cannot create workflow documents). */ attachmentOnly?: boolean }) {
+  const allowErroReadyMixMr = workflowRouteOptions.length > 0;
   const router = useRouter();
 
   const [title, setTitle] = useState("");
@@ -85,8 +94,8 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
   const [documentType, setDocumentType] = useState<DocumentTypeOption | null>(errOnly ? "ERR" : null);
   const [comparisonType, setComparisonType] = useState<ComparisonTypeOption | null>(null);
   const [mrType, setMrType] = useState<MrTypeOption | null>(null);
-  const [mrWorkflowLocation, setMrWorkflowLocation] = useState<"AVR" | "READY_MIX_KHOBAR" | "">("");
-  const [comparisonWorkflowLocation, setComparisonWorkflowLocation] = useState<"AVR" | "READY_MIX_KHOBAR" | "">("");
+  const [mrWorkflowLocation, setMrWorkflowLocation] = useState("");
+  const [comparisonWorkflowLocation, setComparisonWorkflowLocation] = useState("");
   const [errType, setErrType] = useState<ErrTypeOption | null>(null);
   const [errProjectId, setErrProjectId] = useState("");
   const [quotations, setQuotations] = useState<File[]>([]);
@@ -352,6 +361,96 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
     }
   }
 
+  const typeOptions: Array<{ value: DocumentTypeOption; label: string }> = [
+    ...(attachmentOnly
+      ? []
+      : errOnly
+        ? [{ value: "ERR" as const, label: "ERR" }]
+        : [
+            { value: "COMPARISON" as const, label: "Comparison Sheet" },
+            { value: "MATERIAL_REQUISITION" as const, label: "Material Requisition" },
+            { value: "CUSTODY" as const, label: "Custody File" },
+            { value: "ERR" as const, label: "ERR" },
+          ]),
+    ...(receivingUpload
+      ? RECEIVING_UPLOAD_KINDS.map((kind) => ({ value: kind, label: RECEIVING_UPLOAD_KIND_LABELS[kind] }))
+      : []),
+  ];
+
+  const typePicker = errOnly && !receivingUpload ? (
+    <div>
+      <label className="mb-2 block text-sm font-medium text-slate-700">
+        Document Type
+      </label>
+      <div className="rounded-xl border-2 border-cyan-500 bg-cyan-50 px-4 py-3 text-sm font-medium text-cyan-700">
+        ERR
+      </div>
+    </div>
+  ) : (
+    <div>
+      <label className="mb-2 block text-sm font-medium text-slate-700">
+        Document Type <span className="text-rose-600">*</span>
+      </label>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {typeOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => {
+              setDocumentType(option.value);
+              setError(null);
+              if (option.value === "COMPARISON") {
+                setMrType(null);
+                setErrType(null);
+              } else if (option.value === "MATERIAL_REQUISITION") {
+                setComparisonType(null);
+                setErrType(null);
+              } else {
+                setComparisonType(null);
+                setMrType(null);
+              }
+            }}
+            className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${
+              documentType === option.value
+                ? "border-cyan-500 bg-cyan-50 text-cyan-700"
+                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  if (receivingUpload && isReceivingUploadKind(documentType)) {
+    return (
+      <div className="space-y-6">
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+          <h2 className="text-base font-semibold text-slate-900">Document Details</h2>
+          <div className="mt-4">{typePicker}</div>
+        </section>
+        <PurchaseOrderInvoiceUpload
+          key={documentType}
+          kind={documentType}
+          purchaseOrders={receivingUpload.purchaseOrders}
+          cashMrs={receivingUpload.cashMrs}
+          grvInvoices={receivingUpload.grvInvoices}
+          voucherCashMrs={receivingUpload.voucherCashMrs}
+        />
+      </div>
+    );
+  }
+
+  if (attachmentOnly) {
+    return (
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <h2 className="text-base font-semibold text-slate-900">Document Details</h2>
+        <div className="mt-4">{typePicker}</div>
+      </section>
+    );
+  }
+
   return (
     <>
       {showToast && (
@@ -368,53 +467,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
           <h2 className="text-base font-semibold text-slate-900">Document Details</h2>
 
           <div className="mt-4 grid grid-cols-1 gap-5">
-            {errOnly ? (
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">
-                  Document Type
-                </label>
-                <div className="rounded-xl border-2 border-cyan-500 bg-cyan-50 px-4 py-3 text-sm font-medium text-cyan-700">
-                  ERR
-                </div>
-              </div>
-            ) : <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">
-                Document Type <span className="text-rose-600">*</span>
-              </label>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                {[
-                  { value: "COMPARISON", label: "Comparison Sheet" },
-                  { value: "MATERIAL_REQUISITION", label: "Material Requisition" },
-                  { value: "CUSTODY", label: "Custody File" },
-                  { value: "ERR", label: "ERR" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => {
-                      setDocumentType(option.value as DocumentTypeOption);
-                      if (option.value === "COMPARISON") {
-                        setMrType(null);
-                        setErrType(null);
-                      } else if (option.value === "MATERIAL_REQUISITION") {
-                        setComparisonType(null);
-                        setErrType(null);
-                      } else {
-                        setComparisonType(null);
-                        setMrType(null);
-                      }
-                    }}
-                    className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${
-                      documentType === option.value
-                        ? "border-cyan-500 bg-cyan-50 text-cyan-700"
-                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>}
+            {typePicker}
 
             {documentType === "COMPARISON" ? (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -446,14 +499,11 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                       Comparison Location / Project <span className="text-rose-600">*</span>
                     </label>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      {[
-                        { value: "AVR", label: "AVR" },
-                        { value: "READY_MIX_KHOBAR", label: "Ready Mix Khobar" },
-                      ].map((option) => (
+                      {workflowRouteOptions.map((option) => (
                         <button
                           key={option.value}
                           type="button"
-                          onClick={() => setComparisonWorkflowLocation(option.value as typeof comparisonWorkflowLocation)}
+                          onClick={() => setComparisonWorkflowLocation(option.value)}
                           className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${
                             comparisonWorkflowLocation === option.value
                               ? "border-cyan-500 bg-cyan-50 text-cyan-700"
@@ -525,15 +575,12 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                       MR Location / Project <span className="text-rose-600">*</span>
                     </label>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      {[
-                        { value: "AVR", label: "AVR" },
-                        { value: "READY_MIX_KHOBAR", label: "Ready Mix Khobar" },
-                      ].map((option) => (
+                      {workflowRouteOptions.map((option) => (
                         <button
                           key={option.value}
                           type="button"
                           onClick={() => {
-                            setMrWorkflowLocation(option.value as typeof mrWorkflowLocation);
+                            setMrWorkflowLocation(option.value);
                             setSelectedComparisonId(null);
                             setComparisonSearch("");
                             setComparisonOptions([]);
@@ -651,6 +698,7 @@ export default function NewDocumentForm({ defaultRedirectPath = "/clerk", errDir
                       { value: "RENTAL_EXTERNAL", label: "Rental External" },
                       { value: "RENEWAL", label: "Renewal" },
                       { value: "PURCHASE", label: "Purchase" },
+                      { value: "RFD", label: "RFD (Request for Diesel)" },
                     ].map((option) => (
                       <button key={option.value} type="button" onClick={() => setErrType(option.value as ErrTypeOption)} className={`rounded-xl border px-4 py-3 text-left text-sm font-medium transition ${errType === option.value ? "border-cyan-500 bg-cyan-50 text-cyan-700" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
                         {option.label}

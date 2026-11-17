@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { DocumentStatus, Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
-import { canViewPurchaseOrdersSidebar, isOmar, isReadyMixKhobarDirector, READY_MIX_KHOBAR_PROJECT_NAME, resolvePurchaseOrderRecipients } from "@/lib/po-access";
+import { canViewPurchaseOrdersSidebar, isOmar, isReadyMixKhobarDirector, directorPurchaseOrderProjectNames, resolvePurchaseOrderRecipients } from "@/lib/po-access";
 import { getInvoiceScopeForUser, invoiceScopeMrWhere } from "@/lib/invoice-access";
 import { savePurchaseOrderFile, deleteDocumentFiles } from "@/lib/files";
 import { validateCsrf } from "@/lib/csrf";
 import { queuePurchaseOrderAvailableEvents } from "@/lib/workflow-email-batching";
 import { purchaseOrderStorageFolder } from "@/lib/storage-layout";
 import { isKsaViewer, KSA_USER_LOCATIONS } from "@/lib/ksa-viewer";
+import { documentLocationWhere, effectiveDocumentLocation } from "@/lib/document-location";
 
 export const runtime = "nodejs";
 
@@ -29,12 +30,12 @@ export async function GET(request: Request) {
       documentType: "MATERIAL_REQUISITION",
       status: DocumentStatus.APPROVED,
       ...(isReadyMixViewer
-        ? { projectName: READY_MIX_KHOBAR_PROJECT_NAME }
+        ? { projectName: { in: directorPurchaseOrderProjectNames(session) } }
         : isKsaViewer(session)
           ? { createdBy: { location: { in: [...KSA_USER_LOCATIONS] } } }
         : invoiceScope
           ? invoiceScopeMrWhere(invoiceScope)
-          : location === "AVR" || location === "AVK" || location === "KUWAIT" ? { createdBy: { location } } : {}),
+          : location === "AVR" || location === "AVK" || location === "KUWAIT" ? documentLocationWhere(location) : {}),
     },
     select: { id: true, documentNumber: true, title: true, mrNumber: true },
     orderBy: { updatedAt: "desc" },
@@ -54,6 +55,8 @@ export async function POST(request: Request) {
   const description = String(formData.get("description") || "").trim();
   const requestedLocation = String(formData.get("location") || "").trim().toUpperCase();
   const fileMrIdsValue = String(formData.get("fileMrIds") || "[]");
+  // Optional description per file (same order as the files); an empty one falls back to the shared description.
+  const fileDescriptionsValue = String(formData.get("fileDescriptions") || "[]");
   const files = formData.getAll("files").filter((value): value is File => value instanceof File && value.size > 0);
 
   let fileMrIds: string[];
@@ -64,6 +67,14 @@ export async function POST(request: Request) {
     fileMrIds = [];
   }
 
+  let fileDescriptions: string[];
+  try {
+    const parsed = JSON.parse(fileDescriptionsValue);
+    fileDescriptions = Array.isArray(parsed) ? parsed.map((value) => String(value ?? "").trim()) : [];
+  } catch {
+    fileDescriptions = [];
+  }
+
   if (files.length === 0) return NextResponse.json({ message: "Select at least one PO file." }, { status: 400 });
   if (fileMrIds.length !== files.length || fileMrIds.some((id) => !id)) return NextResponse.json({ message: "Select a related approved MR for every PO file." }, { status: 400 });
 
@@ -72,14 +83,15 @@ export async function POST(request: Request) {
       id: { in: [...new Set(fileMrIds)] },
       documentType: "MATERIAL_REQUISITION",
       status: DocumentStatus.APPROVED,
-      ...(requestedLocation === "AVR" || requestedLocation === "AVK" || requestedLocation === "KUWAIT" ? { createdBy: { location: requestedLocation } } : {}),
+      ...(requestedLocation === "AVR" || requestedLocation === "AVK" || requestedLocation === "KUWAIT" ? documentLocationWhere(requestedLocation) : {}),
     },
-    select: { id: true, projectName: true, createdBy: { select: { email: true, location: true } } },
+    select: { id: true, projectName: true, uploaderLocation: true, createdBy: { select: { email: true, location: true } } },
   });
   if (approvedMrs.length !== new Set(fileMrIds).size) {
     return NextResponse.json({ message: requestedLocation ? "Every related MR must be approved and belong to the selected location." : "Every related MR must be approved." }, { status: 400 });
   }
-  const mrStorageInfo = new Map(approvedMrs.map((mr) => [mr.id, { email: mr.createdBy.email, projectName: mr.projectName }]));
+  // An AVK MR's POs go to the AVK folder, also when the MR was uploaded by Erro (AVR account) on his AVK route.
+  const mrStorageInfo = new Map(approvedMrs.map((mr) => [mr.id, { email: mr.createdBy.email, projectName: mr.projectName, location: effectiveDocumentLocation(mr) === "AVK" ? "AVK" : null }]));
 
   const savedPaths: string[] = [];
   try {
@@ -90,7 +102,7 @@ export async function POST(request: Request) {
         const mrStorage = mrStorageInfo.get(fileMrIds[fileIndex]);
         const saved = await savePurchaseOrderFile(
           file,
-          mrStorage ? purchaseOrderStorageFolder(mrStorage.email, mrStorage.projectName) : "POs",
+          mrStorage ? purchaseOrderStorageFolder(mrStorage.email, mrStorage.projectName, mrStorage.location) : "POs",
         );
         savedPaths.push(saved.relativePath);
 
@@ -105,7 +117,7 @@ export async function POST(request: Request) {
           data: {
             poNumber,
             originalName: file.name,
-            description: description || null,
+            description: fileDescriptions[fileIndex] || description || null,
             filePath: saved.relativePath,
             mimeType: file.type || "application/octet-stream",
             fileSize: file.size,

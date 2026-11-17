@@ -77,6 +77,8 @@ export default async function ClerkMyDocumentsPage({ searchParams }: any) {
     downloadedAt: doc.downloadRecords[0]?.downloadedAt ?? null,
     approvalDate: doc.approvals.find((approval) => approval.action === "APPROVED")?.performedAt || null,
     dateLabel: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.updatedAt),
+    lastUpdatedAt: doc.updatedAt,
+    isRedirected: Boolean(doc.redirectedById),
   }));
 
   const filteredDocuments = documents.filter((doc) => matchesDocumentSearch(doc, searchQuery));

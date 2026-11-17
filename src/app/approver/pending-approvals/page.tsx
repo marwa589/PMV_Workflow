@@ -34,6 +34,7 @@ export default async function ApproverPendingApprovalsPage({ searchParams }: { s
         currentVersion: doc.currentVersion,
         latestComment: doc.approvals[0]?.comments ?? null,
         uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+        lastUpdatedAt: doc.updatedAt,
       })),
     ...data.errPendingDocuments
       .filter((doc) => !statusFilter || doc.status === statusFilter)
@@ -46,6 +47,7 @@ export default async function ApproverPendingApprovalsPage({ searchParams }: { s
         currentVersion: 1,
         latestComment: null,
         uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(doc.createdAt),
+        lastUpdatedAt: doc.updatedAt,
         quotationFileName: doc.files[0]?.originalName ?? null,
       })),
   ];

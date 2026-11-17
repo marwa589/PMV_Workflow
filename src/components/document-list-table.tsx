@@ -7,6 +7,8 @@ import { useSearchParams } from "next/navigation";
 import StatusBadge from "@/components/status-badge";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 import { matchesDocumentSearch, parseSearchQuery } from "@/lib/document-search";
+import { getPendingApprover1LabelOverride } from "@/lib/mohamed-document-workflow";
+import { redirectedStatusLabel } from "@/lib/document-redirect";
 
 type DocumentStatus = string;
 
@@ -28,10 +30,18 @@ export type DocumentListItem = {
   relatedComparisonDocumentNumber?: string | null;
   downloadedAt?: Date | null;
   approvalDate?: Date | null;
+  /** When the document (or ERR) last changed; rows are ordered by this, newest first. */
+  lastUpdatedAt?: Date | string | null;
+  /** True while Marc has redirected the document to another user. */
+  isRedirected?: boolean;
 };
 
-function formatDateTime(value?: Date | null): string {
+function formatDateTime(value?: Date | string | null): string {
   return value ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—";
+}
+
+function lastUpdatedTime(doc: DocumentListItem): number {
+  return doc.lastUpdatedAt ? new Date(doc.lastUpdatedAt).getTime() : 0;
 }
 
 type Props = {
@@ -44,13 +54,20 @@ type Props = {
   showDownloadTracking?: boolean;
 };
 
-export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false, allowAdminDelete = false, allowReview = false, showDownloadTracking = true }: Props) {
+export default function DocumentListTable({ documents, emptyMessage, showBulkActions = false, allowBulkDelete = false, allowAdminDelete = false, allowReview = false, showDownloadTracking = false }: Props) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [visibleCount, setVisibleCount] = useState(10);
   const searchParams = useSearchParams();
 
   const searchQuery = useMemo(() => parseSearchQuery(searchParams?.get("search")), [searchParams]);
-  const visibleDocuments = useMemo(() => documents.filter((doc) => matchesDocumentSearch(doc, searchQuery)), [documents, searchQuery]);
+  const visibleDocuments = useMemo(
+    () => documents
+      .filter((doc) => matchesDocumentSearch(doc, searchQuery))
+      .map((doc, index) => ({ doc, index }))
+      .sort((left, right) => lastUpdatedTime(right.doc) - lastUpdatedTime(left.doc) || left.index - right.index)
+      .map(({ doc }) => doc),
+    [documents, searchQuery],
+  );
   const pagedDocuments = visibleDocuments.slice(0, visibleCount);
   const approvedDocuments = useMemo(() => visibleDocuments.filter((doc) => doc.status === "APPROVED"), [visibleDocuments]);
   const selectedDocuments = useMemo(() => visibleDocuments.filter((doc) => selectedIds.includes(doc.id)), [selectedIds, visibleDocuments]);
@@ -257,7 +274,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                     ) : null}
                   </td>
                   <td className="px-5 py-4">
-                    <StatusBadge status={doc.status} label={doc.statusLabel} />
+                    <StatusBadge status={doc.status} label={doc.statusLabel ?? (doc.isRedirected ? redirectedStatusLabel(doc.currentApproverName) : getPendingApprover1LabelOverride(doc.status, { name: doc.currentApproverName }))} />
                   </td>
                   <td className="px-5 py-4">
                     <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
@@ -294,7 +311,7 @@ export default function DocumentListTable({ documents, emptyMessage, showBulkAct
                   ) : null}
                   <td className="px-5 py-4 text-slate-700">V{doc.currentVersion}</td>
                   <td className="px-5 py-4 text-slate-700">{getCurrentApproverDisplay(doc)}</td>
-                  <td className="px-5 py-4 text-slate-500">{doc.dateLabel}</td>
+                  <td className="px-5 py-4 text-slate-500">{doc.lastUpdatedAt ? formatDateTime(doc.lastUpdatedAt) : doc.dateLabel}</td>
                   <td className="px-5 py-4">
                     <div className="flex gap-2">
                       <a

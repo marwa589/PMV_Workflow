@@ -4,23 +4,32 @@ import { Trash2 } from "lucide-react";
 import { useState } from "react";
 import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 
-export default function InvoiceDeleteButton({ invoiceId }: { invoiceId: string }) {
+/** Admin delete button for invoices; pass `endpoint` and `confirmText` to reuse it for GRVs and vouchers. */
+export default function InvoiceDeleteButton({
+  invoiceId,
+  endpoint,
+  confirmText = "Delete this invoice (and its GRV, if any) and remove the stored files?",
+}: {
+  invoiceId: string;
+  endpoint?: string;
+  confirmText?: string;
+}) {
   const [deleting, setDeleting] = useState(false);
 
   async function deleteInvoice() {
-    if (!window.confirm("Delete this invoice and remove its stored file?")) return;
+    if (!window.confirm(confirmText)) return;
 
     setDeleting(true);
     try {
-      const response = await fetch(`/api/invoices/${invoiceId}`, {
+      const response = await fetch(endpoint ?? `/api/invoices/${invoiceId}`, {
         method: "DELETE",
         headers: { "x-csrf-token": getCsrfTokenFromBrowser() },
       });
       const result = await response.json() as { message?: string };
-      if (!response.ok) throw new Error(result.message || "Unable to delete invoice.");
+      if (!response.ok) throw new Error(result.message || "Unable to delete.");
       window.location.reload();
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Unable to delete invoice.");
+      window.alert(error instanceof Error ? error.message : "Unable to delete.");
     } finally {
       setDeleting(false);
     }

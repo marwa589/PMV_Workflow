@@ -28,6 +28,7 @@ export function getErrStages(type: ErrType): readonly ErrStage[] {
       return RENTAL_STAGES;
 
     case ErrType.PURCHASE:
+    case ErrType.RFD:
       return PURCHASE_STAGES;
 
     default:
