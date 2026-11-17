@@ -2,10 +2,10 @@ import "server-only";
 
 import { ApprovalActionType, ApproverType, DocumentStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { buildDocumentVisibilityWhere } from "@/lib/auth/access";
+import { ASSIGNMENT_SCOPE_SELECT, assignmentMatchesScope, buildDocumentVisibilityWhere } from "@/lib/auth/access";
 import { USER_TYPE, type UserTypeCode } from "@/lib/auth/roles";
 import { createEligibilityChecker } from "@/lib/workflow/eligibility";
-import { getDocumentStatusDisplay } from "@/lib/document-status";
+import { getDocumentStatusDisplay, levelWaitingFor } from "@/lib/document-status";
 import { getProcessStatusLabel } from "@/lib/process-status";
 
 // One row shape for every list screen. Document type, sub type and project are data now,
@@ -28,19 +28,24 @@ const documentListSelect = {
   documentTypeId: true,
   documentSubtypeId: true,
   createdBy: { select: { name: true } },
-  documentType: { select: { id: true, code: true, name: true } },
-  documentSubtype: { select: { id: true, code: true, name: true } },
-  project: { select: { id: true, code: true, name: true, locationId: true, location: { select: { name: true } } } },
+  documentType: { select: { id: true, code: true, name: true, receiptConfirmationRequired: true } },
+  documentSubtype: { select: { id: true, code: true, name: true, receiptConfirmationRequired: true } },
+  project: { select: { id: true, code: true, name: true, locationId: true, companyId: true, location: { select: { name: true } } } },
   approvalSteps: {
     orderBy: { levelNumber: "asc" },
     select: {
       levelNumber: true,
       name: true,
+      signatureRequired: true,
+      awaitingProjectDirector: true,
+      awaitingProjectManager: true,
       approvers: {
         select: {
           approverType: true,
           userId: true,
           userTypeId: true,
+          viaProjectDirector: true,
+          viaProjectManager: true,
           user: { select: { name: true } },
           userType: { select: { name: true } },
         },
@@ -53,24 +58,33 @@ const documentListSelect = {
     take: 30,
     select: { action: true, comments: true, levelNumber: true, performedById: true, performedBy: { select: { name: true } } },
   },
+  // A few, newest first: a document that other runs follow (a comparison sheet followed by MRs) is also linked into
+  // those follow-up runs, which must not decide its own status; see processInstance below.
   processLinks: {
     orderBy: { linkedAt: "desc" },
-    take: 1,
+    take: 10,
     select: {
       processInstance: {
         select: {
+          followedDocumentId: true,
           status: true,
-          currentStepNumber: true,
+          currentStepId: true,
           processDefinition: {
             select: {
               steps: {
                 select: {
-                  stepNumber: true,
+                  id: true,
+                  parentStepId: true,
+                  delayHours: true,
                   documentType: { select: { code: true } },
                   documentSubtype: { select: { code: true } },
                 },
               },
             },
+          },
+          stepDocuments: {
+            where: { isCurrent: true },
+            select: { processStepId: true, isCurrent: true, document: { select: { status: true, approvedAt: true } } },
           },
         },
       },
@@ -80,6 +94,22 @@ const documentListSelect = {
 
 type RawDocument = Prisma.DocumentGetPayload<{ select: typeof documentListSelect }>;
 
+// What is needed to work out WHO can act at the level a document waits at (see withEligibleApprovers).
+export type ApproverResolution = {
+  entries: Array<{
+    approverType: ApproverType;
+    userId: string | null;
+    userTypeId: string | null;
+    viaProjectDirector?: boolean;
+    viaProjectManager?: boolean;
+    userName: string | null;
+    userTypeName: string | null;
+  }>;
+  scope: { projectId: string | null; locationId: string | null; companyId?: string | null; documentTypeId: string; documentSubtypeId: string | null };
+};
+
+const FINAL_STATUSES: DocumentStatus[] = [DocumentStatus.APPROVED, DocumentStatus.CANCELLED, DocumentStatus.ARCHIVED];
+
 export type DocumentRow = {
   id: string;
   documentNumber: string;
@@ -88,10 +118,13 @@ export type DocumentRow = {
   statusLabel: string;
   documentType: { id: string; code: string; name: string };
   documentSubtype: { id: string; code: string; name: string } | null;
-  project: { id: string; code: string; name: string; locationName: string | null } | null;
+  receiptConfirmationRequired: boolean;
+  project: { id: string; code: string; name: string; locationId: string | null; locationName: string | null } | null;
   currentVersion: number;
   currentWorkflowStep: number | null;
   currentLevelName: string | null;
+  // Whether the level the document waits at needs a signature to approve (flow setting).
+  signatureRequired: boolean;
   // When the current level started waiting (used for aging).
   waitingSince: Date | null;
   createdAt: Date;
@@ -101,8 +134,13 @@ export type DocumentRow = {
   latestComment: string | null;
   downloadedAt: Date | null;
   createdBy: { name: string };
+  createdById: string;
   // Who the document is waiting for: named users and user types at the current level.
-  currentApprover: { name: string } | null;
+  // `names` lists them one by one; withEligibleApprovers() replaces a user type (for example "Engineer") by the
+  // people of that type who can really approve this document.
+  currentApprover: { name: string; names?: string[] } | null;
+  // Kept so withEligibleApprovers() can resolve the people without reading the document again (server side only).
+  approverResolution?: ApproverResolution;
   // The latest rejection, if any (the rejected level stays recorded on the document).
   rejection: { comments: string | null; levelNumber: number | null; performedByName: string } | null;
   processStatus: string | null;
@@ -123,27 +161,30 @@ export function toDocumentRow(document: RawDocument): DocumentRow {
 
   const rejection = document.approvals.find((entry) => entry.action === ApprovalActionType.REJECTED);
   const latestComment = document.approvals.find((entry) => entry.comments)?.comments ?? null;
-  const processInstance = document.processLinks[0]?.processInstance ?? null;
+  const processInstance = document.processLinks.find((link) => link.processInstance.followedDocumentId !== document.id)?.processInstance ?? null;
 
   return {
     id: document.id,
     documentNumber: document.documentNumber,
     title: document.title,
     status: document.status,
-    statusLabel: getDocumentStatusDisplay(document.status, { levelNumber, name: currentStep?.name }),
+    statusLabel: getDocumentStatusDisplay(document.status, { levelNumber, name: currentStep?.name, waitingFor: levelWaitingFor(currentStep) }),
     documentType: document.documentType,
     documentSubtype: document.documentSubtype,
+    receiptConfirmationRequired: document.documentSubtype?.receiptConfirmationRequired ?? document.documentType.receiptConfirmationRequired,
     project: document.project
       ? {
           id: document.project.id,
           code: document.project.code,
           name: document.project.name,
+          locationId: document.project.locationId,
           locationName: document.project.location?.name ?? null,
         }
       : null,
     currentVersion: document.currentVersion,
     currentWorkflowStep: levelNumber,
     currentLevelName: currentStep?.name ?? null,
+    signatureRequired: currentStep?.signatureRequired ?? true,
     waitingSince: document.currentApproverAssignedAt,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
@@ -152,15 +193,88 @@ export function toDocumentRow(document: RawDocument): DocumentRow {
     latestComment,
     downloadedAt: document.downloadedAt,
     createdBy: { name: document.createdBy.name },
-    currentApprover: names.length > 0 ? { name: names.join(", ") } : null,
+    createdById: document.createdById,
+    currentApprover: names.length > 0 ? { name: names.join(", "), names } : null,
+    approverResolution:
+      currentStep && !FINAL_STATUSES.includes(document.status)
+        ? {
+            entries: currentStep.approvers.map((entry) => ({
+              approverType: entry.approverType,
+              userId: entry.userId,
+              userTypeId: entry.userTypeId,
+              viaProjectDirector: entry.viaProjectDirector,
+              viaProjectManager: entry.viaProjectManager,
+              userName: entry.user?.name ?? null,
+              userTypeName: entry.userType?.name ?? null,
+            })),
+            scope: {
+              projectId: document.projectId,
+              locationId: document.project?.locationId ?? null,
+              companyId: document.project?.companyId ?? null,
+              documentTypeId: document.documentTypeId,
+              documentSubtypeId: document.documentSubtypeId,
+            },
+          }
+        : undefined,
     rejection: rejection
       ? { comments: rejection.comments, levelNumber: rejection.levelNumber, performedByName: rejection.performedBy.name }
       : null,
     processStatus: processInstance?.status ?? null,
     processStatusLabel: processInstance
-      ? getProcessStatusLabel(processInstance.status, processInstance.currentStepNumber, processInstance.processDefinition.steps)
+      ? getProcessStatusLabel(processInstance, processInstance.processDefinition.steps, processInstance.stepDocuments)
       : null,
   };
+}
+
+/**
+ * "Current approver" for list screens: when the flow names a user TYPE (for example "Engineer"), this shows the
+ * people who can really approve the document instead of the type name. It uses the same rule as the workflow:
+ *  - a flow entry that names a USER shows that user;
+ *  - a flow entry that names a USER TYPE shows the active users of that type who also hold an assignment
+ *    covering the document (project, location, type, sub type). When nobody qualifies, the type name is kept
+ *    with a note, so a flow nobody can act on is easy to spot.
+ * One query for all rows (not one per document). Delegations are not listed.
+ */
+export async function withEligibleApprovers(rows: DocumentRow[]): Promise<DocumentRow[]> {
+  const typeIds = new Set<string>();
+  for (const row of rows) {
+    for (const entry of row.approverResolution?.entries ?? []) {
+      if (entry.approverType === ApproverType.USER_TYPE && entry.userTypeId) typeIds.add(entry.userTypeId);
+    }
+  }
+  if (typeIds.size === 0) return rows;
+
+  const users = await prisma.user.findMany({
+    where: { userTypeId: { in: [...typeIds] }, isActive: true },
+    select: { id: true, name: true, userTypeId: true, assignments: { select: ASSIGNMENT_SCOPE_SELECT } },
+    orderBy: { name: "asc" },
+  });
+  const usersByType = new Map<string, typeof users>();
+  for (const user of users) usersByType.set(user.userTypeId, [...(usersByType.get(user.userTypeId) ?? []), user]);
+
+  return rows.map((row) => {
+    const resolution = row.approverResolution;
+    if (!resolution || resolution.entries.length === 0) return row;
+
+    const people = new Map<string, string>();
+    for (const entry of resolution.entries) {
+      if (entry.approverType === ApproverType.USER) {
+        if (entry.userId && entry.userName) people.set(`user:${entry.userId}`, entry.userName);
+        continue;
+      }
+      const eligible = (usersByType.get(entry.userTypeId ?? "") ?? []).filter((user) =>
+        user.assignments.some((assignment) => assignmentMatchesScope(assignment, resolution.scope)),
+      );
+      if (eligible.length > 0) {
+        for (const user of eligible) people.set(`user:${user.id}`, user.name);
+      } else if (entry.userTypeName) {
+        people.set(`type:${entry.userTypeId}`, `${entry.userTypeName} (no one assigned)`);
+      }
+    }
+
+    const names = [...people.values()];
+    return names.length > 0 ? { ...row, currentApprover: { name: names.join(", "), names } } : row;
+  });
 }
 
 async function listDocuments(where: Prisma.DocumentWhereInput, take?: number): Promise<DocumentRow[]> {
@@ -202,12 +316,15 @@ export async function getActionableDocuments(
     .filter((document) => {
       const level = document.currentWorkflowStep;
       if (level === null) return false;
+      // Admin users see everything waiting at any level.
+      if (user.userType === USER_TYPE.ADMIN) return true;
       if (
         document.status === DocumentStatus.PENDING &&
         document.approvals[0]?.action === ApprovalActionType.RESUBMITTED &&
         document.approvals.find((entry) => entry.action === ApprovalActionType.REQUESTED_REVISION)?.performedById !== user.userId
       ) return false;
-      if (document.status === DocumentStatus.REVISION_REQUIRED && level === 0 && document.createdById === user.userId) return true;
+      // Sent back to the uploader: it is the task of the person who uploaded it, nobody else's.
+      if (document.status === DocumentStatus.REVISION_REQUIRED && level === 0) return document.createdById === user.userId;
 
       const step = document.approvalSteps.find((candidate) => candidate.levelNumber === level);
       if (!step) return false;
@@ -215,6 +332,7 @@ export async function getActionableDocuments(
       return canAct(step.approvers, {
         projectId: document.projectId,
         locationId: document.project?.locationId ?? null,
+        companyId: document.project?.companyId ?? null,
         documentTypeId: document.documentTypeId,
         documentSubtypeId: document.documentSubtypeId,
       });
@@ -257,8 +375,9 @@ export async function getDocumentsForApprover(userId: string, userType: UserType
       status: DocumentStatus.REVISION_REQUIRED,
       approvals: { some: { performedById: userId, action: ApprovalActionType.REQUESTED_REVISION } },
     }),
-    listDocuments({ approvals: { some: { performedById: userId, action: { in: [ApprovalActionType.APPROVED, ApprovalActionType.DELEGATED_APPROVED] } } } }),
-    listDocuments({ approvals: { some: { performedById: userId, action: ApprovalActionType.REJECTED } } }),
+    // Every approved / rejected document this person may access, whoever approved or rejected it.
+    listDocuments({ AND: [visibility, { status: DocumentStatus.APPROVED }] }),
+    listDocuments({ AND: [visibility, { status: DocumentStatus.CANCELLED }] }),
     listDocuments(visibility),
     prisma.approvalHistory.findMany({
       where: { performedById: userId },

@@ -5,7 +5,16 @@ import { deactivationConfirmationResponse, optionalId, prismaErrorResponse, read
 
 export const runtime = "nodejs";
 
-const companySelect = { id: true, name: true, locationId: true, isActive: true, createdAt: true, location: { select: { id: true, name: true } } } as const;
+const companySelect = {
+  id: true,
+  name: true,
+  locationId: true,
+  isActive: true,
+  createdAt: true,
+  location: { select: { id: true, name: true } },
+  // The projects that belong to the company (set on each project).
+  _count: { select: { projects: true } },
+} as const;
 
 async function locationExists(locationId: string | null): Promise<boolean> {
   return !locationId || Boolean(await prisma.location.findUnique({ where: { id: locationId }, select: { id: true } }));

@@ -1,12 +1,16 @@
 // src/app/api/sidebar-counts/route.ts
 import { DocumentStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
+import { userCanReviewDeletions } from "@/lib/deletion-review";
 import { getSession } from "@/lib/auth/session";
 import { USER_TYPE } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
+import { appConfig } from "@/lib/env";
 import { getActionableDocuments } from "@/lib/document-queries";
 import { buildDocumentVisibilityWhere, getGlobalPermissionCodes } from "@/lib/auth/access";
 import { canUserUploadAnything } from "@/lib/workflow/eligibility";
+import { getUploadTasks } from "@/lib/workflow/processes";
+import { userHasMaintenanceAccess } from "@/lib/maintenance/access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,7 +29,7 @@ export async function GET() {
   const session = await getSession();
   if (!session) {
     return NextResponse.json(
-      { pendingDocuments: 0, pendingApprovals: 0, pendingByType: [], canUpload: false, documentTypes: [], manage: {} },
+      { pendingDocuments: 0, pendingApprovals: 0, tasks: { uploads: 0, reviews: 0 }, pendingByType: [], canUpload: false, documentTypes: [], manage: {} },
       { status: 401 },
     );
   }
@@ -49,8 +53,6 @@ export async function GET() {
                   scopedAssignments: {
                     some: {
                       userId: session.userId,
-                      companyId: null,
-                      processDefinitionId: null,
                       documentTypeId: { not: null },
                       role: { permissions: { some: { permission: { code: "documents.view" } } } },
                     },
@@ -61,9 +63,6 @@ export async function GET() {
                     some: {
                       assignment: {
                         userId: session.userId,
-                        companyId: null,
-                        processDefinitionId: null,
-                        processScopes: { none: {} },
                         role: { permissions: { some: { permission: { code: "documents.view" } } } },
                       },
                     },
@@ -92,26 +91,42 @@ export async function GET() {
         ? 0
         : (await getActionableDocuments(session, [DocumentStatus.PENDING])).length;
 
+  // My Tasks: documents to upload (next document of a running process) and documents to review.
+  const [uploadTasks, reviewTasks] = await Promise.all([
+    getUploadTasks(prisma, session, { since: appConfig.emailPendingSince() }),
+    getActionableDocuments(session, [DocumentStatus.PENDING, DocumentStatus.ON_HOLD, DocumentStatus.REVISION_REQUIRED]),
+  ]);
+
   const canUpload = await canUserUploadAnything(prisma, { id: session.userId, userType: session.userType });
 
   const permissionCodes = await getGlobalPermissionCodes(session);
   const has = (code: string) => permissionCodes.includes(code);
+  const maintenanceAccess = await userHasMaintenanceAccess(session);
+
+  // Process Runs is only for admins; everyone else sees linked documents on the document page.
+  const canViewProcesses = session.userType === USER_TYPE.ADMIN;
 
   return NextResponse.json({
     pendingDocuments,
     pendingApprovals,
+    tasks: { uploads: uploadTasks.length, reviews: reviewTasks.length },
     pendingByType,
     canUpload,
+    canViewProcesses,
+    canUseMaintenance: maintenanceAccess,
     documentTypes,
     manage: {
       flows: has("flows.manage"),
       types: has("types.manage"),
       processes: has("processes.manage"),
-      users: has("users.manage"),
-      assignments: has("assignments.manage"),
+      // Users, Roles & Access and the Mailing List are for Admin users only.
+      users: session.userType === USER_TYPE.ADMIN,
+      assignments: session.userType === USER_TYPE.ADMIN,
       delegations: has("delegations.manage"),
       projects: has("projects.manage"),
-      deletionReview: has("documents.delete_review"),
+      // Any "Review deletion" role (whatever its scope) opens the Deletion Requests page.
+      deletionReview: await userCanReviewDeletions({ userId: session.userId, userType: session.userType }),
+      maintenance: session.userType === USER_TYPE.ADMIN || has("maintenance.manage"),
     },
   });
 }

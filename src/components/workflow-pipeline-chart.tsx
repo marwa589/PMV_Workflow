@@ -71,6 +71,9 @@ export default function WorkflowPipelineChart({ stages, documents }: Props) {
           </button>
         </div>
 
+        {stages.length === 0 ? (
+          <p className="mt-6 rounded-xl bg-white px-4 py-3 text-sm text-slate-600 ring-1 ring-slate-200">No documents are waiting at any level.</p>
+        ) : null}
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
           {stages.map((stage) => {
             const isActive = selectedStageKey === stage.key;
@@ -89,7 +92,7 @@ export default function WorkflowPipelineChart({ stages, documents }: Props) {
                       : stage.key === 'REVISION_REQUIRED'
                         ? 'border-orange-200 bg-orange-50 text-orange-900 shadow-sm ring-1 ring-orange-200'
                         : stage.key === 'APPROVED'
-                          ? 'border-emerald-200 bg-emerald-50 text-emerald-900 shadow-sm ring-1 ring-emerald-200'
+                          ? 'border-blue-200 bg-blue-50 text-blue-900 shadow-sm ring-1 ring-blue-200'
                           : 'border-slate-200 bg-slate-100 text-slate-900 shadow-sm ring-1 ring-slate-300'
                     : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                 }`}

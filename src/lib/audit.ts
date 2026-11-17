@@ -39,6 +39,6 @@ export async function writeAuditLog({
     },
   });
 
-  await pruneAuditLogs();
+  // Old entries are removed by the background worker (see workflow-email-worker.ts), not on every write.
   return entry;
 }

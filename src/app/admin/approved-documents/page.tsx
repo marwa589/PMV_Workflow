@@ -20,7 +20,8 @@ export default async function AdminApprovedDocumentsPage({ searchParams }: any) 
       emptyMessage="No approved documents."
       lockedStatus="APPROVED"
       summaryMode="byType"
-      table={{ showBulkActions: true, allowAdminDelete: true }}
+      showDownloadFilters
+      table={{ showBulkActions: true, allowAdminDelete: true, showDownloadTracking: true }}
     />
   );
 }

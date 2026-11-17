@@ -16,14 +16,27 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+/** Is any of these addresses one the system never emails? */
+export function isBlockedEmail(to: string): boolean {
+  return to.split(/[;,]/).map((recipient) => recipient.trim().toLowerCase()).filter(Boolean).some((recipient) => BLOCKED_EMAILS.has(recipient));
+}
+
+/** Can emails go out at all (delivery switched on and SMTP configured)? When not, queued emails simply wait. */
+export function emailSendingConfigured(): boolean {
+  return appConfig.emailDeliveryEnabled() && Boolean(appConfig.smtpHost() && appConfig.smtpUser() && appConfig.smtpPass());
+}
+
 export async function sendEmail({
   to,
   subject,
   html,
+  throwOnError = false,
 }: {
   to: string;
   subject: string;
   html: string;
+  /** The caller wants to know why a send failed (e.g. the server's rate limit) instead of getting null. */
+  throwOnError?: boolean;
 }) {
   const recipients = to
     .split(/[;,]/)
@@ -67,6 +80,7 @@ export async function sendEmail({
     return info;
   } catch (error) {
     console.error("❌ Failed to send email:", error);
+    if (throwOnError) throw error;
     // Don't crash the app - just log and return null
     return null;
   }

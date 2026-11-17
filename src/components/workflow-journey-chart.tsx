@@ -1,10 +1,14 @@
 import { getDocumentStatusDisplay } from "@/lib/document-status";
+import { stepSortKey } from "@/lib/workflow/tracks";
 
 export type JourneyStep = {
   levelNumber: number;
   name: string | null;
   // The state of this level on this document: WAITING, PENDING, APPROVED, REJECTED, REVISION or ON_HOLD.
   status: string;
+  // Set on a step created by "Send for approval": it sits right after the level it was sent from.
+  originLevel?: number | null;
+  isSideApproval?: boolean;
 };
 
 type Props = {
@@ -12,6 +16,8 @@ type Props = {
   currentWorkflowStep: number | null;
   // The levels copied onto the document when it was uploaded (level 0 is the uploader step).
   steps: JourneyStep[];
+  // When the person viewing this page last downloaded the approved document (null if they have not).
+  downloadedAt?: Date | null;
 };
 
 function stepLabel(step: JourneyStep): string {
@@ -20,18 +26,24 @@ function stepLabel(step: JourneyStep): string {
 }
 
 /** Draws the document's own approval path, so it follows whatever flow the document was given. */
-export default function WorkflowJourneyChart({ status, currentWorkflowStep, steps }: Props) {
-  const levels = [...steps].sort((a, b) => a.levelNumber - b.levelNumber);
+export default function WorkflowJourneyChart({ status, currentWorkflowStep, steps, downloadedAt = null }: Props) {
+  // Levels a unique track skipped are left out; a track step sits right after the level it was taken at.
+  const levels = [...steps].filter((step) => step.status !== "SKIPPED").sort((a, b) => stepSortKey(a.levelNumber, a.originLevel) - stepSortKey(b.levelNumber, b.originLevel));
+  // While a document is with the person it was sent to for approval, the level it was sent from is still "in progress".
+  const sentFromLevels = new Set(levels.filter((step) => step.isSideApproval && (step.status === "PENDING" || step.status === "ON_HOLD")).map((step) => step.originLevel));
   const nodes = [
-    ...levels.map((step) => ({ label: stepLabel(step), state: step.status })),
+    ...levels.map((step) => ({ label: stepLabel(step), state: step.status === "WAITING" && sentFromLevels.has(step.levelNumber) ? "PENDING" : step.status })),
     { label: "Completed", state: status === "APPROVED" || status === "ARCHIVED" ? "APPROVED" : "WAITING" },
   ];
 
   const currentName = levels.find((step) => step.levelNumber === currentWorkflowStep);
+  const isDownloaded = Boolean(downloadedAt) && status === "APPROVED";
   const headline =
     status === "CANCELLED"
       ? `Rejected${currentName ? ` at ${stepLabel(currentName)}` : ""}`
-      : getDocumentStatusDisplay(status, { levelNumber: currentWorkflowStep, name: currentName?.name ?? null });
+      : isDownloaded
+        ? "Downloaded"
+        : getDocumentStatusDisplay(status, { levelNumber: currentWorkflowStep, name: currentName?.name ?? null });
 
   // How far along the line to fill: up to the last level that is done, or the current one.
   const lastReached = nodes.reduce((reached, node, index) => (node.state === "WAITING" ? reached : index), 0);
@@ -40,9 +52,9 @@ export default function WorkflowJourneyChart({ status, currentWorkflowStep, step
   const circleClass = (state: string) => {
     switch (state) {
       case "APPROVED":
-        return "border-cyan-600 bg-cyan-600 text-white";
+        return "border-blue-600 bg-blue-600 text-white";
       case "REJECTED":
-        return "border-rose-600 bg-rose-600 text-white";
+        return "border-red-600 bg-red-600 text-white";
       case "PENDING":
       case "ON_HOLD":
       case "REVISION":
@@ -59,7 +71,7 @@ export default function WorkflowJourneyChart({ status, currentWorkflowStep, step
           <p className="text-sm font-semibold text-slate-900">Workflow journey</p>
           <p className="text-sm text-slate-600">A quick view of where this document is in the approval path.</p>
         </div>
-        <div className={`rounded-full px-3 py-1 text-sm font-medium ${status === "CANCELLED" ? "bg-rose-50 text-rose-700" : "bg-cyan-50 text-cyan-700"}`}>
+        <div className={`rounded-full px-3 py-1 text-sm font-medium ${status === "CANCELLED" ? "bg-red-50 text-red-700" : "bg-cyan-50 text-cyan-700"}`}>
           {headline}
         </div>
       </div>

@@ -3,10 +3,11 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { deleteDocumentFiles } from "@/lib/files";
+import { cancelRunsRootedAtDocuments } from "@/lib/workflow/processes";
 
 /**
  * Permanently removes documents and everything that hangs off them. A document that sits in a process run is
- * taken out of the run (the run itself carries on). Returns the stored file paths so the caller can remove
+ * taken out of the run (the run carries on, unless it was the run's root document: then the run is cancelled). Returns the stored file paths so the caller can remove
  * the files from disk after the transaction commits.
  */
 export async function deleteDocumentRecords(tx: Prisma.TransactionClient, documentIds: string[]): Promise<string[]> {
@@ -17,6 +18,7 @@ export async function deleteDocumentRecords(tx: Prisma.TransactionClient, docume
     select: { filePath: true },
   });
 
+  await cancelRunsRootedAtDocuments(tx, documentIds);
   await tx.processStepDocument.deleteMany({ where: { documentId: { in: documentIds } } });
   await tx.approvalHistory.deleteMany({ where: { documentId: { in: documentIds } } });
   await tx.emailNotificationEvent.deleteMany({ where: { documentId: { in: documentIds } } });

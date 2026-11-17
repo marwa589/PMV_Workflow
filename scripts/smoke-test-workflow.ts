@@ -233,7 +233,7 @@ async function main() {
   // ---------- auto-approve + process ----------
   section("Auto-approve and process runs");
   const COMP = docTypes.COMP; const SP = sub("COMP", "SPARE_PARTS");
-  check("no flow: clerk with an assignment may upload", await canUserUpload(prisma, as(clerk1, "clerk"), { documentTypeId: COMP.id, documentSubtypeId: SP.id, projectId: p1.id }));
+  check("no flow: a clerk with only a non-upload assignment may NOT upload", !(await canUserUpload(prisma, as(clerk1, "clerk"), { documentTypeId: COMP.id, documentSubtypeId: SP.id, projectId: p1.id })));
   check("no flow: clerk without assignment may not", !(await canUserUpload(prisma, as(clerk2, "clerk"), { documentTypeId: COMP.id, documentSubtypeId: SP.id, projectId: p1.id })));
   const proc = await prisma.processDefinition.create({
     data: { name: "Procurement", steps: { create: [{ stepNumber: 1, name: "Comp sheet", documentTypeId: COMP.id }, { stepNumber: 2, name: "Material req", documentTypeId: MR.id, documentSubtypeId: CASH.id }] } },

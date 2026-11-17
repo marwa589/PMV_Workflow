@@ -16,9 +16,11 @@ export default async function ApproverApprovedDocumentsPage({ searchParams }: an
       rows={data.approvedDocuments}
       searchParams={await Promise.resolve(searchParams)}
       title="Approved Documents"
-      subtitle="Documents you approved"
-      emptyMessage="No documents approved by you yet."
-      table={{ showBulkActions: true }}
+      subtitle="All approved documents you have access to"
+      emptyMessage="No approved documents."
+      lockedStatus="APPROVED"
+      showDownloadFilters
+      table={{ showBulkActions: true, showDownloadTracking: true }}
     />
   );
 }

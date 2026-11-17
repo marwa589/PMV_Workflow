@@ -58,6 +58,14 @@ export const appConfig = {
   smtpPass: () => getEnv("SMTP_PASS"),
   smtpFrom: () => getEnv("SMTP_FROM", { fallback: getEnv("SMTP_USER") }),
   appUrl: () => getEnv("APP_URL", { fallback: getEnv("NEXT_PUBLIC_APP_URL") }),
+  // Documents created before this moment never trigger "pending" emails. Default: everything after 2 Nov 2026 (Kuwait time),
+  // i.e. from 3 Nov 2026 00:00. Set EMAIL_PENDING_SINCE (ISO date/time) to change it.
+  emailPendingSince: (): Date => {
+    const raw = getEnv("EMAIL_PENDING_SINCE").trim();
+    const parsed = raw ? new Date(raw) : null;
+    if (parsed && !Number.isNaN(parsed.getTime())) return parsed;
+    return new Date("2026-11-03T00:00:00+03:00");
+  },
   auditRetentionDays: () => Number(getEnv("AUDIT_LOG_RETENTION_DAYS", { fallback: "90" })),
   emailDeliveryEnabled: () => getEnv("EMAIL_DELIVERY_ENABLED", { fallback: "false" }) === "true",
   passwordResetEmailEnabled: () => getEnv("PASSWORD_RESET_EMAIL_ENABLED", { fallback: "false" }) === "true",

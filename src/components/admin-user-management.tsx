@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { callApi, callApiWithDeactivationConfirmation } from "@/lib/admin-client";
+import { Pager, usePagination } from "@/components/pager";
 import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton, secondaryButton } from "@/components/admin/admin-ui";
 
 type UserType = { id: string; code: string; name: string };
@@ -11,6 +12,8 @@ type UserRow = {
   name: string;
   email: string;
   isActive: boolean;
+  canBulkApprove: boolean;
+  emailNotificationsDisabled: boolean;
   userType: UserType;
   assignmentCount: number;
   createdAt: string;
@@ -29,6 +32,7 @@ export default function AdminUserManagement() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -46,6 +50,17 @@ export default function AdminUserManagement() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Live search as you type: every word must appear in the name, email, user type or status.
+  const visibleUsers = useMemo(() => {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return users;
+    return users.filter((user) => {
+      const text = [user.name, user.email, user.userType.name, user.userType.code, user.isActive ? "active" : "deactivated inactive"].join(" ").toLowerCase();
+      return terms.every((term) => text.includes(term));
+    });
+  }, [users, query]);
+  const userPages = usePagination(visibleUsers, { storageKey: "admin-users", initialPageSize: 25 });
 
   function startEdit(user: UserRow) {
     setEditingId(user.id);
@@ -80,6 +95,24 @@ export default function AdminUserManagement() {
       ? await callApiWithDeactivationConfirmation("/api/admin/users", { id: user.id, name: user.name, email: user.email, isActive: false })
       : await callApi("/api/admin/users", "PATCH", { id: user.id, name: user.name, email: user.email, isActive: true });
     if ("cancelled" in result && result.cancelled) return;
+    if (!result.ok) return setError(result.message);
+    await load();
+  }
+
+  // Switch on: this user may select several pending documents and approve them together. Off: one document at a time.
+  async function toggleBulkApprove(user: UserRow) {
+    setError(null);
+    setNotice(null);
+    const result = await callApi("/api/admin/users", "PATCH", { id: user.id, name: user.name, email: user.email, canBulkApprove: !user.canBulkApprove });
+    if (!result.ok) return setError(result.message);
+    await load();
+  }
+
+  // Switch on: no pending-task or ticket emails are sent to this user (sign-in codes and password resets still are).
+  async function toggleEmailNotificationsDisabled(user: UserRow) {
+    setError(null);
+    setNotice(null);
+    const result = await callApi("/api/admin/users", "PATCH", { id: user.id, name: user.name, email: user.email, emailNotificationsDisabled: !user.emailNotificationsDisabled });
     if (!result.ok) return setError(result.message);
     await load();
   }
@@ -125,11 +158,26 @@ export default function AdminUserManagement() {
         </div>
       </Card>
 
-      <Card title="Users" subtitle="Deactivate an account to block sign-in without losing its history.">
+      <Card
+        title="Users"
+        subtitle="Deactivate an account to block sign-in without losing its history."
+        actions={
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search users by name, email or type"
+            aria-label="Search users"
+            className={`${inputClass} w-72`}
+          />
+        }
+      >
         {loading ? (
           <p className="text-sm text-slate-500">Loading...</p>
         ) : users.length === 0 ? (
           <Empty>No users yet.</Empty>
+        ) : visibleUsers.length === 0 ? (
+          <Empty>No users match &quot;{query}&quot;.</Empty>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
@@ -140,11 +188,13 @@ export default function AdminUserManagement() {
                   <th className="px-3 py-2 font-semibold">Type</th>
                   <th className="px-3 py-2 font-semibold">Access</th>
                   <th className="px-3 py-2 font-semibold">Status</th>
+                  <th className="px-3 py-2 font-semibold">Approve several at once</th>
+                  <th className="px-3 py-2 font-semibold">Disable email notifications</th>
                   <th className="px-3 py-2 font-semibold">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {users.map((user) => (
+                {userPages.pageItems.map((user) => (
                   <tr key={user.id} className="border-t border-slate-100">
                     <td className="px-3 py-3 font-medium text-slate-900">{user.name}</td>
                     <td className="px-3 py-3 text-slate-600">{user.email}</td>
@@ -156,6 +206,36 @@ export default function AdminUserManagement() {
                     </td>
                     <td className="px-3 py-3"><Pill tone={user.isActive ? "green" : "amber"}>{user.isActive ? "Active" : "Deactivated"}</Pill></td>
                     <td className="px-3 py-3">
+                      {user.userType.code === "admin" ? (
+                        <span className="text-xs text-slate-500" title="Admin users can always review several documents at once">Always (Admin)</span>
+                      ) : (
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={user.canBulkApprove}
+                        aria-label={`Allow ${user.name} to approve several documents at once`}
+                        title={user.canBulkApprove ? "On: can approve several documents at once" : "Off: must review documents one by one"}
+                        onClick={() => toggleBulkApprove(user)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${user.canBulkApprove ? "bg-cyan-600" : "bg-slate-300"}`}
+                      >
+                        <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${user.canBulkApprove ? "translate-x-5" : "translate-x-0.5"}`} />
+                      </button>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={user.emailNotificationsDisabled}
+                        aria-label={`Disable email notifications for ${user.name}`}
+                        title={user.emailNotificationsDisabled ? "On: no notification emails are sent to this user" : "Off: this user receives notification emails"}
+                        onClick={() => toggleEmailNotificationsDisabled(user)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${user.emailNotificationsDisabled ? "bg-cyan-600" : "bg-slate-300"}`}
+                      >
+                        <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${user.emailNotificationsDisabled ? "translate-x-5" : "translate-x-0.5"}`} />
+                      </button>
+                    </td>
+                    <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-2">
                         <button type="button" onClick={() => startEdit(user)} className={secondaryButton}>Edit</button>
                         <button type="button" onClick={() => toggleActive(user)} className={secondaryButton}>{user.isActive ? "Deactivate" : "Activate"}</button>
@@ -166,6 +246,7 @@ export default function AdminUserManagement() {
                 ))}
               </tbody>
             </table>
+            <Pager {...userPages} noun="users" />
           </div>
         )}
       </Card>

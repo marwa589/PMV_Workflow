@@ -1,17 +1,22 @@
 // src/app/api/processes/[id]/route.ts
+import { getWhoCanUploadByRun } from "@/lib/workflow/who-can-upload";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { buildProcessVisibilityWhere, userHasPermission } from "@/lib/auth/access";
+import { buildDocumentVisibilityWhere, buildProcessVisibilityWhere, buildReferenceViewWhere, userHasPermission } from "@/lib/auth/access";
+import { stepOpensAt } from "@/lib/process-status";
+import { USER_TYPE } from "@/lib/auth/roles";
 import { validateCsrf } from "@/lib/csrf";
 import { prisma } from "@/lib/prisma";
 import { getDocumentStatusDisplay } from "@/lib/document-status";
-import { cancelProcess } from "@/lib/workflow/processes";
+import { writeAuditLog } from "@/lib/audit";
+import { cancelProcess, completeProcessEarly } from "@/lib/workflow/processes";
+import { canUserUpload } from "@/lib/workflow/eligibility";
 import { WorkflowError } from "@/lib/workflow/errors";
 import { getProcessStatusLabel } from "@/lib/process-status";
 
 export const runtime = "nodejs";
 
-// One run: its steps in order, the document now filling each step, and the earlier (rejected) ones as history.
+// One run: the whole tree, the documents that filled it (rejected ones as history) and the choices that are open now.
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
@@ -24,18 +29,47 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       id: true,
       reference: true,
       status: true,
-      currentStepNumber: true,
+      currentStepId: true,
+      stepVersion: true,
       startedAt: true,
       completedAt: true,
       project: { select: { id: true, code: true, name: true } },
       startedBy: { select: { id: true, name: true } },
+      // Follow-up runs ("allow multiple uploads"): the run and approved document this one follows, and the runs that follow it.
+      parentInstance: { select: { id: true, reference: true, processDefinition: { select: { name: true } } } },
+      followedDocument: { select: { id: true, documentNumber: true, title: true } },
+      followUps: {
+        orderBy: { startedAt: "asc" },
+        select: {
+          id: true,
+          reference: true,
+          status: true,
+          stepDocuments: {
+            where: { isCurrent: true, processStep: { parentStepId: { not: null } } },
+            orderBy: { linkedAt: "desc" },
+            take: 1,
+            select: { document: { select: { id: true, documentNumber: true, title: true, status: true, currentWorkflowStep: true } } },
+          },
+        },
+      },
       processDefinition: {
         select: {
           id: true,
           name: true,
           steps: {
             orderBy: { stepNumber: "asc" },
-            select: { id: true, stepNumber: true, name: true, documentType: { select: { id: true, code: true, name: true } }, documentSubtype: { select: { id: true, code: true, name: true } } },
+            select: {
+              id: true,
+              stepNumber: true,
+              name: true,
+              parentStepId: true,
+              versionNumber: true,
+              delayHours: true,
+              referenceDocumentType: { select: { id: true, code: true, name: true } },
+              referenceDocumentSubtype: { select: { id: true, code: true, name: true } },
+              documentType: { select: { id: true, code: true, name: true } },
+              documentSubtype: { select: { id: true, code: true, name: true } },
+            },
           },
         },
       },
@@ -45,9 +79,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
           id: true,
           processStepId: true,
           isCurrent: true,
+          isAddition: true,
           source: true,
           linkedAt: true,
-          document: { select: { id: true, documentNumber: true, title: true, status: true, currentWorkflowStep: true } },
+          references: { select: { documentId: true } },
+          document: { select: { id: true, documentNumber: true, title: true, status: true, approvedAt: true, currentWorkflowStep: true } },
         },
       },
     },
@@ -55,24 +91,108 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   if (!run) return NextResponse.json({ message: "Process run not found." }, { status: 404 });
 
+  // The run follows the version of the tree it started with, even if the process was edited since.
+  const definitionSteps = run.processDefinition.steps.filter((step) => step.versionNumber === run.stepVersion);
+  // Documents added to the group after the run completed sit next to the path; they never decide the path.
+  const currentLinks = run.stepDocuments.filter((link) => link.isCurrent && !link.isAddition);
+  // The node of the choice already made under the last approved node (its document is in approval), if any.
+  const chosenLink = currentLinks.find((link) => definitionSteps.find((step) => step.id === link.processStepId)?.parentStepId === run.currentStepId);
+  // Nodes on the path taken so far: the chosen node and everything above it.
+  const pathIds = new Set<string>();
+  for (let cursor = chosenLink?.processStepId ?? run.currentStepId; cursor; ) {
+    pathIds.add(cursor);
+    cursor = definitionSteps.find((step) => step.id === cursor)?.parentStepId ?? null;
+  }
+
+  const awaitingUpload =
+    run.status === "IN_PROGRESS" &&
+    run.currentStepId !== null &&
+    !chosenLink &&
+    definitionSteps.some((step) => step.parentStepId === run.currentStepId);
+
+  // Buttons are shown only to people who could use them (same rules as the upload and cancel endpoints).
+  let canUpload = false;
+  if (awaitingUpload) {
+    const actor = { id: session.userId, userType: session.userType };
+    const approvedAtForDelay = run.stepDocuments.find((link) => link.isCurrent && link.processStepId === run.currentStepId)?.document.approvedAt ?? null;
+    for (const step of definitionSteps.filter((candidate) => candidate.parentStepId === run.currentStepId)) {
+      // A choice in its waiting period cannot be uploaded (Admin users may override it).
+      const opensAt = stepOpensAt(approvedAtForDelay, step.delayHours);
+      if (opensAt && opensAt.getTime() > Date.now() && session.userType !== USER_TYPE.ADMIN) continue;
+      if (await canUserUpload(prisma, actor, { documentTypeId: step.documentType.id, documentSubtypeId: step.documentSubtype?.id ?? null, projectId: run.project?.id ?? null })) {
+        canUpload = true;
+        break;
+      }
+    }
+  }
+
+  // Reference documents are shown only to people who hold "View reference documents" for them (and can see the document).
+  const referenceIds = [...new Set(run.stepDocuments.flatMap((link) => link.references.map((reference) => reference.documentId)))];
+  let visibleReferences = new Map<string, { id: string; documentNumber: string; title: string; typeName: string }>();
+  if (referenceIds.length > 0) {
+    const [visibility, referenceView] = await Promise.all([buildDocumentVisibilityWhere(session), buildReferenceViewWhere(session)]);
+    const rows = await prisma.document.findMany({
+      where: { AND: [{ id: { in: referenceIds } }, visibility, referenceView] },
+      select: { id: true, documentNumber: true, title: true, documentType: { select: { name: true } } },
+    });
+    visibleReferences = new Map(rows.map((row) => [row.id, { id: row.id, documentNumber: row.documentNumber, title: row.title, typeName: row.documentType.name }]));
+  }
+  const lastApprovedAt = run.stepDocuments.find((link) => link.isCurrent && link.processStepId === run.currentStepId)?.document.approvedAt ?? null;
+  // Only an admin may close a run early (documents may still be waiting).
+  const canComplete = run.status === "IN_PROGRESS" && session.userType === USER_TYPE.ADMIN;
+  const canCancel = run.status === "IN_PROGRESS" && (run.startedBy.id === session.userId || (await userHasPermission(session, "processes.manage")));
+
+  // Admin only: who may upload each open choice while the run waits for its next document.
+  const whoCanUpload = session.userType === USER_TYPE.ADMIN && awaitingUpload ? (await getWhoCanUploadByRun(prisma, [run.id])).get(run.id) ?? [] : [];
+
   return NextResponse.json({
     run: {
       id: run.id,
       reference: run.reference,
       status: run.status,
-      statusLabel: getProcessStatusLabel(run.status, run.currentStepNumber, run.processDefinition.steps),
-      currentStepNumber: run.currentStepNumber,
+      statusLabel: getProcessStatusLabel(run, definitionSteps, run.stepDocuments),
+      currentStepId: run.currentStepId,
       startedAt: run.startedAt.toISOString(),
       completedAt: run.completedAt?.toISOString() ?? null,
       project: run.project,
       startedBy: run.startedBy,
       processDefinition: { id: run.processDefinition.id, name: run.processDefinition.name },
-      steps: run.processDefinition.steps.map((step) => {
+      follows: run.parentInstance
+        ? {
+            run: { id: run.parentInstance.id, reference: run.parentInstance.reference, name: run.parentInstance.processDefinition.name },
+            document: run.followedDocument,
+          }
+        : null,
+      followUps: run.followUps.map((followUp) => {
+        const document = followUp.stepDocuments[0]?.document ?? null;
+        return {
+          id: followUp.id,
+          reference: followUp.reference,
+          status: followUp.status,
+          document: document
+            ? {
+                id: document.id,
+                documentNumber: document.documentNumber,
+                title: document.title,
+                status: document.status,
+                statusLabel: getDocumentStatusDisplay(document.status, { levelNumber: document.currentWorkflowStep }),
+              }
+            : null,
+        };
+      }),
+      // True while the run waits for someone to upload the next document (the open choices are the children of currentStepId).
+      awaitingUpload,
+      whoCanUpload,
+      canUpload,
+      canCancel,
+      canComplete,
+      steps: definitionSteps.map((step) => {
         const documents = run.stepDocuments
           .filter((link) => link.processStepId === step.id)
           .map((link) => ({
             linkId: link.id,
             isCurrent: link.isCurrent,
+            isAddition: link.isAddition,
             source: link.source,
             linkedAt: link.linkedAt.toISOString(),
             id: link.document.id,
@@ -80,30 +200,65 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
             title: link.document.title,
             status: link.document.status,
             statusLabel: getDocumentStatusDisplay(link.document.status, { levelNumber: link.document.currentWorkflowStep }),
+            referenceDocuments: link.references.flatMap((reference) => {
+              const visible = visibleReferences.get(reference.documentId);
+              return visible ? [visible] : [];
+            }),
           }));
         return {
           id: step.id,
           stepNumber: step.stepNumber,
           name: step.name,
+          parentStepId: step.parentStepId,
           documentType: step.documentType,
           documentSubtype: step.documentSubtype,
-          currentDocument: documents.find((doc) => doc.isCurrent) ?? null,
-          history: documents.filter((doc) => !doc.isCurrent),
+          delayHours: step.delayHours,
+          // Whether this step takes a reference document is configuration; only the document itself is permission-gated.
+          referenceType: step.referenceDocumentType
+            ? `${step.referenceDocumentType.name}${step.referenceDocumentSubtype ? ` - ${step.referenceDocumentSubtype.name}` : ""}`
+            : null,
+          // When the waiting period after the previous approval ends (null = no wait, or already over).
+          opensAt: (() => {
+            const opens = step.parentStepId === run.currentStepId ? stepOpensAt(lastApprovedAt, step.delayHours) : null;
+            return opens && opens.getTime() > Date.now() ? opens.toISOString() : null;
+          })(),
+          onPath: pathIds.has(step.id),
+          // An open choice: a child of the last approved node while the run waits for the next upload.
+          isOpenChoice:
+            run.status === "IN_PROGRESS" && run.currentStepId !== null && !chosenLink && step.parentStepId === run.currentStepId,
+          currentDocument: documents.find((doc) => doc.isCurrent && !doc.isAddition) ?? null,
+          // Documents added to the same group after the process was completed.
+          additions: documents.filter((doc) => doc.isAddition),
+          history: documents.filter((doc) => !doc.isCurrent && !doc.isAddition),
         };
       }),
     },
   });
 }
 
-// Cancel a run: only the person who started it, or someone who may manage processes.
+// Cancel a run (the person who started it, or someone who may manage processes) or mark it as done early (admin only).
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   if (!validateCsrf(request)) return NextResponse.json({ message: "Invalid CSRF token." }, { status: 403 });
 
   const { id } = await params;
-  const body = (await request.json().catch(() => null)) as { action?: unknown } | null;
-  if (body?.action !== "cancel") return NextResponse.json({ message: "Action must be cancel." }, { status: 400 });
+  const body = (await request.json().catch(() => null)) as { action?: unknown; reason?: unknown } | null;
+  if (body?.action !== "cancel" && body?.action !== "complete") return NextResponse.json({ message: "Action must be cancel or complete." }, { status: 400 });
+
+  if (body.action === "complete") {
+    if (session.userType !== USER_TYPE.ADMIN) return NextResponse.json({ message: "Only an Admin can mark a process run as done early." }, { status: 403 });
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    if (reason.length < 5) return NextResponse.json({ message: "Enter the reason for closing this run early." }, { status: 400 });
+    try {
+      await prisma.$transaction((tx) => completeProcessEarly(tx, id));
+      await writeAuditLog({ performedById: session.userId, action: "PROCESS_COMPLETED_EARLY", details: JSON.stringify({ processRunId: id, reason }) });
+      return NextResponse.json({ message: "Process run marked as done." });
+    } catch (error) {
+      if (error instanceof WorkflowError) return NextResponse.json({ message: error.message }, { status: error.status });
+      return NextResponse.json({ message: "Unable to mark the process run as done." }, { status: 500 });
+    }
+  }
 
   const run = await prisma.processInstance.findUnique({ where: { id }, select: { startedById: true } });
   if (!run) return NextResponse.json({ message: "Process run not found." }, { status: 404 });

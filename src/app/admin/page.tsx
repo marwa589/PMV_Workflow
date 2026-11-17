@@ -1,5 +1,7 @@
 // src/app/admin/page.tsx
 import { DocumentStatus, ProcessStatus } from "@prisma/client";
+import Link from "next/link";
+import { AlertTriangle } from "lucide-react";
 import DashboardShell from "@/components/dashboard-shell";
 import DeletionRequestsList from "@/components/deletion-requests-list";
 import PageSummaryCards from "@/components/page-summary-cards";
@@ -9,6 +11,7 @@ import { USER_TYPE } from "@/lib/auth/roles";
 import { formatWaitingTime, getAgeBucket, getWaitingHours } from "@/lib/document-metrics";
 import { getDocumentRows } from "@/lib/document-queries";
 import { prisma } from "@/lib/prisma";
+import { TONE_CLASSES } from "@/lib/status-colors";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +52,12 @@ export default async function AdminDashboardPage() {
   const rejectedDocuments = countOf(DocumentStatus.CANCELLED);
 
   // ---- Aging of documents waiting at a level ----
+  // Documents waiting at a level that goes to the Project Director / Manager while the project has none.
+  const waitingForProjectRole = pendingRows.filter(
+    (row) => row.statusLabel.startsWith("Pending Project Director - No PD") || row.statusLabel.startsWith("Pending Project Manager - No PM"),
+  );
+  const waitingProjects = [...new Set(waitingForProjectRole.map((row) => (row.project ? row.project.code : "No project")))];
+
   const agingSummary = pendingRows.reduce(
     (acc, row) => {
       const hours = getWaitingHours(row.waitingSince);
@@ -101,11 +110,8 @@ export default async function AdminDashboardPage() {
     const names = [...new Set(pendingRows.filter((row) => (row.currentWorkflowStep ?? 0) === level).map((row) => row.currentLevelName).filter(Boolean))] as string[];
     return buildStage(`LEVEL_${level}`, names.length > 0 && names.length <= 2 ? names.join(" / ") : `Level ${level}`);
   });
-  const workflowStageMetrics: PipelineStage[] = [
-    ...levelStages,
-    { key: "REVISION_REQUIRED", label: "Revision Required", count: countOf(DocumentStatus.REVISION_REQUIRED), averageDaysPending: 0, assignees: [], oldestPendingDocument: null },
-    { key: "APPROVED", label: "Approved", count: approvedDocuments, averageDaysPending: 0, assignees: [], oldestPendingDocument: null },
-  ];
+  // Only the levels documents are waiting at; final statuses (revision required, approved) are not pipeline stages.
+  const workflowStageMetrics: PipelineStage[] = levelStages;
 
   // ---- Process runs ----
   const runCount = (status: ProcessStatus) => runGroups.find((group) => group.status === status)?._count._all ?? 0;
@@ -129,6 +135,44 @@ export default async function AdminDashboardPage() {
         <p className="mt-1 text-sm text-slate-600">Monitor platform health, activity trends, and user operations.</p>
       </div>
 
+      {waitingForProjectRole.length > 0 ? (
+        <section className="rounded-2xl border border-amber-300 bg-amber-50 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-amber-200 px-5 py-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" />
+              <div>
+                <h3 className="text-base font-semibold text-amber-950">
+                  {waitingForProjectRole.length} document(s) waiting for a Project Director / Manager
+                </h3>
+                <p className="mt-1 text-sm text-amber-900">
+                  These projects have none set: {waitingProjects.join(", ")}. Set one in Projects &amp; Locations and the documents go to them, or open a document to send its level to someone.
+                </p>
+              </div>
+            </div>
+            <Link href="/admin/projects" className="rounded-lg border border-amber-400 bg-white px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100">
+              Projects &amp; Locations
+            </Link>
+          </div>
+          <ul className="divide-y divide-amber-200">
+            {waitingForProjectRole.slice(0, 10).map((row) => (
+              <li key={row.id} className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5 text-sm">
+                <Link href={`/documents/${row.id}`} className="font-medium text-slate-900 hover:text-indigo-600 hover:underline">
+                  {row.documentNumber}
+                </Link>
+                <span className="min-w-0 flex-1 truncate text-slate-600">{row.title}</span>
+                <span className="text-xs text-slate-600">{row.project ? row.project.code : "No project"}</span>
+                <span className="rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-amber-900 ring-1 ring-amber-300">{row.statusLabel}</span>
+              </li>
+            ))}
+          </ul>
+          {waitingForProjectRole.length > 10 ? (
+            <p className="px-5 py-2.5 text-xs text-amber-900">
+              and {waitingForProjectRole.length - 10} more. <Link href="/admin/pending-approvals" className="font-medium underline">See Pending Approvals</Link>
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4">
@@ -139,9 +183,9 @@ export default async function AdminDashboardPage() {
             <PageSummaryCards
               cards={[
                 { label: "Total Documents", value: String(totalDocuments), tone: "bg-slate-100 text-slate-900 ring-1 ring-slate-300" },
-                { label: "Pending", value: String(pendingApprovals), tone: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200" },
-                { label: "Approved", value: String(approvedDocuments), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
-                { label: "Rejected", value: String(rejectedDocuments), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
+                { label: "Pending", value: String(pendingApprovals), tone: TONE_CLASSES.yellow },
+                { label: "Approved", value: String(approvedDocuments), tone: TONE_CLASSES.blue },
+                { label: "Rejected", value: String(rejectedDocuments), tone: TONE_CLASSES.red },
               ]}
             />
           </div>

@@ -25,6 +25,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       status: true,
       receivedAt: true,
       receivedBy: { select: { name: true, email: true } },
+      documentType: { select: { receiptConfirmationRequired: true } },
+      documentSubtype: { select: { receiptConfirmationRequired: true } },
       projectId: true,
       documentTypeId: true,
       documentSubtypeId: true,
@@ -45,6 +47,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       receivedByEmail: document.receivedBy.email,
     });
   }
+
+  const receiptRequired = document.documentSubtype?.receiptConfirmationRequired ?? document.documentType.receiptConfirmationRequired;
+  if (!receiptRequired) return NextResponse.json({ message: "Receipt confirmation is not required for this document." }, { status: 409 });
 
   if (document.status !== DocumentStatus.APPROVED) {
     return NextResponse.json({ message: "Only an approved document can be marked as received." }, { status: 409 });

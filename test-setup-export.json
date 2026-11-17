@@ -1,0 +1,3165 @@
+{
+  "exportedAt": "2026-11-10T05:58:21.973Z",
+  "counts": {
+    "projects": 35,
+    "users": 51,
+    "roles": 18,
+    "assignments": 74,
+    "flows": 16,
+    "flowAssignments": 8,
+    "processes": 5,
+    "documentsByStatus": {
+      "CANCELLED": 117,
+      "ON_HOLD": 1,
+      "REVISION_REQUIRED": 2,
+      "PENDING": 63,
+      "APPROVED": 6513
+    }
+  },
+  "locations": [
+    {
+      "id": "mg4f9da515806eec4e8d6b7a",
+      "name": "KSA"
+    },
+    {
+      "id": "mg9530e9d46aa698e179aa22",
+      "name": "Kuwait"
+    }
+  ],
+  "companies": [],
+  "projects": [
+    {
+      "code": "ABDALI-FARM",
+      "name": "ABDALI FARM",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Rosly Salim <rosly.salim@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "AMGHARA-WORKSHOP",
+      "name": "Amghara Services Workshop",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Ramez Khalil <rkhalil@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "ARZAQ-LIGHT-INDUST",
+      "name": "ARZAQ LIGHT INDUST.",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Sami Thabet <sami.thabet@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "ASIMA",
+      "name": "ASIMA",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Maged Weesa <maged.weesa@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "AVK",
+      "name": "Avenues Mall Khobar",
+      "isActive": true,
+      "location": "KSA",
+      "company": null,
+      "director": "Ramzi Abou Chakra <ramzi@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "AVR",
+      "name": "Avenues Towers Riyadh",
+      "isActive": true,
+      "location": "KSA",
+      "company": null,
+      "director": "Abdallah Ghanem <abdallah.ghanem@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "AYALA",
+      "name": "AYALA",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Raghed A EL Khatib <rk@ayalainteriors.com>",
+      "manager": "Jack Abi Younes <jack.a.y@ayalainteriors.com>"
+    },
+    {
+      "code": "AYALA-KSA",
+      "name": "AYALA KSA",
+      "isActive": true,
+      "location": "KSA",
+      "company": null,
+      "director": "Raghed A EL Khatib <rk@ayalainteriors.com>",
+      "manager": null
+    },
+    {
+      "code": "BATCHING-PLANT",
+      "name": "BATCHING PLANT",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": null,
+      "manager": null
+    },
+    {
+      "code": "BPK",
+      "name": "Batching Plant Khobar",
+      "isActive": true,
+      "location": "KSA",
+      "company": null,
+      "director": "Elie Azzam <elie.azzam@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "BUSINESS-DISTRICT",
+      "name": "BUSINESS DISTRICT",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Abas <shirlyaranaha@gmail.com>",
+      "manager": null
+    },
+    {
+      "code": "EDRASIS",
+      "name": "EDRASIS",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Ahmad Fawaz <ahmad.fawaz@edrasisme.com>",
+      "manager": null
+    },
+    {
+      "code": "ELEVATORS",
+      "name": "ELEVATORS",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Adel Tayeh <adel.tayea@aiec-kw.com>",
+      "manager": null
+    },
+    {
+      "code": "FARM-SABAH-AL-SALEM",
+      "name": "FARM (SABAH AL_SALEM)",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": null,
+      "manager": null
+    },
+    {
+      "code": "GOOGLE",
+      "name": "GOOGLE",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Nour Hashisho <n.hashisho@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "HESSA-AL-MUBARAK",
+      "name": "HESSA AL MUBARAK",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Jack Armani <jack.armani@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "HO-KSA",
+      "name": "Head Office KSA",
+      "isActive": true,
+      "location": "KSA",
+      "company": null,
+      "director": null,
+      "manager": null
+    },
+    {
+      "code": "HO-KWT",
+      "name": "Head Office Kuwait",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": null,
+      "manager": null
+    },
+    {
+      "code": "ITKAN",
+      "name": "ITKAN",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Mohammed Asfour <m.asfour@al-jabriya.com>",
+      "manager": null
+    },
+    {
+      "code": "JAHRA-STORE",
+      "name": "JAHRA STORE",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Shahbaz Husain <shahbaz.husain@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "KAFD-RIYADH",
+      "name": "KAFD-RIYADH",
+      "isActive": true,
+      "location": "KSA",
+      "company": null,
+      "director": "Ahmad Hassnien <ahmad.hassnien@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "KAZMA-CAMP-237",
+      "name": "KAZMA CAMP - 237",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": null,
+      "manager": null
+    },
+    {
+      "code": "KGOC",
+      "name": "KGOC",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Pierre Haddad <pierre@ahmadiah.com>",
+      "manager": "Jihad Farah <jihad.farah@ahmadiah.com>"
+    },
+    {
+      "code": "KHIRAN-SPORTS-PLEX",
+      "name": "Khiran Sports plex",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Mohammed Chahin <mohammed_chahin@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "KWT",
+      "name": "Kuwait (general)",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": null,
+      "manager": null
+    },
+    {
+      "code": "MAIN-OF-ROAD-AHMADI",
+      "name": "MAINTENANCE OF ROAD AL AHMADI",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Pierre Haddad <pierre@ahmadiah.com>",
+      "manager": "Dania Arabi <dania.arabi@ahmadiah.com>"
+    },
+    {
+      "code": "MEP",
+      "name": "MEP",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Khaled Almanzalawy <khaled.almanzalawy@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "MINA-ABDALLAH-STORE",
+      "name": "MINA ABDALLAH STORE",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Shahbaz Husain <shahbaz.husain@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "NATIONAL-BANK",
+      "name": "National Bank",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Hani Abi Haidar <hani.abuhaidar@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "PIFSS",
+      "name": "PIFSS",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Richard Khouri <richard.khouri@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "SHUIABA-LABOR-CAMP",
+      "name": "SHUIABA LABOR CAMP",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Nabil Azer <nabiltadres2021@gmail.com>",
+      "manager": null
+    },
+    {
+      "code": "TCH",
+      "name": "Tachalih Workshop",
+      "isActive": true,
+      "location": "KSA",
+      "company": null,
+      "director": null,
+      "manager": null
+    },
+    {
+      "code": "TERASCALE",
+      "name": "TERASCALE",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Chadi Bassil <chadi.bassil@terascaledc.com>",
+      "manager": null
+    },
+    {
+      "code": "WARBA-BANK",
+      "name": "Warba Bank",
+      "isActive": true,
+      "location": "Kuwait",
+      "company": null,
+      "director": "Hani Abi Haidar <hani.abuhaidar@ahmadiah.com>",
+      "manager": null
+    },
+    {
+      "code": "WP03-KHOBAR",
+      "name": "The Roads KHOBAR",
+      "isActive": true,
+      "location": "KSA",
+      "company": null,
+      "director": "Elias Nassar <elias.nassar@ahmadiah.com>",
+      "manager": null
+    }
+  ],
+  "userTypes": [
+    {
+      "id": "cmvtfj9xj0003wcdjjmc09wj6",
+      "code": "admin",
+      "name": "Admin"
+    },
+    {
+      "id": "cmvtfj9vl0000wcdjjd81t456",
+      "code": "clerk",
+      "name": "Clerk"
+    },
+    {
+      "id": "cmvtfj9xg0001wcdjckpee1f6",
+      "code": "eng",
+      "name": "Engineer"
+    },
+    {
+      "id": "cmvtfj9xh0002wcdjvqf5s5wx",
+      "code": "manager",
+      "name": "Manager"
+    }
+  ],
+  "users": [
+    {
+      "name": "Abas",
+      "email": "shirlyaranaha@gmail.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Abdallah Ghanem",
+      "email": "abdallah.ghanem@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Adel Tayeh",
+      "email": "adel.tayea@aiec-kw.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Ahmad Fawaz",
+      "email": "ahmad.fawaz@edrasisme.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Ahmad Hassnien",
+      "email": "ahmad.hassnien@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Ahmad Mero",
+      "email": "ahmad.mero@ahmadiah.com",
+      "userType": "Admin",
+      "isAdmin": true,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": true
+    },
+    {
+      "name": "Aqueel Sayed",
+      "email": "aqueel.sayed@ahmadiah.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Bernabie Rocha",
+      "email": "bernabie.rocha@ahmadiah.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Chadi Bassil",
+      "email": "chadi.bassil@terascaledc.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Dania Arabi",
+      "email": "dania.arabi@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Edmond Houeiss",
+      "email": "edmond.houeiss@ahmadiah.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Elias Nassar",
+      "email": "elias.nassar@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Elie Azzam",
+      "email": "elie.azzam@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Elie N. Hani",
+      "email": "elie.elhani@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": true
+    },
+    {
+      "name": "Erro Almacen",
+      "email": "dispatcher.pmv@ahmadiah.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "George Azzi",
+      "email": "george.azzi@ahmadiah.com",
+      "userType": "Manager",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Hani Abi Haidar",
+      "email": "hani.abuhaidar@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Jack Abi Younes",
+      "email": "jack.a.y@ayalainteriors.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Jack Armani",
+      "email": "jack.armani@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Jad Kabalan",
+      "email": "jad.kabalan@ahmadiah.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": true
+    },
+    {
+      "name": "Jihad Farah",
+      "email": "jihad.farah@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Joemar Paraiso",
+      "email": "joemar.paraiso@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Joseph Gebara",
+      "email": "joseph.gebara@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": true
+    },
+    {
+      "name": "Kamel Sayed",
+      "email": "kamel.sayed@ahmadiah.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Khaled Almanzalawy",
+      "email": "khaled.almanzalawy@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Maged Weesa",
+      "email": "maged.weesa@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Marc Baddour",
+      "email": "marc.baddour@ahmadiah.com",
+      "userType": "Manager",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": true,
+      "emailsOff": false
+    },
+    {
+      "name": "Marwa Mehielddine",
+      "email": "marwa.mehieddine@ahmadiah.com",
+      "userType": "Admin",
+      "isAdmin": true,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Mohamad Tayyab",
+      "email": "mohamad.tayyab@ahmadiah.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Mohamed Mahmoud",
+      "email": "mohamed.mahmoud@ahmadiah.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Mohamed Mahran",
+      "email": "mohamed.mahran@ahmadiah-sa.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Mohamed Shawky",
+      "email": "mohamed.shawky@ahmadiah.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Mohammad Mehieddine",
+      "email": "mohammad.mehieddine@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Mohammed Asfour",
+      "email": "m.asfour@al-jabriya.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Mohammed Chahin",
+      "email": "mohammed_chahin@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Muneer Kottappuram",
+      "email": "muneer.kottappuram@ahmadiah.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Nabil Azer",
+      "email": "nabiltadres2021@gmail.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Nour Hashisho",
+      "email": "n.hashisho@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Omar Merzek",
+      "email": "omar.merzek@ahmadiah.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Philip Patatanian",
+      "email": "philip.patatanian@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Pierre Haddad",
+      "email": "pierre@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": true
+    },
+    {
+      "name": "Raghed A EL Khatib",
+      "email": "rk@ayalainteriors.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Ramez Khalil",
+      "email": "rkhalil@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Ramzi Abou Chakra",
+      "email": "ramzi@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Reine Al Souki",
+      "email": "reine.alsouki@ahmadiah.com",
+      "userType": "Clerk",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Richard Khouri",
+      "email": "richard.khouri@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Rosly Salim",
+      "email": "rosly.salim@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Sami Thabet",
+      "email": "sami.thabet@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "sara mehsen",
+      "email": "marwameheddien2000@gmail.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Shahbaz Husain",
+      "email": "shahbaz.husain@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    },
+    {
+      "name": "Wissam Abdallah",
+      "email": "wissam.abdallah@ahmadiah.com",
+      "userType": "Engineer",
+      "isAdmin": false,
+      "isActive": true,
+      "canReviewSeveral": false,
+      "emailsOff": false
+    }
+  ],
+  "roles": [
+    {
+      "name": "Approval Forwarding",
+      "description": null,
+      "permissions": [
+        "documents.send_for_approval"
+      ]
+    },
+    {
+      "name": "Approval Sender",
+      "description": "May send documents they review to another user for approval first (needs to be an approver at the level).",
+      "permissions": [
+        "documents.send_for_approval",
+        "documents.view"
+      ]
+    },
+    {
+      "name": "Approver",
+      "description": "Acts where a flow names the user or their type. No permissions.",
+      "permissions": []
+    },
+    {
+      "name": "Archivist",
+      "description": "Archive and print.",
+      "permissions": [
+        "documents.archive",
+        "documents.view"
+      ]
+    },
+    {
+      "name": "Deletion Requester",
+      "description": "May ask for deletion of documents in scope (cannot review).",
+      "permissions": [
+        "documents.delete_request",
+        "documents.view"
+      ]
+    },
+    {
+      "name": "Deletion Reviewer",
+      "description": "Request and review deletions.",
+      "permissions": [
+        "documents.delete_request",
+        "documents.delete_review",
+        "documents.view"
+      ]
+    },
+    {
+      "name": "Doc Confirmer",
+      "description": null,
+      "permissions": [
+        "documents.confirm_receipt",
+        "documents.view"
+      ]
+    },
+    {
+      "name": "Flow Admin",
+      "description": "Builds flows, document types and processes.",
+      "permissions": [
+        "flows.manage",
+        "processes.manage",
+        "types.manage"
+      ]
+    },
+    {
+      "name": "Mailing List (all events)",
+      "description": "Emailed when documents in scope are approved, rejected or sent back for revision. Includes view so the link in the email opens.",
+      "permissions": [
+        "documents.view"
+      ]
+    },
+    {
+      "name": "Mailing List (approved only)",
+      "description": "Emailed when documents in scope are fully approved.",
+      "permissions": [
+        "documents.view"
+      ]
+    },
+    {
+      "name": "Maintenance Administrator",
+      "description": "Configures maintenance items and workflows.",
+      "permissions": [
+        "maintenance.manage"
+      ]
+    },
+    {
+      "name": "Receiving Clerk",
+      "description": "Confirms receipt of approved documents in scope.",
+      "permissions": [
+        "documents.confirm_receipt",
+        "documents.view"
+      ]
+    },
+    {
+      "name": "Reference Viewer",
+      "description": "May see reference documents attached to process steps, in scope (also needs documents.view for normal documents).",
+      "permissions": [
+        "documents.view",
+        "documents.view_reference"
+      ]
+    },
+    {
+      "name": "Unique Track User",
+      "description": null,
+      "permissions": [
+        "documents.use_unique_track"
+      ]
+    },
+    {
+      "name": "Uploader",
+      "description": "May upload documents in scope.",
+      "permissions": [
+        "documents.upload",
+        "documents.view"
+      ]
+    },
+    {
+      "name": "User Admin",
+      "description": "Users, assignments, delegations, projects.",
+      "permissions": [
+        "delegations.manage",
+        "projects.manage"
+      ]
+    },
+    {
+      "name": "View Reference Documents",
+      "description": null,
+      "permissions": [
+        "documents.view_reference"
+      ]
+    },
+    {
+      "name": "Viewer",
+      "description": "Read-only access to documents in scope.",
+      "permissions": [
+        "documents.download",
+        "documents.view"
+      ]
+    }
+  ],
+  "assignments": [
+    {
+      "user": "George Azzi <george.azzi@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVR - Avenues Towers Riyadh",
+          "AVK - Avenues Mall Khobar"
+        ],
+        "documentTypes": []
+      }
+    },
+    {
+      "user": "Erro Almacen <dispatcher.pmv@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": "KSA",
+        "projects": [
+          "AVR - Avenues Towers Riyadh",
+          "AVK - Avenues Mall Khobar"
+        ],
+        "documentTypes": [
+          "PO (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Mohamed Mahran <mohamed.mahran@ahmadiah-sa.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVK - Avenues Mall Khobar",
+          "TCH - Tachalih Workshop",
+          "BPK - Batching Plant Khobar",
+          "WP03-KHOBAR - The Roads KHOBAR"
+        ],
+        "documentTypes": [
+          "PO (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Pierre Haddad <pierre@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "MAIN-OF-ROAD-AHMADI - MAINTENANCE OF ROAD AL AHMADI",
+          "KGOC - KGOC",
+          "WP03-KHOBAR - The Roads KHOBAR"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Kamel Sayed <kamel.sayed@ahmadiah.com>",
+      "role": "Unique Track User",
+      "scope": {
+        "company": null,
+        "location": "Kuwait",
+        "projects": [],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Adel Tayeh <adel.tayea@aiec-kw.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "ELEVATORS - ELEVATORS"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Bernabie Rocha <bernabie.rocha@ahmadiah.com>",
+      "role": "Deletion Requester",
+      "scope": {
+        "company": null,
+        "location": "KSA",
+        "projects": [],
+        "documentTypes": [
+          "COMP (all sub types)",
+          "MR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Muneer Kottappuram <muneer.kottappuram@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "PO (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Marc Baddour <marc.baddour@ahmadiah.com>",
+      "role": "View Reference Documents",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": []
+      }
+    },
+    {
+      "user": "Abas <shirlyaranaha@gmail.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "BUSINESS-DISTRICT - BUSINESS DISTRICT"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Aqueel Sayed <aqueel.sayed@ahmadiah.com>",
+      "role": "Deletion Requester",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "COMP (all sub types)",
+          "MR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Elias Nassar <elias.nassar@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "WP03-KHOBAR - The Roads KHOBAR"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Ahmad Fawaz <ahmad.fawaz@edrasisme.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "EDRASIS - EDRASIS",
+          "KAFD-RIYADH - KAFD-RIYADH"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Ahmad Hassnien <ahmad.hassnien@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "KAFD-RIYADH - KAFD-RIYADH"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Aqueel Sayed <aqueel.sayed@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)",
+          "CUSTODY (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Bernabie Rocha <bernabie.rocha@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVK - Avenues Mall Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Chadi Bassil <chadi.bassil@terascaledc.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "TERASCALE - TERASCALE"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Dania Arabi <dania.arabi@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "MAIN-OF-ROAD-AHMADI - MAINTENANCE OF ROAD AL AHMADI"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Erro Almacen <dispatcher.pmv@ahmadiah.com>",
+      "role": "Deletion Requester",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVR - Avenues Towers Riyadh",
+          "BPK - Batching Plant Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)",
+          "CUSTODY (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Erro Almacen <dispatcher.pmv@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVK - Avenues Mall Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Erro Almacen <dispatcher.pmv@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "BPK - Batching Plant Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Edmond Houeiss <edmond.houeiss@ahmadiah.com>",
+      "role": "Uploader",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Edmond Houeiss <edmond.houeiss@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Elie Azzam <elie.azzam@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "BPK - Batching Plant Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Elie Azzam <elie.azzam@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "BATCHING-PLANT - BATCHING PLANT",
+          "BPK - Batching Plant Khobar"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "George Azzi <george.azzi@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVK - Avenues Mall Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Hani Abi Haidar <hani.abuhaidar@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "NATIONAL-BANK - National Bank",
+          "WARBA-BANK - Warba Bank"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Jack Abi Younes <jack.a.y@ayalainteriors.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AYALA - AYALA"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Jack Armani <jack.armani@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "HESSA-AL-MUBARAK - HESSA AL MUBARAK"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Jad Kabalan <jad.kabalan@ahmadiah.com>",
+      "role": "Deletion Requester",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "KWT - Kuwait (general)"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Jad Kabalan <jad.kabalan@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)",
+          "CUSTODY (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Jihad Farah <jihad.farah@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "KGOC - KGOC"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Joemar Paraiso <joemar.paraiso@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVK - Avenues Mall Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Khaled Almanzalawy <khaled.almanzalawy@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "MEP - MEP"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Mohammed Asfour <m.asfour@al-jabriya.com>",
+      "role": "Approver",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "ITKAN - ITKAN"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Mohammed Asfour <m.asfour@al-jabriya.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "ITKAN - ITKAN"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Maged Weesa <maged.weesa@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "ASIMA - ASIMA"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Marc Baddour <marc.baddour@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVK - Avenues Mall Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Marc Baddour <marc.baddour@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "BPK - Batching Plant Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "sara mehsen <marwameheddien2000@gmail.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "KGOC - KGOC"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Mohamad Tayyab <mohamad.tayyab@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": "KSA",
+        "projects": [],
+        "documentTypes": []
+      }
+    },
+    {
+      "user": "Mohamed Mahmoud <mohamed.mahmoud@ahmadiah.com>",
+      "role": "Deletion Requester",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "KWT - Kuwait (general)"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Mohamed Mahmoud <mohamed.mahmoud@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)",
+          "CUSTODY (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Mohamed Mahran <mohamed.mahran@ahmadiah-sa.com>",
+      "role": "Deletion Requester",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVK - Avenues Mall Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Mohamed Mahran <mohamed.mahran@ahmadiah-sa.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVK - Avenues Mall Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Mohamed Shawky <mohamed.shawky@ahmadiah.com>",
+      "role": "Deletion Requester",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "KWT - Kuwait (general)"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Mohamed Shawky <mohamed.shawky@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)",
+          "CUSTODY (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Mohammed Chahin <mohammed_chahin@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "FARM-SABAH-AL-SALEM - FARM (SABAH AL_SALEM)",
+          "KHIRAN-SPORTS-PLEX - Khiran Sports plex"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Muneer Kottappuram <muneer.kottappuram@ahmadiah.com>",
+      "role": "Deletion Requester",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "KWT - Kuwait (general)"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Muneer Kottappuram <muneer.kottappuram@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)",
+          "CUSTODY (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Nour Hashisho <n.hashisho@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "GOOGLE - GOOGLE"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Nabil Azer <nabiltadres2021@gmail.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "SHUIABA-LABOR-CAMP - SHUIABA LABOR CAMP"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Omar Merzek <omar.merzek@ahmadiah.com>",
+      "role": "Deletion Requester",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "KWT - Kuwait (general)"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Omar Merzek <omar.merzek@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)",
+          "CUSTODY (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Omar Merzek <omar.merzek@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVK - Avenues Mall Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Omar Merzek <omar.merzek@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "BPK - Batching Plant Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Philip Patatanian <philip.patatanian@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "KAZMA-CAMP-237 - KAZMA CAMP - 237"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Ramzi Abou Chakra <ramzi@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVK - Avenues Mall Khobar"
+        ],
+        "documentTypes": [
+          "MR (all sub types)",
+          "COMP (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Ramzi Abou Chakra <ramzi@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVK - Avenues Mall Khobar"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Reine Al Souki <reine.alsouki@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Richard Khouri <richard.khouri@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "PIFSS - PIFSS"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Raghed A EL Khatib <rk@ayalainteriors.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AYALA - AYALA",
+          "AYALA-KSA - AYALA KSA"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Ramez Khalil <rkhalil@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AMGHARA-WORKSHOP - Amghara Services Workshop"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Rosly Salim <rosly.salim@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "ABDALI-FARM - ABDALI FARM"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Sami Thabet <sami.thabet@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "ARZAQ-LIGHT-INDUST - ARZAQ LIGHT INDUST.",
+          "KGOC - KGOC"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Shahbaz Husain <shahbaz.husain@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "JAHRA-STORE - JAHRA STORE",
+          "MINA-ABDALLAH-STORE - MINA ABDALLAH STORE"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Wissam Abdallah <wissam.abdallah@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "KAZMA-CAMP-237 - KAZMA CAMP - 237"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "George Azzi <george.azzi@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Muneer Kottappuram <muneer.kottappuram@ahmadiah.com>",
+      "role": "Doc Confirmer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "PO (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Omar Merzek <omar.merzek@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": [
+          "MR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Marc Baddour <marc.baddour@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [],
+        "documentTypes": []
+      }
+    },
+    {
+      "user": "Bernabie Rocha <bernabie.rocha@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "BPK - Batching Plant Khobar",
+          "TCH - Tachalih Workshop",
+          "WP03-KHOBAR - The Roads KHOBAR"
+        ],
+        "documentTypes": [
+          "PO (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Mohammad Mehieddine <mohammad.mehieddine@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVK - Avenues Mall Khobar",
+          "AVR - Avenues Towers Riyadh",
+          "AYALA-KSA - AYALA KSA",
+          "KAFD-RIYADH - KAFD-RIYADH",
+          "BPK - Batching Plant Khobar",
+          "WP03-KHOBAR - The Roads KHOBAR"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    },
+    {
+      "user": "Abdallah Ghanem <abdallah.ghanem@ahmadiah.com>",
+      "role": "Viewer",
+      "scope": {
+        "company": null,
+        "location": null,
+        "projects": [
+          "AVR - Avenues Towers Riyadh"
+        ],
+        "documentTypes": [
+          "ERR (all sub types)"
+        ]
+      }
+    }
+  ],
+  "delegations": [],
+  "documentTypes": [
+    {
+      "code": "COMP",
+      "name": "Comp Sheet",
+      "isActive": true,
+      "supportsLineItems": false,
+      "subtypes": [
+        {
+          "code": "OTHER",
+          "name": "Other",
+          "isActive": true
+        },
+        {
+          "code": "SPARE_PARTS",
+          "name": "Spare Parts",
+          "isActive": true
+        }
+      ],
+      "requiredFields": []
+    },
+    {
+      "code": "CUSTODY",
+      "name": "Custody",
+      "isActive": true,
+      "supportsLineItems": false,
+      "subtypes": [],
+      "requiredFields": []
+    },
+    {
+      "code": "DN",
+      "name": "Delivery Note",
+      "isActive": true,
+      "supportsLineItems": false,
+      "subtypes": [],
+      "requiredFields": []
+    },
+    {
+      "code": "ERR",
+      "name": "ERR",
+      "isActive": true,
+      "supportsLineItems": false,
+      "subtypes": [
+        {
+          "code": "PURCHASE",
+          "name": "Purchase",
+          "isActive": true
+        },
+        {
+          "code": "RENEWAL",
+          "name": "Renewal",
+          "isActive": true
+        },
+        {
+          "code": "RENTAL_ACTC",
+          "name": "Rental ACTC",
+          "isActive": true
+        },
+        {
+          "code": "RENTAL_EXTERNAL",
+          "name": "Rental External",
+          "isActive": true
+        },
+        {
+          "code": "RRFD",
+          "name": "Request Refuel for Diesel",
+          "isActive": true
+        }
+      ],
+      "requiredFields": []
+    },
+    {
+      "code": "ERV",
+      "name": "Receipt Voucher",
+      "isActive": true,
+      "supportsLineItems": false,
+      "subtypes": [],
+      "requiredFields": []
+    },
+    {
+      "code": "INV",
+      "name": "Invoice",
+      "isActive": true,
+      "supportsLineItems": false,
+      "subtypes": [],
+      "requiredFields": []
+    },
+    {
+      "code": "MR",
+      "name": "Material Req",
+      "isActive": true,
+      "supportsLineItems": false,
+      "subtypes": [
+        {
+          "code": "ADVANCE_PAYMENT",
+          "name": "Advance Payment",
+          "isActive": true
+        },
+        {
+          "code": "CASH",
+          "name": "Cash",
+          "isActive": true
+        },
+        {
+          "code": "CREDIT",
+          "name": "Credit",
+          "isActive": true
+        },
+        {
+          "code": "PETTY_CASH",
+          "name": "Petty Cash",
+          "isActive": true
+        }
+      ],
+      "requiredFields": []
+    },
+    {
+      "code": "PL",
+      "name": "Payment Letter",
+      "isActive": true,
+      "supportsLineItems": false,
+      "subtypes": [],
+      "requiredFields": []
+    },
+    {
+      "code": "PO",
+      "name": "Purchase Order",
+      "isActive": true,
+      "supportsLineItems": false,
+      "subtypes": [],
+      "requiredFields": []
+    },
+    {
+      "code": "PR",
+      "name": "Payment Req",
+      "isActive": true,
+      "supportsLineItems": false,
+      "subtypes": [],
+      "requiredFields": []
+    },
+    {
+      "code": "QT",
+      "name": "Quotation",
+      "isActive": true,
+      "supportsLineItems": false,
+      "subtypes": [],
+      "requiredFields": []
+    },
+    {
+      "code": "RV",
+      "name": "Receiving Voucher",
+      "isActive": true,
+      "supportsLineItems": false,
+      "subtypes": [
+        {
+          "code": "CASH",
+          "name": "Cash",
+          "isActive": true
+        },
+        {
+          "code": "GRV",
+          "name": "Goods",
+          "isActive": true
+        },
+        {
+          "code": "RECEIPT",
+          "name": "Receipt",
+          "isActive": true
+        },
+        {
+          "code": "RELEASE",
+          "name": "Release",
+          "isActive": false
+        }
+      ],
+      "requiredFields": []
+    }
+  ],
+  "flows": [
+    {
+      "code": "AVK-ERR",
+      "name": "AVK: Equipment Rental Req (Ramzi, Marc)",
+      "isActive": false,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Mohamed Mahran <mohamed.mahran@ahmadiah-sa.com>"
+            },
+            {
+              "kind": "user",
+              "user": "Bernabie Rocha <bernabie.rocha@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 1,
+          "name": "Project Director",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Ramzi Abou Chakra <ramzi@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "PMV Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "AVR-COMP",
+      "name": "AVR: Comparison (Mohammad, George, Marc)",
+      "isActive": true,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Erro Almacen <dispatcher.pmv@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 1,
+          "name": "Level 1",
+          "signatureRequired": false,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Mohammad Mehieddine <mohammad.mehieddine@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "Level 2",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "George Azzi <george.azzi@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 3,
+          "name": "Level 3",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "AVR-CUSTODY",
+      "name": "AVR: Custody (Mohammad, Marc)",
+      "isActive": true,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Erro Almacen <dispatcher.pmv@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 1,
+          "name": "PMV Engineer",
+          "signatureRequired": false,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Mohammad Mehieddine <mohammad.mehieddine@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "PMV Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "COM-MR-BP",
+      "name": "Batching Plant Flow",
+      "isActive": false,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Mohamed Shawky <mohamed.shawky@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 1,
+          "name": "Level 2",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "userType",
+              "userType": "Engineer"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "PMV Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "BPK-WP03-TCH-KAFD-COMP",
+      "name": "Batching Plant Khobar, WP03, Tachalih, KAFD: Comparison (George, Marc)",
+      "isActive": false,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Erro Almacen <dispatcher.pmv@ahmadiah.com>"
+            },
+            {
+              "kind": "user",
+              "user": "Bernabie Rocha <bernabie.rocha@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 1,
+          "name": "Level 1",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "George Azzi <george.azzi@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "Level 2",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "COMP-AVK",
+      "name": "Comparison: AVK (Joemar, George, Marc)",
+      "isActive": true,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Bernabie Rocha <bernabie.rocha@ahmadiah.com>"
+            },
+            {
+              "kind": "user",
+              "user": "Mohamed Mahran <mohamed.mahran@ahmadiah-sa.com>"
+            },
+            {
+              "kind": "user",
+              "user": "Joemar Paraiso <joemar.paraiso@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 1,
+          "name": "PMV Engineer",
+          "signatureRequired": false,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Joemar Paraiso <joemar.paraiso@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "Workshop Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "George Azzi <george.azzi@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 3,
+          "name": "PMV Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "EDR-FL",
+      "name": "Edrasis: Flow ( Mahran, Hassanien, Fawaz, Marc)",
+      "isActive": false,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Mohamed Mahran <mohamed.mahran@ahmadiah-sa.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 1,
+          "name": "Engineer",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Ahmad Hassnien <ahmad.hassnien@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "Project Director",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Ahmad Fawaz <ahmad.fawaz@edrasisme.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 3,
+          "name": "PMV Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "ERR-UP-UNIQ-TR",
+      "name": "ERR - Uploader Unique Track",
+      "isActive": false,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Kamel Sayed <kamel.sayed@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": [
+            {
+              "name": "Eng. Marc",
+              "receiver": "Marc Baddour <marc.baddour@ahmadiah.com>",
+              "returnLevel": null,
+              "signatureRequired": true
+            }
+          ]
+        },
+        {
+          "level": 1,
+          "name": "Project Director",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "userType",
+              "userType": "Engineer"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "PMV Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "ERR-GEN",
+      "name": "ERR General Flow",
+      "isActive": true,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "userType",
+              "userType": "Clerk"
+            }
+          ],
+          "uniqueTracks": [
+            {
+              "name": "Marc Only",
+              "receiver": "Marc Baddour <marc.baddour@ahmadiah.com>",
+              "returnLevel": null,
+              "signatureRequired": true
+            }
+          ]
+        },
+        {
+          "level": 1,
+          "name": "Project Director",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "projectDirector"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "PMV Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "ERR-MARC-ONLY",
+      "name": "ERR without project director: Marc only",
+      "isActive": false,
+      "levels": [
+        {
+          "level": 1,
+          "name": "Level 1",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "ERR-PD-MARC",
+      "name": "ERR: project director, then Marc",
+      "isActive": false,
+      "levels": [
+        {
+          "level": 1,
+          "name": "Level 1",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "userType",
+              "userType": "Engineer"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "Level 2",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "KWT-LEGACY-2026-09",
+      "name": "Kuwait legacy 3-12 Sep 2026 (Aqueel alone) - old documents only",
+      "isActive": false,
+      "levels": [
+        {
+          "level": 1,
+          "name": "Level 1",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Aqueel Sayed <aqueel.sayed@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "KWT-MR-COMP",
+      "name": "Kuwait: MR and Comparison (George, Marc)",
+      "isActive": true,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Jad Kabalan <jad.kabalan@ahmadiah.com>"
+            },
+            {
+              "kind": "user",
+              "user": "Mohamed Shawky <mohamed.shawky@ahmadiah.com>"
+            },
+            {
+              "kind": "user",
+              "user": "Aqueel Sayed <aqueel.sayed@ahmadiah.com>"
+            },
+            {
+              "kind": "user",
+              "user": "Omar Merzek <omar.merzek@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 1,
+          "name": "Workshop Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "George Azzi <george.azzi@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "PMV Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "MR/COMP - AVR",
+      "name": "MR/COMP: AVR (Mohammad, George, Marc)",
+      "isActive": true,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Erro Almacen <dispatcher.pmv@ahmadiah.com>"
+            },
+            {
+              "kind": "user",
+              "user": "Mohammad Mehieddine <mohammad.mehieddine@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 1,
+          "name": "PMV Engineer",
+          "signatureRequired": false,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Mohammad Mehieddine <mohammad.mehieddine@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "Workshop Manager",
+          "signatureRequired": false,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "George Azzi <george.azzi@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 3,
+          "name": "PMV Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "MR-AVK",
+      "name": "MR: AVK (George, Ramzi, Marc)",
+      "isActive": true,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Bernabie Rocha <bernabie.rocha@ahmadiah.com>"
+            },
+            {
+              "kind": "user",
+              "user": "Mohamed Mahran <mohamed.mahran@ahmadiah-sa.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 1,
+          "name": "Workshop Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "George Azzi <george.azzi@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": "Project Director",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Ramzi Abou Chakra <ramzi@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 3,
+          "name": "PMV Manager",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    },
+    {
+      "code": "WP03-MR",
+      "name": "WP03: Material Req (Bernabie, Elias Nassar, Marc)",
+      "isActive": false,
+      "levels": [
+        {
+          "level": 0,
+          "name": "Uploader",
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Bernabie Rocha <bernabie.rocha@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 1,
+          "name": null,
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Elias Nassar <elias.nassar@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        },
+        {
+          "level": 2,
+          "name": null,
+          "signatureRequired": true,
+          "approvers": [
+            {
+              "kind": "user",
+              "user": "Marc Baddour <marc.baddour@ahmadiah.com>"
+            }
+          ],
+          "uniqueTracks": []
+        }
+      ]
+    }
+  ],
+  "flowAssignments": [
+    {
+      "documentType": "COMP",
+      "subtype": "any",
+      "project": "AVK - Avenues Mall Khobar",
+      "flow": "COMP-AVK - Comparison: AVK (Joemar, George, Marc)"
+    },
+    {
+      "documentType": "MR",
+      "subtype": "any",
+      "project": "any",
+      "flow": "KWT-MR-COMP - Kuwait: MR and Comparison (George, Marc)"
+    },
+    {
+      "documentType": "COMP",
+      "subtype": "any",
+      "project": "AVR - Avenues Towers Riyadh",
+      "flow": "AVR-COMP - AVR: Comparison (Mohammad, George, Marc)"
+    },
+    {
+      "documentType": "CUSTODY",
+      "subtype": "any",
+      "project": "AVR - Avenues Towers Riyadh",
+      "flow": "AVR-CUSTODY - AVR: Custody (Mohammad, Marc)"
+    },
+    {
+      "documentType": "ERR",
+      "subtype": "any",
+      "project": "any",
+      "flow": "ERR-GEN - ERR General Flow"
+    },
+    {
+      "documentType": "COMP",
+      "subtype": "any",
+      "project": "any",
+      "flow": "KWT-MR-COMP - Kuwait: MR and Comparison (George, Marc)"
+    },
+    {
+      "documentType": "MR",
+      "subtype": "any",
+      "project": "AVR - Avenues Towers Riyadh",
+      "flow": "MR/COMP - AVR - MR/COMP: AVR (Mohammad, George, Marc)"
+    },
+    {
+      "documentType": "MR",
+      "subtype": "any",
+      "project": "AVK - Avenues Mall Khobar",
+      "flow": "MR-AVK - MR: AVK (George, Ramzi, Marc)"
+    }
+  ],
+  "processes": [
+    {
+      "name": "Cash MR",
+      "isActive": false,
+      "version": 1,
+      "tree": [
+        {
+          "step": 1,
+          "name": "Material Req (Cash)",
+          "document": "MR / CASH (Cash)",
+          "reference": null,
+          "delayHours": 0,
+          "allowMultipleUploads": false,
+          "next": []
+        }
+      ]
+    },
+    {
+      "name": "Comparison to Invoice",
+      "isActive": true,
+      "version": 3,
+      "tree": [
+        {
+          "step": 1,
+          "name": "Comparison",
+          "document": "COMP",
+          "reference": null,
+          "delayHours": 0,
+          "allowMultipleUploads": false,
+          "next": [
+            {
+              "step": 2,
+              "name": "Material Req (Cash)",
+              "document": "MR / CASH (Cash)",
+              "reference": "INV",
+              "delayHours": 0,
+              "allowMultipleUploads": true,
+              "next": []
+            },
+            {
+              "step": 3,
+              "name": "Material Req (Credit)",
+              "document": "MR / CREDIT (Credit)",
+              "reference": null,
+              "delayHours": 0,
+              "allowMultipleUploads": true,
+              "next": [
+                {
+                  "step": 4,
+                  "name": "Purchase Order",
+                  "document": "PO",
+                  "reference": null,
+                  "delayHours": 0,
+                  "allowMultipleUploads": false,
+                  "next": [
+                    {
+                      "step": 5,
+                      "name": "Invoice",
+                      "document": "INV",
+                      "reference": null,
+                      "delayHours": 0,
+                      "allowMultipleUploads": false,
+                      "next": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Credit MR to Invoice",
+      "isActive": true,
+      "version": 2,
+      "tree": [
+        {
+          "step": 1,
+          "name": "Material Req (Credit)",
+          "document": "MR / CREDIT (Credit)",
+          "reference": null,
+          "delayHours": 0,
+          "allowMultipleUploads": false,
+          "next": [
+            {
+              "step": 2,
+              "name": "Purchase Order",
+              "document": "PO",
+              "reference": null,
+              "delayHours": 0,
+              "allowMultipleUploads": false,
+              "next": [
+                {
+                  "step": 3,
+                  "name": "Invoice",
+                  "document": "INV",
+                  "reference": null,
+                  "delayHours": 0,
+                  "allowMultipleUploads": false,
+                  "next": [
+                    {
+                      "step": 4,
+                      "name": "GRV - Goods receiving vouchers",
+                      "document": "RV / GRV (Goods)",
+                      "reference": null,
+                      "delayHours": 0,
+                      "allowMultipleUploads": false,
+                      "next": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ERR to Receipt",
+      "isActive": true,
+      "version": 2,
+      "tree": [
+        {
+          "step": 1,
+          "name": "Eq Rental Req",
+          "document": "ERR",
+          "reference": "QT",
+          "delayHours": 0,
+          "allowMultipleUploads": false,
+          "next": [
+            {
+              "step": 2,
+              "name": "Release voucher",
+              "document": "RV / RELEASE (Release)",
+              "reference": null,
+              "delayHours": 0,
+              "allowMultipleUploads": false,
+              "next": [
+                {
+                  "step": 3,
+                  "name": "Receipt voucher",
+                  "document": "ERV",
+                  "reference": null,
+                  "delayHours": 0,
+                  "allowMultipleUploads": false,
+                  "next": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MR Advance - PO",
+      "isActive": true,
+      "version": 1,
+      "tree": [
+        {
+          "step": 1,
+          "name": "MR - Advanced",
+          "document": "MR / ADVANCE_PAYMENT (Advance Payment)",
+          "reference": null,
+          "delayHours": 0,
+          "allowMultipleUploads": false,
+          "next": [
+            {
+              "step": 2,
+              "name": "Purchase Order",
+              "document": "PO",
+              "reference": null,
+              "delayHours": 0,
+              "allowMultipleUploads": false,
+              "next": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

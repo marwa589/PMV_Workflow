@@ -9,7 +9,7 @@ export default async function AdminProcessesPage() {
   const session = await requirePermission("processes.manage");
 
   return (
-    <DashboardShell role={session.userType} userName={session.name} title="Process Setup" subtitle="Design ordered sequences of documents">
+    <DashboardShell role={session.userType} userName={session.name} title="Process Setup" subtitle="Design document trees: a start document and its optional next documents">
       <ProcessesManager />
     </DashboardShell>
   );

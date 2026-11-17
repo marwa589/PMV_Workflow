@@ -1,12 +1,14 @@
 import { DocumentStatus } from "@prisma/client";
 import type { DocumentListItem } from "@/components/document-list-table";
 import type { DocumentRow } from "@/lib/document-queries";
+import { TONE_CLASSES } from "@/lib/status-colors";
 import { matchesDocumentSearch, parseSearchQuery } from "@/lib/document-search";
 import {
   parseDocumentStatusFilter,
   parseDocumentSubtypeFilter,
   parseDocumentTypeFilter,
   parseDownloadStatusFilter,
+  parseMultiFilter,
   parseProjectFilter,
   type DocumentStatusFilterValue,
   type DownloadStatusFilter,
@@ -15,11 +17,14 @@ import {
 export type ListSearchParams = Record<string, string | string[] | undefined> | undefined;
 
 // What the filter bar sends in the URL: ?status=&documentType=&documentSubtype=&project=&search=&downloadStatus=&approvalFrom=&approvalTo=
+// Status, type, sub type, project and location accept several values (?documentType=MR&documentType=PO);
+// an empty list means "all".
 export type ListFilters = {
-  status: DocumentStatusFilterValue;
-  documentType: string; // document type code, e.g. "MR"
-  documentSubtype: string; // sub type code, e.g. "CASH"
-  project: string; // project id
+  status: Array<Exclude<DocumentStatusFilterValue, "">>;
+  documentType: string[]; // document type codes, e.g. "MR"
+  documentSubtype: string[]; // sub type codes, e.g. "CASH"
+  project: string[]; // project ids
+  location: string[]; // location ids (a document's location is its project's location)
   downloadStatus: DownloadStatusFilter;
   approvalFrom: string;
   approvalTo: string;
@@ -30,12 +35,15 @@ function first(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
 }
 
+const matchesAny = (selected: string[], value: string | null | undefined) => selected.length === 0 || (value != null && selected.includes(value));
+
 export function parseListFilters(params: ListSearchParams): ListFilters {
   return {
-    status: parseDocumentStatusFilter(first(params?.status)),
-    documentType: parseDocumentTypeFilter(first(params?.documentType)),
-    documentSubtype: parseDocumentSubtypeFilter(first(params?.documentSubtype)),
-    project: parseProjectFilter(first(params?.project)),
+    status: parseMultiFilter(params?.status, parseDocumentStatusFilter) as ListFilters["status"],
+    documentType: parseMultiFilter(params?.documentType, parseDocumentTypeFilter),
+    documentSubtype: parseMultiFilter(params?.documentSubtype, parseDocumentSubtypeFilter),
+    project: parseMultiFilter(params?.project, parseProjectFilter),
+    location: parseMultiFilter(params?.location, parseProjectFilter),
     downloadStatus: parseDownloadStatusFilter(first(params?.downloadStatus)),
     approvalFrom: first(params?.approvalFrom),
     approvalTo: first(params?.approvalTo),
@@ -55,6 +63,7 @@ function searchTextOf(row: DocumentRow) {
     projectCode: row.project?.code,
     currentApproverName: row.currentApprover?.name,
     rejectionComments: row.rejection?.comments,
+    rejectedByName: row.rejection?.performedByName,
   };
 }
 
@@ -63,10 +72,11 @@ export function applyListFilters(rows: DocumentRow[], filters: ListFilters, opti
   const to = filters.approvalTo ? new Date(filters.approvalTo).getTime() : null;
 
   return rows
-    .filter((row) => options.ignoreStatus || !filters.status || row.status === filters.status)
-    .filter((row) => !filters.documentType || row.documentType.code === filters.documentType)
-    .filter((row) => !filters.documentSubtype || row.documentSubtype?.code === filters.documentSubtype)
-    .filter((row) => !filters.project || row.project?.id === filters.project)
+    .filter((row) => options.ignoreStatus || matchesAny(filters.status, row.status))
+    .filter((row) => matchesAny(filters.documentType, row.documentType.code))
+    .filter((row) => matchesAny(filters.documentSubtype, row.documentSubtype?.code))
+    .filter((row) => matchesAny(filters.project, row.project?.id))
+    .filter((row) => matchesAny(filters.location, row.project?.locationId))
     .filter((row) => !filters.downloadStatus || (filters.downloadStatus === "DOWNLOADED" ? Boolean(row.downloadedAt) : !row.downloadedAt))
     .filter((row) => {
       if (from === null && to === null) return true;
@@ -91,13 +101,18 @@ export function toListItem(row: DocumentRow): DocumentListItem {
     documentSubtypeName: row.documentSubtype?.name ?? null,
     projectLabel: row.project ? `${row.project.code} - ${row.project.name}` : null,
     rejectionComments: row.rejection?.comments ?? null,
+    rejectedByName: row.rejection?.performedByName ?? null,
     processStatus: row.processStatus,
     processStatusLabel: row.processStatusLabel ?? "No Process",
     currentVersion: row.currentVersion,
     currentApproverName: row.currentApprover?.name ?? null,
+    currentApproverNames: row.currentApprover?.names ?? [],
     downloadedAt: row.downloadedAt,
+    receivedAt: row.receivedAt,
+    receiptConfirmationRequired: row.receiptConfirmationRequired,
     approvalDate: row.approvedAt,
     dateLabel: dateFormat.format(row.updatedAt),
+    sortTime: row.createdAt.getTime(),
   };
 }
 
@@ -126,16 +141,18 @@ export function buildSummaryCards(rows: DocumentRow[], mode: "overview" | "byTyp
   const count = (status: DocumentStatus) => String(rows.filter((row) => row.status === status).length);
   return [
     total,
-    { label: "Pending", value: count(DocumentStatus.PENDING), tone: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200" },
-    { label: "Approved", value: count(DocumentStatus.APPROVED), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
-    { label: "Rejected", value: count(DocumentStatus.CANCELLED), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
+    { label: "Pending", value: count(DocumentStatus.PENDING), tone: TONE_CLASSES.yellow },
+    { label: "Approved", value: count(DocumentStatus.APPROVED), tone: TONE_CLASSES.blue },
+    { label: "Rejected", value: count(DocumentStatus.CANCELLED), tone: TONE_CLASSES.red },
   ];
 }
 
 /** Page title that follows the active filters, e.g. "Material Req - Cash". */
 export function describeFilters(filters: ListFilters, documentTypes: Array<{ code: string; name: string; subtypes: Array<{ code: string; name: string }> }>): string {
-  const type = documentTypes.find((candidate) => candidate.code === filters.documentType);
+  // A title only makes sense for exactly one type (and at most one sub type).
+  if (filters.documentType.length !== 1) return "";
+  const type = documentTypes.find((candidate) => candidate.code === filters.documentType[0]);
   if (!type) return "";
-  const subtype = type.subtypes.find((candidate) => candidate.code === filters.documentSubtype);
+  const subtype = filters.documentSubtype.length === 1 ? type.subtypes.find((candidate) => candidate.code === filters.documentSubtype[0]) : undefined;
   return subtype ? `${type.name} - ${subtype.name}` : type.name;
 }

@@ -20,7 +20,8 @@ export default async function AdminPendingApprovalsPage({ searchParams }: any) {
       emptyMessage="No pending approvals."
       summaryMode="byType"
       variant="pending"
-      table={{ allowReview: false }}
+      // Admin users may act at any level: Review opens a document, and ticking several reviews them together.
+      table={{ allowReview: true }}
     />
   );
 }

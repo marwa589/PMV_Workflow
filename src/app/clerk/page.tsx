@@ -7,8 +7,10 @@ import PageSummaryCards from "@/components/page-summary-cards";
 import { requireUserType } from "@/lib/auth/guards";
 import { USER_TYPE } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
-import { getDocumentsForClerk } from "@/lib/document-queries";
+import { getDocumentsForClerk, withEligibleApprovers } from "@/lib/document-queries";
 import { toListItem } from "@/lib/document-list";
+import { withDownloadTracking } from "@/lib/download-tracking";
+import { TONE_CLASSES } from "@/lib/status-colors";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +27,7 @@ export default async function ClerkDashboardPage() {
     }),
   ]);
 
-  const recentDocuments = data.documents.slice(0, 6);
+  const recentDocuments = await withDownloadTracking(await withEligibleApprovers(data.documents.slice(0, 6)), session.userId);
   const revisionRequired = data.documents.filter((doc) => doc.status === DocumentStatus.REVISION_REQUIRED).length;
 
   return (
@@ -49,10 +51,10 @@ export default async function ClerkDashboardPage() {
       <PageSummaryCards
         cards={[
           { label: "Total Documents", value: String(data.total), tone: "bg-slate-900 text-white" },
-          { label: "Pending", value: String(data.pending), tone: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200" },
-          { label: "Revision Required", value: String(revisionRequired), tone: "bg-violet-50 text-violet-900 ring-1 ring-violet-200" },
-          { label: "Approved", value: String(data.approved), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
-          { label: "Rejected", value: String(data.rejected), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
+          { label: "Pending", value: String(data.pending), tone: TONE_CLASSES.yellow },
+          { label: "Revision Required", value: String(revisionRequired), tone: TONE_CLASSES.orange },
+          { label: "Approved", value: String(data.approved), tone: TONE_CLASSES.blue },
+          { label: "Rejected", value: String(data.rejected), tone: TONE_CLASSES.red },
         ]}
       />
 

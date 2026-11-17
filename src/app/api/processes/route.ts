@@ -1,12 +1,18 @@
 // src/app/api/processes/route.ts
+import { DocumentStatus, ProcessStatus, ProcessStepSource } from "@prisma/client";
+import { getWhoCanUploadByRun } from "@/lib/workflow/who-can-upload";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { buildProcessVisibilityWhere, userHasPermission } from "@/lib/auth/access";
-import { validateCsrf } from "@/lib/csrf";
+import { buildProcessVisibilityWhere } from "@/lib/auth/access";
 import { prisma } from "@/lib/prisma";
-import { startProcess } from "@/lib/workflow/processes";
-import { WorkflowError } from "@/lib/workflow/errors";
 import { getProcessStatusLabel } from "@/lib/process-status";
+import { USER_TYPE } from "@/lib/auth/roles";
+import { validateCsrf } from "@/lib/csrf";
+import { writeAuditLog } from "@/lib/audit";
+import { dispatchWorkflowEffects } from "@/lib/workflow/effects";
+import { WorkflowError } from "@/lib/workflow/errors";
+import type { WorkflowEffects } from "@/lib/workflow/engine";
+import { getStartableProcesses, linkDocumentToStep, nodeMatches, startProcessRun } from "@/lib/workflow/processes";
 
 export const runtime = "nodejs";
 
@@ -14,7 +20,7 @@ const runSelect = {
   id: true,
   reference: true,
   status: true,
-  currentStepNumber: true,
+  currentStepId: true,
   startedAt: true,
   completedAt: true,
   processDefinition: {
@@ -25,92 +31,123 @@ const runSelect = {
         orderBy: { stepNumber: "asc" },
         select: {
           id: true,
-          stepNumber: true,
+          parentStepId: true,
+          delayHours: true,
           documentType: { select: { code: true } },
           documentSubtype: { select: { code: true } },
         },
       },
     },
   },
+  stepDocuments: {
+    where: { isCurrent: true },
+    select: { processStepId: true, isCurrent: true, document: { select: { status: true, approvedAt: true } } },
+  },
   project: { select: { id: true, code: true, name: true } },
   startedBy: { select: { id: true, name: true } },
+  parentInstance: { select: { id: true, reference: true } },
+  followedDocument: { select: { id: true, documentNumber: true } },
+  _count: { select: { followUps: true } },
 } as const;
 
-// Process runs the person may see, plus the processes they are allowed to start.
+// Process runs the person may see. A run starts when the root document of a process is uploaded (an Admin user can
+// also start one on purpose from the Process Runs page, see `startable`).
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
 
   const visibility = await buildProcessVisibilityWhere(session);
-  const [runs, definitions] = await Promise.all([
-    prisma.processInstance.findMany({ where: visibility, select: runSelect, orderBy: { startedAt: "desc" }, take: 200 }),
-    prisma.processDefinition.findMany({
-      where: { isActive: true },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        steps: { select: { documentType: { select: { isActive: true } }, documentSubtype: { select: { isActive: true } } } },
-      },
-      orderBy: { name: "asc" },
-    }),
-  ]);
+  const runs = await prisma.processInstance.findMany({ where: visibility, select: runSelect, orderBy: { startedAt: "desc" }, take: 200 });
 
-  // A person can start a process when they hold processes.start for it (any project they might choose).
-  const startable = [];
-  for (const definition of definitions) {
-    if (definition.steps.some((step) => !step.documentType.isActive || (step.documentSubtype && !step.documentSubtype.isActive))) continue;
-    if (await userHasPermission(session, "processes.start", { processDefinitionId: definition.id })) startable.push(definition);
-  }
+  const startable = session.userType === USER_TYPE.ADMIN ? await getStartableProcesses(prisma) : [];
+  // Admin only: who may upload the next document of each run that is waiting for one.
+  const whoCanUpload = session.userType === USER_TYPE.ADMIN ? await getWhoCanUploadByRun(prisma, runs.map((run) => run.id)) : null;
 
   return NextResponse.json({
-    runs: runs.map((run) => {
-      return {
-        id: run.id,
-        reference: run.reference,
-        status: run.status,
-        statusLabel: getProcessStatusLabel(run.status, run.currentStepNumber, run.processDefinition.steps),
-        currentStepNumber: run.currentStepNumber,
-        totalSteps: run.processDefinition.steps.length,
-        processDefinition: { id: run.processDefinition.id, name: run.processDefinition.name },
-        project: run.project,
-        startedBy: run.startedBy,
-        startedAt: run.startedAt.toISOString(),
-        completedAt: run.completedAt?.toISOString() ?? null,
-      };
-    }),
-    startable: startable.map(({ id, name, description }) => ({ id, name, description })),
+    startable,
+    runs: runs.map((run) => ({
+      id: run.id,
+      reference: run.reference,
+      status: run.status,
+      statusLabel: getProcessStatusLabel(run, run.processDefinition.steps, run.stepDocuments),
+      processDefinition: { id: run.processDefinition.id, name: run.processDefinition.name },
+      project: run.project,
+      startedBy: run.startedBy,
+      startedAt: run.startedAt.toISOString(),
+      completedAt: run.completedAt?.toISOString() ?? null,
+      follows: run.parentInstance ? { runId: run.parentInstance.id, reference: run.parentInstance.reference, documentNumber: run.followedDocument?.documentNumber ?? null } : null,
+      followUpCount: run._count.followUps,
+      whoCanUpload: whoCanUpload?.get(run.id) ?? [],
+    })),
   });
 }
 
-// Start a run. Needs processes.start for this process and project; documents are then added step by step.
+// Admin only: start a run on purpose with a document that is ALREADY in the system and approved.
+// Corrective action: with `corrective: true` (and a written reason) the document may already be used in another run;
+// the earlier runs are left untouched as history and a new, independent run is started.
+// (A new file for the first document goes through POST /api/documents with startProcessDefinitionId.)
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+  if (session.userType !== USER_TYPE.ADMIN) return NextResponse.json({ message: "Only an Admin user can start a process by hand." }, { status: 403 });
   if (!validateCsrf(request)) return NextResponse.json({ message: "Invalid CSRF token." }, { status: 403 });
 
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  const body = (await request.json().catch(() => null)) as { processDefinitionId?: unknown; documentId?: unknown; notify?: unknown; corrective?: unknown; reason?: unknown } | null;
   const processDefinitionId = typeof body?.processDefinitionId === "string" ? body.processDefinitionId.trim() : "";
-  const projectId = typeof body?.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : null;
-  const reference = typeof body?.reference === "string" && body.reference.trim() ? body.reference.trim().slice(0, 200) : null;
-
-  if (!processDefinitionId) return NextResponse.json({ message: "Choose the process to start." }, { status: 400 });
-
-  const project = projectId
-    ? await prisma.project.findFirst({ where: { id: projectId, isActive: true }, select: { locationId: true } })
-    : null;
-  if (projectId && !project) return NextResponse.json({ message: "This project is not available." }, { status: 400 });
-
-  const allowed = await userHasPermission(session, "processes.start", {
-    processDefinitionId,
-    projectId,
-    locationId: project?.locationId ?? null,
-  });
-  if (!allowed) return NextResponse.json({ message: "You are not allowed to start this process for this project." }, { status: 403 });
+  const documentId = typeof body?.documentId === "string" ? body.documentId.trim() : "";
+  if (!processDefinitionId || !documentId) return NextResponse.json({ message: "Choose a process and a document." }, { status: 400 });
+  const corrective = body?.corrective === true;
+  const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
+  if (corrective && reason.length < 5) return NextResponse.json({ message: "Enter the reason for this corrective run." }, { status: 400 });
 
   try {
-    const run = await prisma.$transaction((tx) => startProcess(tx, { processDefinitionId, projectId, reference, startedById: session.userId }));
-    return NextResponse.json({ run: { id: run.id, currentStepNumber: run.currentStepNumber, status: run.status } }, { status: 201 });
+    const process = (await getStartableProcesses(prisma)).find((candidate) => candidate.id === processDefinitionId);
+    if (!process) throw new WorkflowError("This process cannot be started.", 404);
+
+    const document = await prisma.document.findUnique({
+      where: { id: documentId },
+      select: { id: true, documentNumber: true, status: true, isReference: true, projectId: true, documentTypeId: true, documentSubtypeId: true },
+    });
+    if (!document || document.isReference) throw new WorkflowError("Document not found.", 404);
+    if (document.status !== DocumentStatus.APPROVED) throw new WorkflowError("Only an approved document can start a process this way.", 400);
+    if (!nodeMatches({ documentTypeId: process.documentTypeId, documentSubtypeId: process.documentSubtypeId }, document)) {
+      throw new WorkflowError("This document is not the type that starts this process.", 400);
+    }
+    const used = await prisma.processStepDocument.count({
+      where: { documentId, isCurrent: true, processInstance: { status: { not: ProcessStatus.CANCELLED } } },
+    });
+    if (used > 0 && !corrective) throw new WorkflowError("This document is already used in a process run. Use a corrective run to start a new one.", 409);
+
+    const effects: WorkflowEffects = { notifications: [], emailEvents: [] };
+    const run = await prisma.$transaction(async (tx) => {
+      // The run is named after the document and belongs to the document's project.
+      const created = await startProcessRun(tx, {
+        rootStepId: process.rootStepId,
+        processDefinitionId: process.id,
+        projectId: document.projectId,
+        reference: document.documentNumber,
+        startedById: session.userId,
+      });
+      await linkDocumentToStep(tx, {
+        processInstanceId: created.id,
+        stepId: process.rootStepId,
+        documentId: document.id,
+        source: ProcessStepSource.EXISTING,
+        linkedById: session.userId,
+      }, effects);
+      return created;
+    });
+    if (corrective && used > 0) {
+      await writeAuditLog({
+        documentId: document.id,
+        performedById: session.userId,
+        action: "PROCESS_CORRECTIVE_RUN_STARTED",
+        details: JSON.stringify({ processDefinitionId: process.id, processRunId: run.id, earlierRuns: used, reason }),
+      });
+    }
+    if (body?.notify === true) await dispatchWorkflowEffects(effects);
+
+    return NextResponse.json({ message: "Process started.", processRunId: run.id }, { status: 201 });
   } catch (error) {
     if (error instanceof WorkflowError) return NextResponse.json({ message: error.message }, { status: error.status });
     return NextResponse.json({ message: "Unable to start the process." }, { status: 500 });

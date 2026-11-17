@@ -5,6 +5,9 @@ import { getSession } from "@/lib/auth/session";
 import { userHasPermissionForDocument } from "@/lib/auth/access";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
+import { runInBackground } from "@/lib/background";
+import { createNotification } from "@/lib/notifications";
+import { getDeletionReviewerIds } from "@/lib/deletion-review";
 
 export const runtime = "nodejs";
 
@@ -36,7 +39,7 @@ export async function POST(request: Request) {
   for (const documentId of ids) {
     const document = await prisma.document.findUnique({
       where: { id: documentId },
-      select: { id: true, projectId: true, documentTypeId: true, documentSubtypeId: true, project: { select: { locationId: true } } },
+      select: { id: true, documentNumber: true, title: true, projectId: true, documentTypeId: true, documentSubtypeId: true },
     });
 
     if (!document) {
@@ -70,6 +73,18 @@ export async function POST(request: Request) {
       performedById: session.userId,
       action: "DELETION_REQUESTED",
       details: JSON.stringify({ requestedByUserType: session.userType, documentId: document.id }),
+    });
+
+    // Tell the people who may decide (Admin users and "Review deletion" holders covering the document).
+    const reviewerIds = await getDeletionReviewerIds(document.id, session.userId);
+    runInBackground(async () => {
+      await Promise.all(reviewerIds.map((userId) => createNotification({
+        userId,
+        type: "DELETION_REQUESTED",
+        title: "Deletion requested",
+        message: `${document.documentNumber} - ${document.title}`,
+        documentId: document.id,
+      })));
     });
 
     createdCount += 1;

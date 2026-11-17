@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Search, X } from "lucide-react";
 import { callApi } from "@/lib/admin-client";
-import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton } from "@/components/admin/admin-ui";
+import { Banner, Card, Empty, Field, Pill, dangerButton, inputClass, primaryButton, secondaryButton } from "@/components/admin/admin-ui";
+import { Pager, usePagination } from "@/components/pager";
 
 type Named = { id: string; name: string };
 type Coded = Named & { code: string };
@@ -20,17 +21,16 @@ type Assignment = {
   location: Named | null;
   projects: Coded[];
   documentTypeScopes: AssignmentTypeScope[];
-  processes: Named[];
 };
 type TypeOption = Coded & { subtypes: Coded[] };
 type Lookups = {
   users: Array<{ id: string; name: string; email: string; userType: { code: string; name: string } }>;
   roles: Named[];
-  companies: Named[];
+  // projectCount: how many projects belong to the company (a role for the company covers those).
+  companies: Array<Named & { projectCount: number }>;
   projects: Coded[];
   locations: Named[];
   documentTypes: TypeOption[];
-  processes: Named[];
 };
 type FormState = {
   userId: string;
@@ -39,7 +39,6 @@ type FormState = {
   locationId: string;
   projectIds: string[];
   documentTypeScopes: Array<{ documentTypeId: string; allSubtypes: boolean; subtypeIds: string[] }>;
-  processDefinitionIds: string[];
 };
 
 const blank = (userId = ""): FormState => ({
@@ -49,7 +48,6 @@ const blank = (userId = ""): FormState => ({
   locationId: "",
   projectIds: [],
   documentTypeScopes: [],
-  processDefinitionIds: [],
 });
 
 function MultiSelect({
@@ -175,14 +173,22 @@ function MultiSelect({
 }
 
 /**
- * One role assignment can cover several projects, processes, and document types. Each document type
+ * One role assignment can cover several projects and document types. Each document type
  * independently covers all subtypes or only the explicitly selected subtypes.
  */
 export default function AssignmentsManager({ initialUserId = "" }: { initialUserId?: string }) {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [lookups, setLookups] = useState<Lookups | null>(null);
   const [filterUserId, setFilterUserId] = useState(initialUserId);
+  const [assignmentQuery, setAssignmentQuery] = useState("");
+  // Users whose card was opened or closed by hand, for the current search / user filter (see `isUserOpen`).
+  const [toggledUsers, setToggledUsers] = useState<{ context: string; ids: Set<string> }>({ context: "", ids: new Set() });
+  // The "give a role" form stays folded away until it is needed, so the list starts near the top of the page.
+  const [formOpen, setFormOpen] = useState(Boolean(initialUserId));
+  const formRef = useRef<HTMLDivElement | null>(null);
   const [form, setForm] = useState<FormState>(() => blank(initialUserId));
+  // The assignment being edited (null = the form gives a new role).
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -221,11 +227,60 @@ export default function AssignmentsManager({ initialUserId = "" }: { initialUser
     applyLoadResult(await load());
   }
 
+  function showForm() {
+    setFormOpen(true);
+    // After the form has opened.
+    window.setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  }
+
+  // Edit: the form is filled with what the assignment has now; saving replaces its role and scope (the person stays the same).
+  function startEdit(item: Assignment) {
+    setError(null);
+    setNotice(null);
+    setEditingId(item.id);
+    setForm({
+      userId: item.user.id,
+      roleId: item.role.id,
+      companyId: item.company?.id ?? "",
+      locationId: item.location?.id ?? "",
+      projectIds: item.projects.map((project) => project.id),
+      documentTypeScopes: item.documentTypeScopes.map((scope) => ({
+        documentTypeId: scope.documentType.id,
+        allSubtypes: scope.allSubtypes,
+        subtypeIds: scope.subtypes.map((subtype) => subtype.id),
+      })),
+    });
+    showForm();
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setForm(blank(filterUserId));
+  }
+
+  async function saveEdit() {
+    if (!editingId) return;
+    setError(null);
+    setNotice(null);
+    const result = await callApi("/api/admin/assignments", "PATCH", {
+      id: editingId,
+      ...form,
+      companyId: form.companyId || null,
+      locationId: form.locationId || null,
+    });
+    if (!result.ok) return setError(result.message);
+    setNotice("Assignment updated.");
+    setEditingId(null);
+    setForm(blank(form.userId));
+    applyLoadResult(await load());
+  }
+
   async function remove(item: Assignment) {
     setError(null);
     setNotice(null);
     const result = await callApi("/api/admin/assignments", "DELETE", { id: item.id });
     if (!result.ok) return setError(result.message);
+    if (editingId === item.id) cancelEdit();
     setNotice("Assignment removed.");
     applyLoadResult(await load());
   }
@@ -253,22 +308,90 @@ export default function AssignmentsManager({ initialUserId = "" }: { initialUser
           ? `Type: ${scope.documentType.name} (all subtypes)`
           : `Type: ${scope.documentType.name} (${scope.subtypes.map((subtype) => subtype.name).join(", ")})`,
       ),
-      ...item.processes.map((process) => `Process: ${process.name}`),
     ].filter(Boolean) as string[];
     return parts.length ? parts : ["Everything (no restriction)"];
   };
+
+  // Live search as you type: every word must appear in the user, email, role or scope (company, project, type...).
+  const visibleAssignments = useMemo(() => {
+    const terms = assignmentQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return assignments;
+    return assignments.filter((item) => {
+      const text = [item.user.name, item.user.email, item.role.name, ...scopeText(item)].join(" ").toLowerCase();
+      return terms.every((term) => text.includes(term));
+    });
+    // scopeText only reads the item it is given.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignments, assignmentQuery]);
+
+  // One card per user: the user's assignments are grouped by role, and each role lists its scopes one under the other.
+  const groupedByUser = useMemo(() => {
+    const users = new Map<string, { user: Assignment["user"]; roles: Map<string, { role: Named; items: Assignment[] }> }>();
+    for (const item of visibleAssignments) {
+      const entry = users.get(item.user.id) ?? { user: item.user, roles: new Map() };
+      const roleEntry = entry.roles.get(item.role.id) ?? { role: item.role, items: [] };
+      roleEntry.items.push(item);
+      entry.roles.set(item.role.id, roleEntry);
+      users.set(item.user.id, entry);
+    }
+    return [...users.values()]
+      .map((entry) => ({ user: entry.user, roles: [...entry.roles.values()].sort((a, b) => a.role.name.localeCompare(b.role.name)) }))
+      .sort((a, b) => a.user.name.localeCompare(b.user.name));
+  }, [visibleAssignments]);
+
+  // Cards start folded so a long list stays easy to scan. They start open while searching, when one user is chosen,
+  // or when only a few users are listed. A card opened or closed by hand stays that way until the search changes.
+  const listContext = `${assignmentQuery.trim().toLowerCase()}|${filterUserId}`;
+  const openByDefault = assignmentQuery.trim() !== "" || filterUserId !== "" || groupedByUser.length <= 3;
+  const toggled = toggledUsers.context === listContext ? toggledUsers.ids : new Set<string>();
+  const isUserOpen = (userId: string) => openByDefault !== toggled.has(userId);
+
+  function toggleUser(userId: string) {
+    const next = new Set(toggled);
+    if (next.has(userId)) next.delete(userId);
+    else next.add(userId);
+    setToggledUsers({ context: listContext, ids: next });
+  }
+
+  function setAllUsersOpen(open: boolean) {
+    // Every card differs from the default, or none does.
+    setToggledUsers({ context: listContext, ids: open === openByDefault ? new Set() : new Set(groupedByUser.map((entry) => entry.user.id)) });
+  }
+
+  const userPages = usePagination(groupedByUser, { storageKey: "assignments-users", initialPageSize: 25 });
+  const totalShownAssignments = groupedByUser.reduce((sum, entry) => sum + entry.roles.reduce((count, role) => count + role.items.length, 0), 0);
+
+  function addRoleFor(userId: string) {
+    setEditingId(null);
+    setForm({ ...blank(userId) });
+    showForm();
+  }
 
   return (
     <div className="space-y-6">
       {error ? <Banner kind="error">{error}</Banner> : null}
       {notice ? <Banner kind="success">{notice}</Banner> : null}
 
-      <Card title="Give a role to a user" subtitle="Leave a scope empty for no restriction. Multiple projects, document types, and processes can be selected; subtype access is configured separately for each document type.">
-        {lookups ? (
+      <div ref={formRef} className="scroll-mt-6">
+      <Card
+        title={editingId ? "Edit assigned role" : "Give a role to a user"}
+        subtitle={formOpen || editingId ? (editingId ? "Change the role or any part of its scope, then save. The person stays the same. Leave a scope empty for no restriction." : "Leave a scope empty for no restriction. Multiple projects and document types can be selected; subtype access is configured separately for each document type.") : undefined}
+        actions={
+          editingId ? null : (
+            <button type="button" className={formOpen ? secondaryButton : primaryButton} onClick={() => (formOpen ? setFormOpen(false) : showForm())} aria-expanded={formOpen}>
+              {formOpen ? "Hide form" : "Give a role"}
+              <ChevronDown className={`h-4 w-4 transition-transform ${formOpen ? "rotate-180" : ""}`} />
+            </button>
+          )
+        }
+      >
+        {!formOpen && !editingId ? (
+          <p className="text-sm text-slate-500">Open the form to give someone a role, or use &quot;Add role&quot; on a user below.</p>
+        ) : lookups ? (
           <>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <Field label="User">
-                <select value={form.userId} onChange={(event) => setForm({ ...form, userId: event.target.value })} className={inputClass}>
+                <select value={form.userId} disabled={Boolean(editingId)} onChange={(event) => setForm({ ...form, userId: event.target.value })} className={inputClass}>
                   <option value="">Select a user</option>
                   {lookups.users.map((user) => <option key={user.id} value={user.id}>{user.name} ({user.userType.name})</option>)}
                 </select>
@@ -279,10 +402,19 @@ export default function AssignmentsManager({ initialUserId = "" }: { initialUser
                   {lookups.roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
                 </select>
               </Field>
-              <Field label="Company">
+              <Field
+                label="Company"
+                hint={(() => {
+                  const company = lookups.companies.find((item) => item.id === form.companyId);
+                  if (!company) return undefined;
+                  return company.projectCount > 0
+                    ? `Covers the ${company.projectCount} project(s) of ${company.name}.`
+                    : `${company.name} has no projects yet: link projects to it in Projects & Locations, otherwise this role covers nothing.`;
+                })()}
+              >
                 <select value={form.companyId} onChange={(event) => setForm({ ...form, companyId: event.target.value })} className={inputClass}>
                   <option value="">Any company</option>
-                  {lookups.companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+                  {lookups.companies.map((company) => <option key={company.id} value={company.id}>{company.name} ({company.projectCount} project{company.projectCount === 1 ? "" : "s"})</option>)}
                 </select>
               </Field>
               <Field label="Location">
@@ -302,12 +434,6 @@ export default function AssignmentsManager({ initialUserId = "" }: { initialUser
                 values={form.documentTypeScopes.map((scope) => scope.documentTypeId)}
                 options={lookups.documentTypes.map((type) => ({ id: type.id, label: type.name }))}
                 onChange={setSelectedTypes}
-              />
-              <MultiSelect
-                label="Processes"
-                values={form.processDefinitionIds}
-                options={lookups.processes.map((process) => ({ id: process.id, label: process.name }))}
-                onChange={(processDefinitionIds) => setForm({ ...form, processDefinitionIds })}
               />
             </div>
 
@@ -393,36 +519,104 @@ export default function AssignmentsManager({ initialUserId = "" }: { initialUser
             ) : null}
 
             <div className="mt-4">
-              <button type="button" className={primaryButton} disabled={!form.userId || !form.roleId} onClick={create}>Assign role</button>
+              {editingId ? (
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className={primaryButton} disabled={!form.userId || !form.roleId} onClick={saveEdit}>Save changes</button>
+                  <button type="button" className={secondaryButton} onClick={cancelEdit}>Cancel</button>
+                </div>
+              ) : (
+                <button type="button" className={primaryButton} disabled={!form.userId || !form.roleId} onClick={create}>Assign role</button>
+              )}
             </div>
           </>
         ) : (
           <p className="text-sm text-slate-500">Loading...</p>
         )}
       </Card>
+      </div>
 
       <Card
         title="Assignments"
         actions={
           lookups ? (
-            <select value={filterUserId} onChange={(event) => setFilterUserId(event.target.value)} className={`${inputClass} w-64`}>
-              <option value="">All users</option>
-              {lookups.users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-            </select>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="search"
+                value={assignmentQuery}
+                onChange={(event) => setAssignmentQuery(event.target.value)}
+                placeholder="Search by user, role or scope"
+                aria-label="Search assignments"
+                className={`${inputClass} w-64`}
+              />
+              <select value={filterUserId} onChange={(event) => setFilterUserId(event.target.value)} className={`${inputClass} w-64`}>
+                <option value="">All users</option>
+                {lookups.users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+              </select>
+            </div>
           ) : null
         }
       >
         {assignments.length === 0 ? <Empty>No assignments.</Empty> : null}
-        <div className="space-y-2">
-          {assignments.map((item) => (
-            <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm">
-              <div className="space-y-1">
-                <p><span className="font-medium text-slate-900">{item.user.name}</span> <span className="text-slate-500">holds</span> <Pill>{item.role.name}</Pill></p>
-                <div className="flex flex-wrap gap-2">{scopeText(item).map((text) => <Pill key={text} tone="green">{text}</Pill>)}</div>
-              </div>
-              <button type="button" className={dangerButton} onClick={() => remove(item)}>Remove</button>
+        {assignments.length > 0 && visibleAssignments.length === 0 ? <Empty>No assignments match &quot;{assignmentQuery}&quot;.</Empty> : null}
+        {groupedByUser.length > 0 ? (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-500">
+              {groupedByUser.length} user{groupedByUser.length === 1 ? "" : "s"} · {totalShownAssignments} assignment{totalShownAssignments === 1 ? "" : "s"}
+            </p>
+            <div className="flex gap-2">
+              <button type="button" className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" onClick={() => setAllUsersOpen(true)}>Expand all</button>
+              <button type="button" className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" onClick={() => setAllUsersOpen(false)}>Collapse all</button>
             </div>
-          ))}
+          </div>
+        ) : null}
+        <div className="space-y-2">
+          {userPages.pageItems.map(({ user, roles }) => {
+            const collapsed = !isUserOpen(user.id);
+            const total = roles.reduce((sum, entry) => sum + entry.items.length, 0);
+            return (
+              <section key={user.id} className="rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                  <button type="button" onClick={() => toggleUser(user.id)} aria-expanded={!collapsed} className="flex min-w-0 items-center gap-2 text-left">
+                    <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${collapsed ? "-rotate-90" : ""}`} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-slate-900">{user.name}</span>
+                      <span className="block truncate text-xs text-slate-500">{user.email}</span>
+                    </span>
+                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {roles.map((entry) => <Pill key={entry.role.id}>{entry.role.name}</Pill>)}
+                    <span className="text-xs text-slate-500">{total} assignment{total === 1 ? "" : "s"}</span>
+                    <button type="button" className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" onClick={() => addRoleFor(user.id)}>
+                      Add role
+                    </button>
+                  </div>
+                </div>
+                {collapsed ? null : (
+                  <div className="space-y-3 border-t border-slate-100 px-4 py-3">
+                    {roles.map((entry) => (
+                      <div key={entry.role.id}>
+                        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">{entry.role.name}</p>
+                        <ul className="space-y-1.5">
+                          {entry.items.map((item) => (
+                            <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                              <div className="flex flex-wrap gap-2">{scopeText(item).map((text) => <Pill key={text} tone="green">{text}</Pill>)}</div>
+                              <div className="flex gap-2">
+                                <button type="button" className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" onClick={() => startEdit(item)}>Edit</button>
+                                <button type="button" className={dangerButton} onClick={() => remove(item)}>Remove</button>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            );
+          })}
+        </div>
+        <div className="-mx-5 -mb-5 mt-4">
+          <Pager {...userPages} noun="users" />
         </div>
       </Card>
     </div>

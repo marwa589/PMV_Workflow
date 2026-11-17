@@ -1,3 +1,4 @@
+import MultiSelectFilter from "@/components/multi-select-filter";
 import { DOCUMENT_STATUS_FILTER_OPTIONS, type DownloadStatusFilter } from "@/lib/document-status";
 
 export type FilterDocumentType = {
@@ -7,116 +8,174 @@ export type FilterDocumentType = {
 };
 
 type Props = {
-  value?: string;
+  // Status, type, sub type, project and location are multi-select: each takes the list of ticked values.
+  value?: string[];
   title?: string;
-  documentType?: string;
-  documentSubtype?: string;
-  project?: string;
+  documentType?: string[];
+  documentSubtype?: string[];
+  project?: string[];
+  location?: string[];
   downloadStatus?: DownloadStatusFilter;
   approvalFrom?: string;
   approvalTo?: string;
   showDownloadFilters?: boolean;
+  // The approval date range only makes sense for approved documents; defaults to following showDownloadFilters.
+  showApprovalDateFilters?: boolean;
+  // Search box inside the filter bar (type, number, title, project, approver...). The page applies it.
+  showSearch?: boolean;
+  search?: string;
+  // When one page holds several filter bars, each bar names its fields with its own prefix (e.g. "rv_status").
+  fieldPrefix?: string;
+  // Other query parameters to keep when this bar is submitted (e.g. the other bar's filters).
+  preserve?: Record<string, string | string[]>;
   showDocumentTypeFilter?: boolean;
   showProjectFilter?: boolean;
+  showLocationFilter?: boolean;
   showStatusFilter?: boolean;
   statusFilterOptions?: Array<{ value: string; label: string }>;
   // Document types (with their sub types) and projects come from the database, so the filter never needs editing.
   documentTypes?: FilterDocumentType[];
   projects?: Array<{ id: string; code: string; name: string }>;
+  locations?: Array<{ id: string; name: string }>;
 };
 
 const selectClass = "w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400";
 const labelClass = "mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600";
 
 export default function DocumentStatusFilter({
-  value = "",
+  value = [],
   title = "Status",
-  documentType = "",
-  documentSubtype = "",
-  project = "",
+  documentType = [],
+  documentSubtype = [],
+  project = [],
+  location = [],
   downloadStatus = "",
   approvalFrom = "",
   approvalTo = "",
   showDownloadFilters = false,
+  showApprovalDateFilters,
+  showSearch = true,
+  search = "",
+  fieldPrefix = "",
+  preserve = {},
   showDocumentTypeFilter = true,
   showProjectFilter = true,
+  showLocationFilter = true,
   showStatusFilter = true,
   statusFilterOptions = DOCUMENT_STATUS_FILTER_OPTIONS,
   documentTypes = [],
   projects = [],
+  locations = [],
 }: Props) {
-  const selectedType = documentTypes.find((type) => type.code === documentType);
+  // Sub types on offer: those of every ticked document type (labelled with their type when several are ticked).
+  const selectedTypes = documentTypes.filter((type) => documentType.includes(type.code));
+  const subtypeOptions = selectedTypes.flatMap((type) =>
+    type.subtypes.map((subtype) => ({ value: subtype.code, label: selectedTypes.length > 1 ? `${type.name} - ${subtype.name}` : subtype.name })),
+  );
+  // The same sub type code under two ticked types is offered once.
+  const uniqueSubtypeOptions = subtypeOptions.filter((option, index) => subtypeOptions.findIndex((other) => other.value === option.value) === index);
+  const showDates = showApprovalDateFilters ?? showDownloadFilters;
+  const n = (name: string) => `${fieldPrefix}${name}`;
 
   return (
-    <form method="get" className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <form method="get" className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+      {Object.entries(preserve).flatMap(([key, val]) =>
+        (Array.isArray(val) ? val : [val]).filter(Boolean).map((item, index) => <input key={`${key}-${index}`} type="hidden" name={key} value={item} />),
+      )}
+      {showSearch ? (
+        <div className="min-w-0 flex-1 basis-56">
+          <label htmlFor={n("search")} className={labelClass}>Search</label>
+          <input
+            id={n("search")}
+            type="search"
+            name={n("search")}
+            defaultValue={search}
+            placeholder="Number, title, project, approver..."
+            className={selectClass}
+          />
+        </div>
+      ) : null}
       {showDocumentTypeFilter ? (
         <div className="min-w-0 flex-1">
-          <label htmlFor="document-type" className={labelClass}>Document Type</label>
-          <select id="document-type" name="documentType" defaultValue={documentType} className={selectClass}>
-            <option value="">All</option>
-            {documentTypes.map((type) => (
-              <option key={type.code} value={type.code}>{type.name}</option>
-            ))}
-          </select>
+          <label htmlFor={n("document-type")} className={labelClass}>Document Type</label>
+          <MultiSelectFilter
+            id={n("document-type")}
+            name={n("documentType")}
+            allLabel="All"
+            defaultValues={documentType}
+            options={documentTypes.map((type) => ({ value: type.code, label: type.name }))}
+          />
         </div>
-      ) : documentType ? (
-        <input type="hidden" name="documentType" value={documentType} />
+      ) : (
+        documentType.map((code) => <input key={code} type="hidden" name={n("documentType")} value={code} />)
+      )}
+
+      {uniqueSubtypeOptions.length > 0 ? (
+        <div className="min-w-0 flex-1">
+          <label htmlFor={n("document-subtype")} className={labelClass}>Sub Type</label>
+          <MultiSelectFilter
+            id={n("document-subtype")}
+            name={n("documentSubtype")}
+            allLabel="All sub types"
+            defaultValues={documentSubtype}
+            options={uniqueSubtypeOptions}
+          />
+        </div>
       ) : null}
 
-      {selectedType && selectedType.subtypes.length > 0 ? (
+      {showLocationFilter && locations.length > 0 ? (
         <div className="min-w-0 flex-1">
-          <label htmlFor="document-subtype" className={labelClass}>Sub Type</label>
-          <select id="document-subtype" name="documentSubtype" defaultValue={documentSubtype} className={selectClass}>
-            <option value="">All sub types</option>
-            {selectedType.subtypes.map((subtype) => (
-              <option key={subtype.code} value={subtype.code}>{subtype.name}</option>
-            ))}
-          </select>
+          <label htmlFor={n("location")} className={labelClass}>Location</label>
+          <MultiSelectFilter
+            id={n("location")}
+            name={n("location")}
+            allLabel="All locations"
+            defaultValues={location}
+            options={locations.map((item) => ({ value: item.id, label: item.name }))}
+          />
         </div>
       ) : null}
 
       {showProjectFilter && projects.length > 0 ? (
         <div className="min-w-0 flex-1">
-          <label htmlFor="project" className={labelClass}>Project</label>
-          <select id="project" name="project" defaultValue={project} className={selectClass}>
-            <option value="">All projects</option>
-            {projects.map((item) => (
-              <option key={item.id} value={item.id}>{item.code} - {item.name}</option>
-            ))}
-          </select>
+          <label htmlFor={n("project")} className={labelClass}>Project</label>
+          <MultiSelectFilter
+            id={n("project")}
+            name={n("project")}
+            allLabel="All projects"
+            defaultValues={project}
+            options={projects.map((item) => ({ value: item.id, label: `${item.code} - ${item.name}` }))}
+          />
         </div>
       ) : null}
 
       {showDownloadFilters ? (
+        <div className="min-w-0 flex-1">
+          <label htmlFor={n("download-status")} className={labelClass}>Download Status</label>
+          <select id={n("download-status")} name={n("downloadStatus")} defaultValue={downloadStatus} className={selectClass}>
+            <option value="">All</option>
+            <option value="DOWNLOADED">Downloaded</option>
+            <option value="NOT_DOWNLOADED">Not Downloaded</option>
+          </select>
+        </div>
+      ) : null}
+      {showDates ? (
         <>
           <div className="min-w-0 flex-1">
-            <label htmlFor="download-status" className={labelClass}>Download Status</label>
-            <select id="download-status" name="downloadStatus" defaultValue={downloadStatus} className={selectClass}>
-              <option value="">All</option>
-              <option value="DOWNLOADED">Downloaded</option>
-              <option value="NOT_DOWNLOADED">Not Downloaded</option>
-            </select>
+            <label htmlFor={n("approval-from")} className={labelClass}>Approval Date/Time From</label>
+            <input id={n("approval-from")} type="datetime-local" name={n("approvalFrom")} defaultValue={approvalFrom} className={selectClass} />
           </div>
           <div className="min-w-0 flex-1">
-            <label htmlFor="approval-from" className={labelClass}>Approval Date/Time From</label>
-            <input id="approval-from" type="datetime-local" name="approvalFrom" defaultValue={approvalFrom} className={selectClass} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <label htmlFor="approval-to" className={labelClass}>Approval Date/Time To</label>
-            <input id="approval-to" type="datetime-local" name="approvalTo" defaultValue={approvalTo} className={selectClass} />
+            <label htmlFor={n("approval-to")} className={labelClass}>Approval Date/Time To</label>
+            <input id={n("approval-to")} type="datetime-local" name={n("approvalTo")} defaultValue={approvalTo} className={selectClass} />
           </div>
         </>
       ) : null}
 
       {showStatusFilter ? (
         <div className="min-w-0 flex-1">
-          <label className={labelClass}>{title}</label>
-          <select name="status" defaultValue={value} className={selectClass}>
-            <option value="">All</option>
-            {statusFilterOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
+          <label htmlFor={n("status")} className={labelClass}>{title}</label>
+          <MultiSelectFilter id={n("status")} name={n("status")} allLabel="All" defaultValues={value} options={statusFilterOptions} />
         </div>
       ) : null}
 

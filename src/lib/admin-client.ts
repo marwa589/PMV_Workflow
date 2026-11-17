@@ -5,7 +5,7 @@ import { getCsrfTokenFromBrowser } from "@/lib/csrf";
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; message: string; status?: number; confirmationRequired?: boolean; cancelled?: boolean };
 
 /** Call one of the /api/admin or /api/processes endpoints with the CSRF header and a readable error. */
-export async function callApi<T = Record<string, unknown>>(url: string, method: "GET" | "POST" | "PATCH" | "DELETE" = "GET", body?: unknown): Promise<ApiResult<T>> {
+export async function callApi<T = Record<string, unknown>>(url: string, method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET", body?: unknown): Promise<ApiResult<T>> {
   try {
     const response = await fetch(url, {
       method,

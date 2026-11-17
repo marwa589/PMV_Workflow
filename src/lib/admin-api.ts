@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { getSession, type AuthSession } from "@/lib/auth/session";
 import { userHasPermission } from "@/lib/auth/access";
 import { validateCsrf } from "@/lib/csrf";
+import { USER_TYPE } from "@/lib/auth/roles";
 
 type GuardResult = { session: AuthSession; response?: undefined } | { session?: undefined; response: NextResponse };
 
@@ -23,6 +24,20 @@ export async function requireApiPermission(request: Request, permissionCode: str
     return { response: NextResponse.json({ message: "Invalid CSRF token." }, { status: 403 }) };
   }
 
+  return { session };
+}
+
+/**
+ * Guard for screens that only Admin users may use (users, roles & access, mailing list). There is no permission for
+ * these on purpose: to let someone manage them, make their user type Admin.
+ */
+export async function requireApiAdmin(request: Request): Promise<GuardResult> {
+  const session = await getSession();
+  if (!session) return { response: NextResponse.json({ message: "Unauthorized" }, { status: 401 }) };
+  if (session.userType !== USER_TYPE.ADMIN) return { response: NextResponse.json({ message: "Only Admin users can do this." }, { status: 403 }) };
+  if (request.method !== "GET" && !validateCsrf(request)) {
+    return { response: NextResponse.json({ message: "Invalid CSRF token." }, { status: 403 }) };
+  }
   return { session };
 }
 

@@ -2,10 +2,16 @@ import DashboardShell from "@/components/dashboard-shell";
 import DocumentListTable from "@/components/document-list-table";
 import DocumentStatusFilter from "@/components/document-status-filter";
 import PageSummaryCards from "@/components/page-summary-cards";
+import { USER_TYPE } from "@/lib/auth/roles";
 import ApproverPendingTable from "@/components/approver-pending-table";
 import type { UserTypeCode } from "@/lib/auth/roles";
 import { prisma } from "@/lib/prisma";
-import type { DocumentRow } from "@/lib/document-queries";
+import { withDownloadTracking } from "@/lib/download-tracking";
+import { getReceiptConfirmableIds, getVisibleReferenceSummaries, userCanViewReferences } from "@/lib/auth/access";
+import { createEligiblePeopleFinder } from "@/lib/workflow/eligible-people";
+import { userCanBulkApprove } from "@/lib/bulk-approve";
+import { getActionableDocuments, withEligibleApprovers, type DocumentRow } from "@/lib/document-queries";
+import { DocumentStatus } from "@prisma/client";
 import { applyListFilters, buildSummaryCards, describeFilters, parseListFilters, toListItem, type ListSearchParams } from "@/lib/document-list";
 import type { DocumentStatusFilterValue } from "@/lib/document-status";
 
@@ -15,10 +21,11 @@ type TableOptions = {
   allowAdminDelete?: boolean;
   allowReview?: boolean;
   showDownloadTracking?: boolean;
+  allowBatchReview?: boolean;
 };
 
 type Props = {
-  session: { userType: UserTypeCode; name: string };
+  session: { userId: string; userType: UserTypeCode; name: string };
   rows: DocumentRow[];
   searchParams: ListSearchParams;
   title: string;
@@ -33,17 +40,18 @@ type Props = {
   table?: TableOptions;
 };
 
-/** Document types (with sub types) and projects for the filter bar: always read from the database. */
+/** Document types (with sub types), projects and locations for the filter bar: always read from the database. */
 export async function loadFilterOptions() {
-  const [documentTypes, projects] = await Promise.all([
+  const [documentTypes, projects, locations] = await Promise.all([
     prisma.documentType.findMany({
       where: { isActive: true },
       select: { code: true, name: true, subtypes: { where: { isActive: true }, select: { code: true, name: true }, orderBy: { name: "asc" } } },
       orderBy: { name: "asc" },
     }),
     prisma.project.findMany({ where: { isActive: true }, select: { id: true, code: true, name: true }, orderBy: { code: "asc" } }),
+    prisma.location.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
-  return { documentTypes, projects };
+  return { documentTypes, projects, locations };
 }
 
 /**
@@ -64,13 +72,41 @@ export default async function DocumentListPage({
   table = {},
 }: Props) {
   const filters = parseListFilters(searchParams);
-  const { documentTypes, projects } = await loadFilterOptions();
+  const { documentTypes, projects, locations } = await loadFilterOptions();
 
-  const scoped = lockedStatus ? rows.filter((row) => row.status === lockedStatus) : rows;
+  // Download state is per user, so it is only looked up for screens that show or filter on it.
+  // The colour code also needs it: an approved document is green once THIS user has downloaded it.
+  // The list table names the people who can approve (not just the user type of the level); the pending task table has no such column.
+  const approverRows = variant === "list" ? await withEligibleApprovers(rows) : rows;
+  const trackedRows = await withDownloadTracking(approverRows, session.userId);
+
+  const scoped = lockedStatus ? trackedRows.filter((row) => row.status === lockedStatus) : trackedRows;
   const filtered = applyListFilters(scoped, filters, { ignoreStatus: Boolean(lockedStatus) });
 
+  // Tick boxes on the pending table are only for users an admin allowed to approve several documents at once.
+  const allowBatch = variant === "pending" && (table.allowReview ?? true) ? await userCanBulkApprove(session.userId) : false;
+
+  // "Review selected" on the list: only for users allowed to approve several at once. A document can be reviewed
+  // that way only while it is pending for THIS user (the same rule the review page applies).
+  const batchReview = variant === "list" && table.allowBatchReview ? await userCanBulkApprove(session.userId) : false;
+  const batchEligibleIds = batchReview
+    ? new Set((await getActionableDocuments({ userId: session.userId, userType: session.userType }, [DocumentStatus.PENDING])).map((row) => row.id))
+    : null;
+
+  // "Received" button on the list: only for approved, not yet received documents the user may confirm.
+  const receivableIds = variant === "list"
+    ? await getReceiptConfirmableIds(session, filtered.filter((row) => row.status === DocumentStatus.APPROVED && !row.receivedAt).map((row) => row.id))
+    : new Set<string>();
+
+  // Admin only: who can act on each waiting document (the same rules the workflow enforces).
+  const isAdmin = session.userType === USER_TYPE.ADMIN;
+  const reviewerFinder = isAdmin && filtered.length > 0 ? await createEligiblePeopleFinder(prisma) : null;
+  // Reference documents: people who may view them see which reference types were uploaded for each document, and how many.
+  const showReferences = await userCanViewReferences(session);
+  const referenceSummaries = showReferences ? await getVisibleReferenceSummaries(session, filtered.map((row) => row.id)) : new Map();
+
   const filterTitle = describeFilters(filters, documentTypes);
-  const pageTitle = filters.status === "REVISION_REQUIRED" && !lockedStatus ? "Revision Required" : filters.status === "CANCELLED" && !lockedStatus ? "Rejected Documents" : filterTitle || title;
+  const pageTitle = filters.status.length === 1 && filters.status[0] === "REVISION_REQUIRED" && !lockedStatus ? "Revision Required" : filters.status.length === 1 && filters.status[0] === "CANCELLED" && !lockedStatus ? "Rejected Documents" : filterTitle || title;
   const cards = buildSummaryCards(filtered, summaryMode);
 
   return (
@@ -86,34 +122,51 @@ export default async function DocumentListPage({
             documentType={filters.documentType}
             documentSubtype={filters.documentSubtype}
             project={filters.project}
+            location={filters.location}
             downloadStatus={filters.downloadStatus}
             approvalFrom={filters.approvalFrom}
             approvalTo={filters.approvalTo}
+            search={filters.search}
             showDownloadFilters={showDownloadFilters}
             showStatusFilter={!lockedStatus && variant !== "pending"}
             documentTypes={documentTypes}
             projects={projects}
+            locations={locations}
           />
         </div>
         {variant === "pending" ? (
           <div className="px-1 py-4">
             <ApproverPendingTable
               allowReview={table.allowReview ?? true}
+              allowBatch={allowBatch}
+              showVersion={session.userType === USER_TYPE.ADMIN}
+              showWhoCanReview={isAdmin}
+              showReferences={showReferences}
               emptyMessage={emptyMessage}
               documents={filtered.map((row) => ({
                 id: row.id,
                 documentNumber: row.documentNumber,
                 title: row.title,
                 projectLabel: row.project ? `${row.project.code} - ${row.project.name}` : null,
+                documentTypeLabel: `${row.documentType.name}${row.documentSubtype ? ` - ${row.documentSubtype.name}` : ""}`,
                 statusLabel: row.statusLabel,
                 currentVersion: row.currentVersion,
                 latestComment: row.latestComment,
                 uploadedAt: new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(row.createdAt),
+                whoCanReview: reviewerFinder ? reviewerFinder.reviewersForRow(row) : undefined,
+                references: referenceSummaries.get(row.id) ?? [],
               }))}
             />
           </div>
         ) : (
-          <DocumentListTable documents={filtered.map(toListItem)} emptyMessage={emptyMessage} {...table} />
+          <DocumentListTable
+            documents={filtered.map((row) => ({ ...toListItem(row), batchEligible: batchEligibleIds ? batchEligibleIds.has(row.id) : false, canConfirmReceipt: receivableIds.has(row.id), whoCanReview: reviewerFinder ? reviewerFinder.reviewersForRow(row) : undefined, references: referenceSummaries.get(row.id) ?? [] }))}
+            emptyMessage={emptyMessage}
+            {...table}
+            allowBatchReview={batchReview}
+            showAdminColumns={session.userType === USER_TYPE.ADMIN}
+            showReferences={showReferences}
+          />
         )}
       </section>
     </DashboardShell>

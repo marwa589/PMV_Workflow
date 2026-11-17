@@ -3,8 +3,9 @@ import ApproverPendingTable from "@/components/approver-pending-table";
 import DashboardShell from "@/components/dashboard-shell";
 import PageSummaryCards from "@/components/page-summary-cards";
 import { requireUserType } from "@/lib/auth/guards";
-import { APPROVER_USER_TYPES, roleLabel } from "@/lib/auth/roles";
+import { APPROVER_USER_TYPES, roleLabel, USER_TYPE } from "@/lib/auth/roles";
 import { getDocumentsForApprover } from "@/lib/document-queries";
+import { TONE_CLASSES } from "@/lib/status-colors";
 
 export const dynamic = "force-dynamic";
 
@@ -29,11 +30,11 @@ export default async function ApproverDashboardPage() {
 
       <PageSummaryCards
         cards={[
-          { label: "Pending Approval", value: String(data.pendingDocuments.length), tone: "bg-yellow-50 text-yellow-900 ring-1 ring-yellow-200" },
-          { label: "On Hold", value: String(data.onHoldDocuments.length), tone: "bg-sky-50 text-sky-900 ring-1 ring-sky-200" },
+          { label: "Pending Approval", value: String(data.pendingDocuments.length), tone: TONE_CLASSES.yellow },
+          { label: "On Hold", value: String(data.onHoldDocuments.length), tone: TONE_CLASSES.violet },
           { label: "Revision Required", value: String(data.revisionRequiredDocuments.length), tone: "bg-slate-50 text-slate-900 ring-1 ring-slate-200" },
-          { label: "Approved", value: String(data.approvedDocuments.length), tone: "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200" },
-          { label: "Rejected", value: String(data.rejectedDocuments.length), tone: "bg-rose-50 text-rose-900 ring-1 ring-rose-200" },
+          { label: "Approved", value: String(data.approvedDocuments.length), tone: TONE_CLASSES.blue },
+          { label: "Rejected", value: String(data.rejectedDocuments.length), tone: TONE_CLASSES.red },
         ]}
       />
 
@@ -43,6 +44,7 @@ export default async function ApproverDashboardPage() {
         </div>
         <div className="px-1 py-4">
           <ApproverPendingTable
+            showVersion={session.userType === USER_TYPE.ADMIN}
             documents={data.pendingDocuments.map((row) => ({
               id: row.id,
               documentNumber: row.documentNumber,

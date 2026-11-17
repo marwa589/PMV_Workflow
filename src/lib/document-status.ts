@@ -9,6 +9,16 @@ export type DocumentStatusValue =
   | "CANCELLED"
   | "ARCHIVED";
 
+// The order documents are listed in: pending first, then revision required, on hold, approved, archived and rejected.
+export const DOCUMENT_STATUS_ORDER: Record<string, number> = {
+  PENDING: 0,
+  REVISION_REQUIRED: 1,
+  ON_HOLD: 2,
+  APPROVED: 3,
+  ARCHIVED: 4,
+  CANCELLED: 5,
+};
+
 export type DocumentStatusFilterValue = DocumentStatusValue | "";
 export type DownloadStatusFilter = "DOWNLOADED" | "NOT_DOWNLOADED" | "";
 
@@ -26,13 +36,27 @@ export const DOCUMENT_STATUS_FILTER_OPTIONS: Array<{ value: DocumentStatusValue;
   { value: "ARCHIVED", label: "Archived" },
 ];
 
-export type LevelInfo = { levelNumber: number | null; name?: string | null };
+// waitingFor: the level goes to the project's Director / Manager, but the project has none yet (and nobody else is on it).
+export type LevelInfo = { levelNumber: number | null; name?: string | null; waitingFor?: "PROJECT_DIRECTOR" | "PROJECT_MANAGER" | null };
+
+/**
+ * Which missing project role a level is stuck on: only when nobody at all can act on it (no approver entries) and it
+ * was marked as waiting for the Project Director / Manager.
+ */
+export function levelWaitingFor(step: { approvers: unknown[]; awaitingProjectDirector?: boolean; awaitingProjectManager?: boolean } | null | undefined): "PROJECT_DIRECTOR" | "PROJECT_MANAGER" | null {
+  if (!step || step.approvers.length > 0) return null;
+  if (step.awaitingProjectDirector) return "PROJECT_DIRECTOR";
+  if (step.awaitingProjectManager) return "PROJECT_MANAGER";
+  return null;
+}
 
 /** Display text for a status. A pending document also shows which level it waits at, e.g. "Pending PMV Engineer". */
 export function getDocumentStatusDisplay(status: string | null | undefined, level?: LevelInfo | null): string {
   switch (status) {
     case "PENDING": {
       if (!level || level.levelNumber === null) return "Pending";
+      if (level.waitingFor === "PROJECT_DIRECTOR") return "Pending Project Director - No PD Assigned";
+      if (level.waitingFor === "PROJECT_MANAGER") return "Pending Project Manager - No PM Assigned";
       const levelLabel = level.name?.trim() || `Level ${level.levelNumber}`;
       return `Pending ${levelLabel}`;
     }
@@ -76,6 +100,12 @@ export function parseDocumentSubtypeFilter(value: unknown): DocumentSubtypeFilte
 /** A project id. */
 export function parseProjectFilter(value: unknown): ProjectFilter {
   return parseSafeToken(value);
+}
+
+/** Every value of a repeated query parameter (?x=a&x=b), already cleaned by `parse` and without duplicates. */
+export function parseMultiFilter<T extends string>(value: string | string[] | undefined, parse: (item: unknown) => T | ""): T[] {
+  const items = Array.isArray(value) ? value : value === undefined ? [] : [value];
+  return [...new Set(items.map((item) => parse(item)).filter((item): item is T => item !== ""))];
 }
 
 export function parseDownloadStatusFilter(value: unknown): DownloadStatusFilter {

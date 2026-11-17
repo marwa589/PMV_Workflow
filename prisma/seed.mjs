@@ -19,41 +19,38 @@ const USER_TYPES = [
 ];
 
 const PERMISSIONS = [
-  ["documents.view", "View documents", "View documents in scope"],
-  ["documents.create", "Create documents", "Upload documents in scope"],
-  ["documents.edit", "Edit documents", "Edit documents in scope"],
-  ["documents.download", "Download documents", "Download and bulk download"],
-  ["documents.print", "Print documents", "Print and bulk print"],
-  ["documents.archive", "Archive documents", "Archive and restore documents"],
-  ["documents.approve_without_signature", "Approve without signature", "Approve a document without placing a signature on it"],
-  ["documents.confirm_receipt", "Confirm receipt", "Mark an approved document (for example a purchase order) as received"],
-  ["documents.delete_request", "Request deletion", "Request deletion of a document"],
-  ["documents.delete_review", "Review deletion", "Approve or reject deletion requests"],
-  ["processes.view", "View processes", "See process runs in scope"],
-  ["processes.start", "Start processes", "Start a run of a process in scope"],
-  ["processes.manage", "Manage processes", "Create and edit process definitions"],
-  ["flows.manage", "Manage flows", "Create approval flows and flow assignments"],
-  ["types.manage", "Manage document types", "Document types, sub types, custom fields, numbering"],
-  ["analytics.view", "View analytics", "Dashboards and pipeline charts"],
-  ["users.manage", "Manage users", "Create and edit users"],
-  ["assignments.manage", "Manage assignments", "Role assignments and scopes"],
-  ["delegations.manage", "Manage delegations", "Approval delegations"],
-  ["projects.manage", "Manage projects", "Locations, companies and projects"],
+  ["documents.view", "View documents", "See documents (and open them) that fall inside the scope of the assignment: its project, location, company, document type or sub type. Without it a person only sees documents they uploaded or are asked to review."],
+  ["documents.view_reference", "View reference documents", "See reference documents attached to process steps, inside the assignment scope. Without it reference documents are hidden everywhere, even from approvers. Also needs View documents for normal documents."],
+  ["documents.upload", "Upload documents", "Upload documents of the types, sub types and projects covered by the assignment. Works on top of the approval flow's Uploader level, which still lets the people it names upload."],
+  ["documents.download", "Download documents", "Download documents inside the assignment scope, one by one or in bulk (ZIP, process package)."],
+  ["documents.use_unique_track", "Use unique tracks", "Send documents inside the scope down a unique track of the approval flow, when uploading or when approving at a level that has tracks. Admin users always have it."],
+  ["documents.send_for_approval", "Send for approval", "Adds 'Send for approval' to the review decisions of documents inside the scope: pick any user to approve the document first, then it comes back to the sender. Admin users always have it."],
+  ["documents.archive", "Archive documents", "Archive approved documents inside the scope and restore them from the archive."],
+  ["documents.confirm_receipt", "Confirm receipt", "Mark an approved document (for example a purchase order) as received. Shows the Confirm receipt button on the document page."],
+  ["maintenance.manage", "Manage maintenance setup", "Manage maintenance items, workflows and project/item workflow assignments. Adds Maintenance Setup to the menu."],
+  ["documents.delete_request", "Request deletion", "Ask for a document inside the scope to be deleted. The request goes to the people who can review deletions."],
+  ["documents.delete_review", "Review deletion", "Approve or reject deletion requests for documents inside the scope. Approving deletes the document. Adds the Deletion Requests page."],
+  ["processes.manage", "Manage processes", "Create and edit process definitions: steps, document types per step, reference documents and waiting periods. Adds Process Setup to the menu."],
+  ["flows.manage", "Manage flows", "Create and edit approval flows (levels, approvers, signature required) and assign them to document types, sub types and projects. Adds Flows and Flow Assignments."],
+  ["types.manage", "Manage document types", "Create and edit document types, sub types, custom fields and numbering codes."],
+  ["delegations.manage", "Manage delegations", "Create and remove approval delegations, so one person can approve on behalf of another for a period."],
+  ["projects.manage", "Manage projects", "Create and edit locations, companies and projects, and choose the company and director of each project."],
 ];
 
 // The Approver role has no permissions on purpose: it only sees what a flow names it for.
 const ROLES = [
   { name: "Approver", description: "Acts where a flow names the user or their type. No permissions.", permissions: [] },
   { name: "Viewer", description: "Read-only access to documents in scope.", permissions: ["documents.view", "documents.download"] },
-  { name: "Editor", description: "Viewer plus create and edit.", permissions: ["documents.view", "documents.download", "documents.create", "documents.edit"] },
+  { name: "Reference Viewer", description: "May see reference documents attached to process steps, in scope (also needs documents.view for normal documents).", permissions: ["documents.view_reference", "documents.view"] },
+  { name: "Uploader", description: "May upload documents in scope.", permissions: ["documents.upload", "documents.view"] },
   { name: "Receiving Clerk", description: "Confirms receipt of approved documents in scope.", permissions: ["documents.view", "documents.confirm_receipt"] },
-  { name: "Unsigned Approver", description: "May approve without placing a signature. Scope it to a document type or location to limit it.", permissions: ["documents.approve_without_signature"] },
-  { name: "Process Starter", description: "Start and follow process runs in scope.", permissions: ["processes.view", "processes.start"] },
-  { name: "Analyst", description: "Dashboards and read access.", permissions: ["analytics.view", "documents.view"] },
-  { name: "Archivist", description: "Archive and print.", permissions: ["documents.archive", "documents.print", "documents.view"] },
+  { name: "Maintenance Administrator", description: "Configures maintenance items and workflows.", permissions: ["maintenance.manage"] },
+  { name: "Approval Sender", description: "May send documents they review to another user for approval first (needs to be an approver at the level).", permissions: ["documents.send_for_approval", "documents.view"] },
+  { name: "Archivist", description: "Archive and restore documents.", permissions: ["documents.archive", "documents.view"] },
   { name: "Deletion Reviewer", description: "Request and review deletions.", permissions: ["documents.delete_request", "documents.delete_review", "documents.view"] },
   { name: "Flow Admin", description: "Builds flows, document types and processes.", permissions: ["flows.manage", "types.manage", "processes.manage"] },
-  { name: "User Admin", description: "Users, assignments, delegations, projects.", permissions: ["users.manage", "assignments.manage", "delegations.manage", "projects.manage"] },
+  // Users, roles & access and the mailing list are Admin-only screens (no permission), so this role keeps the rest.
+  { name: "User Admin", description: "Delegations and projects.", permissions: ["delegations.manage", "projects.manage"] },
 ];
 
 // Proposed list (editable later in the admin UI). Custody is not in the PDF, so it is not seeded.
@@ -78,6 +75,13 @@ async function main() {
   for (const [code, name, description] of PERMISSIONS) {
     await prisma.permission.upsert({ where: { code }, update: { name, description }, create: { code, name, description } });
   }
+
+  // Maintenance is driven by its workflow (level 0 = who may submit, levels 1..N = who follows up), so the earlier
+  // per-person "submit" / "follow up" permissions and their role templates are no longer used. Remove them if present.
+  await prisma.role.deleteMany({ where: { name: { in: ["Maintenance Requester", "Maintenance Follow-up"] } } });
+  await prisma.permission.deleteMany({ where: { code: { in: ["maintenance.submit", "maintenance.follow_up"] } } });
+  // Users, roles & access and the mailing list are for Admin users only; printing is not a permission.
+  await prisma.permission.deleteMany({ where: { code: { in: ["users.manage", "assignments.manage", "documents.print"] } } });
 
   for (const role of ROLES) {
     const saved = await prisma.role.upsert({

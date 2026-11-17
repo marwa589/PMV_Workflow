@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
+import { DocumentStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { canAccessDocument } from "@/lib/auth/access";
 import { resolveStoredFilePath } from "@/lib/files";
+import { recordDownloads } from "@/lib/download-tracking";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -43,6 +45,7 @@ export async function GET(
     select: {
       id: true,
       currentVersion: true,
+      status: true,
     },
   });
 
@@ -92,6 +95,15 @@ export async function GET(
       "_",
     );
     const encodedFilename = encodeURIComponent(safeFilename);
+
+    // Counts as "downloaded" for this user only when an approved document is actually saved (not when it is just previewed inline).
+    if (document.status === DocumentStatus.APPROVED && !inline) {
+      try {
+        await recordDownloads(session.userId, [documentId]);
+      } catch (error) {
+        console.error("[document-download] Failed to record download", { documentId, error });
+      }
+    }
 
     return new NextResponse(buffer, {
       status: 200,

@@ -20,7 +20,8 @@ export default async function AdminRejectedDocumentsPage({ searchParams }: any) 
       emptyMessage="No rejected documents."
       lockedStatus="CANCELLED"
       summaryMode="byType"
-      table={{ showBulkActions: true, allowAdminDelete: true }}
+      showDownloadFilters
+      table={{ showBulkActions: true, allowAdminDelete: true, showDownloadTracking: true }}
     />
   );
 }
